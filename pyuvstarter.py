@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
-pyuvstarter.py (v6.4.1 - Updated Log Name)
+pyuvstarter.py (v6.6 - Conditional main.py removal)
 
 Purpose:
 This script automates the setup of a Python project environment using `uv`,
 focusing on `pyproject.toml` for dependency management, configures Visual
 Studio Code, and prepares the project for version control by ensuring a
 `.gitignore` file is present. It operates without user prompts for a standard
-setup and creates a detailed JSON log file of its actions.
+setup and creates a detailed JSON log file of its actions. It uses `uv init`
+to create `pyproject.toml` if missing, and conditionally removes `main.py`
+if `uv init` creates it in a directory that already contained other Python files.
 
 Key Actions:
 1. Ensures `uv` is installed (platform-aware installation if missing).
-2. Initializes a `uv` project (creates `pyproject.toml` if none exists) using `uv init`.
+2. Ensures a `pyproject.toml` file exists, running `uv init` if necessary.
+   If `uv init` creates `main.py` in a pre-existing Python project, `main.py` is removed.
 3. Ensures a `.gitignore` file exists with common Python/venv exclusions.
 4. Creates a virtual environment (default: '.venv') using `uv venv`.
 5. Migrates dependencies from an existing 'requirements.txt' (if present and not
@@ -85,7 +88,7 @@ GITIGNORE_NAME = ".gitignore"
 LEGACY_REQUIREMENTS_TXT = "requirements.txt" # For migration
 VSCODE_DIR_NAME = ".vscode"
 SETTINGS_FILE_NAME = "settings.json"
-JSON_LOG_FILE_NAME = "pyuvstarter_setup_log.json" # Updated log file name
+JSON_LOG_FILE_NAME = "pyuvstarter_setup_log.json"
 
 # --- JSON Logging Utilities ---
 _log_data_global = {}
@@ -328,30 +331,64 @@ def _ensure_tool_available(tool_name, package_to_install_via_uv_tool):
 # --- Project and Dependency Handling ---
 
 def _ensure_project_initialized(project_root: Path):
-    """Ensures a pyproject.toml exists, running `uv init` if not."""
+    """
+    Ensures a pyproject.toml exists. If not, runs `uv init` and then checks
+    if `main.py` should be removed.
+    """
     action_name = "ensure_project_initialized_with_pyproject"
     pyproject_path = project_root / PYPROJECT_TOML_NAME
+    main_py_path = project_root / "main.py"
+
     if pyproject_path.exists():
         _log_action(action_name, "INFO", f"'{PYPROJECT_TOML_NAME}' already exists at {project_root}.")
         print(f"INFO: '{PYPROJECT_TOML_NAME}' already exists.")
         return True
 
-    _log_action(action_name, "INFO", f"'{PYPROJECT_TOML_NAME}' not found. Initializing project with `uv init`...")
-    print(f"INFO: '{PYPROJECT_TOML_NAME}' not found. Initializing project with `uv init`...")
+    _log_action(action_name, "INFO", f"'{PYPROJECT_TOML_NAME}' not found. Will run `uv init`.")
+    print(f"INFO: '{PYPROJECT_TOML_NAME}' not found. Running `uv init`...")
+
+    # Check for existing Python files before running uv init
+    existing_py_files = list(project_root.rglob("*.py"))
+    # Exclude this script itself if it's in the project root
+    # script_path_in_project = project_root / Path(__file__).name
+    # if script_path_in_project in existing_py_files:
+    #     existing_py_files.remove(script_path_in_project)
+
+    project_had_py_files_before_init = bool(existing_py_files)
+    main_py_existed_before_init = main_py_path.exists()
+
     try:
-        _run_command(["uv", "init"], f"{action_name}_uv_init")
-        if pyproject_path.exists():
-            _log_action(action_name, "SUCCESS", f"`uv init` completed. '{PYPROJECT_TOML_NAME}' created.")
-            print(f"INFO: `uv init` completed. '{PYPROJECT_TOML_NAME}' created.")
-            return True
-        else:
+        _run_command(["uv", "init"], f"{action_name}_uv_init_exec")
+        if not pyproject_path.exists():
             _log_action(action_name, "ERROR", f"`uv init` ran but '{PYPROJECT_TOML_NAME}' was not created. This is unexpected.")
-            print(f"ERROR: `uv init` ran but '{PYPROJECT_TOML_NAME}' was not created.\n       Check `uv init` output. Manual creation may be needed.", file=sys.stderr)
+            print(f"ERROR: `uv init` ran but '{PYPROJECT_TOML_NAME}' was not created.\n       Check `uv init` output. Manual creation of `pyproject.toml` might be needed.", file=sys.stderr)
             return False
-    except Exception:
+
+        _log_action(action_name, "SUCCESS", f"`uv init` completed. '{PYPROJECT_TOML_NAME}' created/updated.")
+        print(f"INFO: `uv init` completed. '{PYPROJECT_TOML_NAME}' is present.")
+
+        # Conditional removal of main.py created by `uv init`
+        main_py_exists_after_init = main_py_path.exists()
+        if main_py_exists_after_init and not main_py_existed_before_init: # `uv init` created main.py
+            if project_had_py_files_before_init: # And there were other .py files
+                _log_action(f"{action_name}_remove_main_py", "INFO", f"`uv init` created '{main_py_path.name}', but other .py files existed. Removing '{main_py_path.name}'.")
+                print(f"INFO: `uv init` created '{main_py_path.name}'. Removing it as other Python files already exist in the project.")
+                try:
+                    main_py_path.unlink()
+                    _log_action(f"{action_name}_remove_main_py", "SUCCESS", f"Successfully removed '{main_py_path.name}' created by `uv init`.")
+                except OSError as e:
+                    _log_action(f"{action_name}_remove_main_py", "ERROR", f"Failed to remove '{main_py_path.name}' created by `uv init`.", details={"exception": str(e)})
+                    print(f"ERROR: Failed to remove '{main_py_path.name}': {e}. Please remove it manually if undesired.", file=sys.stderr)
+            else: # Project was empty of .py files, so main.py from uv init is fine
+                _log_action(f"{action_name}_keep_main_py", "INFO", f"`uv init` created '{main_py_path.name}' in an otherwise empty Python project. It will be kept.")
+                print(f"INFO: `uv init` created '{main_py_path.name}'. Keeping it as standard for a new project.")
+        return True
+
+    except Exception: # Error logged by _run_command
         _log_action(action_name, "ERROR", f"Failed to initialize project with `uv init`. See command execution log.")
         print(f"ERROR: Failed to initialize project with `uv init`. See details above.\n       Manual `pyproject.toml` creation or `uv init` troubleshooting needed.", file=sys.stderr)
         return False
+
 
 def _ensure_gitignore_exists(project_root: Path, venv_name: str):
     """Ensures a .gitignore file exists and contains essential Python/venv ignores."""
@@ -362,7 +399,7 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str):
     essential_ignore_map = {
         "Python Virtual Environments": [f"{venv_name}/", "venv/", "ENV/", "env/", "*/.venv/", "*/venv/"],
         "Python Cache & Compiled Files": ["__pycache__/", "*.py[cod]", "*$py.class"],
-        "Log file from this script": [JSON_LOG_FILE_NAME], # Use the constant
+        "Log file from this script": [JSON_LOG_FILE_NAME],
         "OS-specific": [".DS_Store", "Thumbs.db"]
     }
     comprehensive_ignores = [
@@ -379,7 +416,7 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str):
         "\n# VS Code (allow user-committed settings)", ".vscode/*",
         "!.vscode/settings.json", "!.vscode/tasks.json", "!.vscode/launch.json", "!.vscode/extensions.json",
         ".history/",
-        "\n# Log file from this script", JSON_LOG_FILE_NAME, # Use the constant
+        "\n# Log file from this script", JSON_LOG_FILE_NAME,
         "\n# OS-specific", ".DS_Store", "Thumbs.db"
     ]
 
@@ -395,7 +432,7 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str):
                 for comment, patterns in essential_ignore_map.items():
                     all_patterns_present_for_group = True; temp_patterns_to_add_for_group = []
                     for pattern in patterns:
-                        if not any(pattern.strip() == line.strip() for line in content.splitlines()): # More exact match
+                        if not any(pattern.strip() == line.strip() for line in content.splitlines()):
                             all_patterns_present_for_group = False
                             temp_patterns_to_add_for_group.append(pattern)
                     if not all_patterns_present_for_group and temp_patterns_to_add_for_group:
@@ -599,7 +636,7 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path)
 # --- Main Orchestration Function ---
 def main():
     project_root = Path.cwd()
-    log_file_path = project_root / JSON_LOG_FILE_NAME # Use the constant
+    log_file_path = project_root / JSON_LOG_FILE_NAME
     _init_log()
 
     pyproject_file_path = project_root / PYPROJECT_TOML_NAME
@@ -616,10 +653,10 @@ def main():
         if not _ensure_uv_installed():
             raise SystemExit(f"Halting: `uv` could not be installed or verified. Check log and console output for details.")
 
-        if not _ensure_project_initialized(project_root):
+        if not _ensure_project_initialized(project_root): # This now handles conditional main.py removal
             raise SystemExit(f"Halting: Project could not be initialized with '{PYPROJECT_TOML_NAME}'. Check log and console output.")
 
-        _ensure_gitignore_exists(project_root, VENV_NAME) # Ensure .gitignore is set up
+        _ensure_gitignore_exists(project_root, VENV_NAME)
 
         action_venv = "create_or_verify_venv"
         _log_action(action_venv, "INFO", f"Creating/ensuring virtual environment '{VENV_NAME}'.")
