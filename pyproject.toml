@@ -1,7 +1,31 @@
 [project]
 name = "pyuvstarter"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.0" # You can update the version as you develop
+description = "A script to automate Python project setup using uv, focusing on pyproject.toml, and configuring VS Code."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.8" # The pyuvstarter.py script aims for 3.8+ compatibility
+
+# Optional: Add author information
+authors = [
+  { name = "Andrew Hundt", email = "ATHundt@gmail.com" },
+]
+
+# Dependencies needed for pyuvstarter.py itself to run.
+# Currently, it uses standard library modules, so this can be empty.
+# If you were to add, e.g., a third-party TOML parser for older Python versions:
+# dependencies = [
+#   "tomli; python_version < '3.11'",
+# ]
 dependencies = []
+
+
+# This section is KEY for `uv tool install .` to create an executable
+[project.scripts]
+pyuvstarter = "pyuvstarter:main" # Creates `pyuvstarter` command from pyuvstarter.py's main()
+
+# This section tells uv/pip how to build your project.
+# It's standard for projects using pyproject.toml.
+[build-system]
+requires = ["setuptools>=61.0"] # Specifies setuptools as the build tool
+build-backend = "setuptools.build_meta" # The function setuptools uses to build
+backend-path = ["."] # Tells setuptools to look for build-related files (like setup.cfg if used, though not needed here) in the current directory.
