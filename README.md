@@ -1,8 +1,23 @@
-# pyuvstarter.py
+# pyuvstarter
 
-`pyuvstarter.py` is a Python script designed to automate the setup of a modern Python project environment. It leverages `uv` (an extremely fast Python package installer and resolver) as its core engine, focuses on `pyproject.toml` for dependency management, configures Visual Studio Code for the project, and prepares the project for version control by ensuring a sensible `.gitignore` file is present.
+**Tired of tedious Python project setup? `pyuvstarter` is here to streamline your workflow, whether you're starting a new project or modernizing an existing one!**
 
-The script operates in a non-interactive "standard run" mode, making decisions automatically to streamline the setup process. It also generates a detailed JSON log (`pyuvstarter_setup_log.json`) of all actions performed, which is invaluable for troubleshooting and auditing.
+This script supercharges your Python project initialization by leveraging [`uv`](https://astral.sh/uv) – an extremely fast Python package manager from Astral. `pyuvstarter` automates the creation of a robust, modern Python environment, centered around `pyproject.toml` for dependency management. It's designed to get you coding faster by handling the foundational setup.
+
+**Why should you care?**
+
+* **Speed & Efficiency:** Launch new projects or update existing ones in seconds with `uv`'s blazing-fast environment creation and package operations.
+* **Modern Standards:** Automatically sets up your project with `pyproject.toml` and `uv.lock` for reproducible and reliable dependency management, aligning with current Python best practices.
+* **Smart Automation for New & Existing Projects with steps to avoid breaking them:**
+    * Ensures `uv` and necessary tools like `pipreqs` are available, installing them if needed.
+    * For existing projects, it can migrate dependencies from legacy `requirements.txt` files into your `pyproject.toml`.
+    * Scans your code for imports using `pipreqs` and automatically adds discovered dependencies to `pyproject.toml` via `uv add`.
+    * Sets up a `.gitignore` file with sensible defaults.
+    * Configures VS Code to use the new project environment.
+* **Reproducibility & Auditing:** Generates a detailed JSON log (`pyuvstarter_setup_log.json`) of every action, making troubleshooting and understanding the setup process transparent.
+* **Non-Interactive by Default:** Designed for a smooth, "standard run" experience without interrupting you with prompts.
+
+In short, `pyuvstarter` handles the boilerplate, so you can focus on coding, whether it's a brand-new idea or an established codebase.
 
 ## Features
 
@@ -27,68 +42,99 @@ The script operates in a non-interactive "standard run" mode, making decisions a
     * Generates a detailed `pyuvstarter_setup_log.json` file for traceability and debugging.
     * Provides clear console output and includes "Next Steps" guidance in both console and the JSON log.
 
-## How to Use
+## How to Use `pyuvstarter`
 
-1.  **Prerequisites:**
-    * Python 3 installed (Python 3.11+ is recommended for the best experience with `pyproject.toml` parsing using the built-in `tomllib`).
-    * System tools for `uv` installation if `uv` is not already installed:
-        * **macOS:** Homebrew (`brew`) is preferred for `uv` installation. If Homebrew is not available, `curl` will be used.
-        * **Linux:** `curl` is required.
-        * **Windows:** PowerShell is required.
-    * (Optional) An existing `requirements.txt` file if you are migrating an older project.
+### 1. Prerequisites for Running `pyuvstarter`
 
-2.  **Placement:**
-    * Save the `pyuvstarter.py` script in the root directory of your new or existing Python project.
+* **Python 3:** Preferably 3.8+ to run the `pyuvstarter.py` script. Python 3.11+ is recommended for the best experience with `pyproject.toml` parsing using the built-in `tomllib`.
+* **`uv`:** `pyuvstarter` will attempt to install `uv` if it's not found on your system. This requires:
+    * **macOS:** Homebrew (`brew`) is preferred, or `curl`.
+    * **Linux:** `curl`.
+    * **Windows:** PowerShell.
+* **Git:** If you plan to install `pyuvstarter` itself from a Git repository (see below).
 
-3.  **Execution:**
-    * Open your terminal or command prompt.
-    * Navigate to the project root directory (where `pyuvstarter.py` is located).
-    * **On Linux/macOS, make the script executable (one-time setup):**
-        ```bash
-        chmod +x pyuvstarter.py
-        ```
-    * **Run the script:**
-        ```bash
-        ./pyuvstarter.py
-        ```
-        Alternatively, on any OS, you can run it with:
-        ```bash
-        python3 pyuvstarter.py
-        ```
-        (Use `python` instead of `python3` if that's how your Python 3 interpreter is aliased).
+### 2. Installing `pyuvstarter` as a Command-Line Tool (Recommended)
 
-## Expected Outcome
+Once this `pyuvstarter` project is available in a public Git repository (e.g., on GitHub), you can install it as a command-line tool using `uv` itself:
 
-After the script runs successfully:
+1.  **Ensure `uv` is installed on your system.** If not, `pyuvstarter` (when run for the first time on another project) can help install it, or you can install `uv` manually from [astral.sh](https://astral.sh/uv).
+2.  **Install `pyuvstarter` using `uv tool install`:**
+    Replace `<your-git-repo-url>` with the actual URL of the `pyuvstarter` repository.
+    ```bash
+    uv tool install git+https://your-git-repo-url/pyuvstarter.git
+    ```
+    For this to work seamlessly and make `pyuvstarter` directly callable, the `pyproject.toml` file within the `pyuvstarter` project should define an entry point for the script, like:
+    ```toml
+    # In pyuvstarter's own pyproject.toml
+    [project.scripts]
+    pyuvstarter = "pyuvstarter:main"
+    ```
+    (This assumes your `pyuvstarter.py` script has a `main()` function that `pyuvstarter:main` can point to. If your script is named something else, adjust accordingly e.g., `your_script_name:main_function_in_script`).
+3.  **Ensure `uv`'s tool binaries directory is in your PATH:**
+    `uv tool install` places executables in a directory managed by `uv` (often `~/.local/bin` on Linux/macOS or a similar user-specific path). `uv` usually provides instructions to add this to your PATH if it's not already there. You can also run:
+    ```bash
+    uv tool update-shell
+    ```
+    Then, restart your terminal or source your shell configuration file (e.g., `.bashrc`, `.zshrc`).
 
-* A `pyproject.toml` file will be present and will define your project's dependencies.
-* A `.gitignore` file will be present, configured with useful defaults.
-* A `.venv/` directory (or your chosen name) will contain the isolated Python virtual environment.
-* A `uv.lock` file will exist, ensuring reproducible dependency installations.
-* All declared and discovered dependencies will be installed in the virtual environment.
-* If you have VS Code, `.vscode/settings.json` will be configured to use the new virtual environment's interpreter.
-* A `pyuvstarter_setup_log.json` file will provide a detailed record of the script's operations.
+After these steps, you should be able to run `pyuvstarter` from any directory.
+
+**Alternative Installation (from a local clone):**
+
+If you have cloned the `pyuvstarter` repository locally:
+
+1.  Navigate into the cloned `pyuvstarter` directory.
+2.  Run:
+    ```bash
+    uv tool install .
+    ```
+    (Again, this relies on `pyuvstarter`'s `pyproject.toml` being set up to expose the script).
+
+### 3. Running `pyuvstarter` to Set Up a Project
+
+Once `pyuvstarter` is installed and available in your PATH:
+
+1.  **Navigate to your target project's root directory** (this can be an empty directory for a new project or an existing project you want to set up with `uv`).
+2.  **Run the command:**
+    ```bash
+    pyuvstarter
+    ```
+
+The script will then perform all its automated setup actions in that directory.
+
+*(If you haven't installed `pyuvstarter` system-wide, you would place the `pyuvstarter.py` script directly into your target project's root directory, make it executable (`chmod +x pyuvstarter.py` on Linux/macOS), and run it with `./pyuvstarter.py` or `python3 pyuvstarter.py` from within that directory.)*
+
+## Expected Outcome After `pyuvstarter` Runs
+
+* A `pyproject.toml` file will define your project's dependencies.
+* A `.gitignore` file will be present.
+* A `.venv/` directory will contain the Python virtual environment.
+* A `uv.lock` file will ensure reproducible dependency installations.
+* Dependencies (migrated, declared, and discovered) will be installed.
+* `.vscode/settings.json` will be configured for VS Code.
+* A `pyuvstarter_setup_log.json` file will detail the script's operations.
 * The console output (and the JSON log) will provide "Next Steps" guidance.
 
-## Typical "Next Steps" After Running
+## Typical "Next Steps" After Running `pyuvstarter`
 
-1.  **Reload VS Code:** If your project was already open in VS Code, reload the window (`Ctrl+Shift+P` or `Cmd+Shift+P`, then type "Developer: Reload Window") for changes to take full effect.
+1.  **Reload VS Code:** If your project was already open in VS Code, reload the window (`Ctrl+Shift+P` or `Cmd+Shift+P`, then type "Developer: Reload Window").
 2.  **Activate Virtual Environment:** In your terminal, activate the virtual environment:
     * Linux/macOS: `source .venv/bin/activate`
     * Windows (PowerShell): `.\.venv\Scripts\activate`
 3.  **Review & Test:**
-    * Examine `pyproject.toml` and `uv.lock` to ensure dependencies are correctly listed.
+    * Examine `pyproject.toml` and `uv.lock`.
     * Review the generated `.gitignore`.
-    * Test your project thoroughly to confirm everything works as expected with the new environment.
+    * Test your project thoroughly.
 4.  **Commit to Version Control:**
-    * Commit `pyproject.toml`, `uv.lock`, `.gitignore`, your project's source code, and `pyuvstarter.py` itself (if you want it versioned with the project).
-    * **Do NOT commit** the `.venv/` directory or the `pyuvstarter_setup_log.json` file (they are included in the default `.gitignore`).
+    * Commit `pyproject.toml`, `uv.lock`, `.gitignore`, and your project's source code.
+    * If `pyuvstarter` itself is part of this project (not installed globally), commit it too.
+    * **Do NOT commit** `.venv/` or `pyuvstarter_setup_log.json`.
 
 ## Troubleshooting
 
-* If `uv` or `pipreqs` installation fails, the script will provide error messages and hints. You might need to install system prerequisites like `curl` or Homebrew manually.
-* If `pipreqs` fails to discover a dependency or maps an import name incorrectly, you may need to manually add the correct package to `pyproject.toml` using `uv add <package-name>`.
-* Always check the `pyuvstarter_setup_log.json` file for detailed error messages and the sequence of operations if the script doesn't behave as expected.
+* If `uv` or `pipreqs` installation (done by `pyuvstarter`) fails, the script will provide error messages and hints.
+* If `pipreqs` misidentifies dependencies, manually edit `pyproject.toml` and use `uv add <correct-package>` or `uv remove <incorrect-package>`, then `uv sync`.
+* Always check `pyuvstarter_setup_log.json` for detailed error messages.
 
 ## License
 

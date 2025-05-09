@@ -2,6 +2,8 @@
 """
 pyuvstarter.py (v6.6 - Conditional main.py removal)
 
+Copyright (c) 2025 Andrew Hundt
+
 Purpose:
 This script automates the setup of a Python project environment using `uv`,
 focusing on `pyproject.toml` for dependency management, configures Visual
