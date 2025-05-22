@@ -74,14 +74,14 @@ Committing to Git:
 """
 
 import os
-import json
-import subprocess
 import sys
+import json
 import shutil
-from pathlib import Path
+import subprocess
 import datetime
 import platform
-import importlib.util # For tomllib check
+import importlib.util
+from pathlib import Path
 
 # --- Configuration Constants ---
 VENV_NAME = ".venv"
@@ -607,33 +607,121 @@ def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> 
     return packages
 
 def _configure_vscode_settings(project_root: Path, venv_python_executable: Path):
+    """
+    Ensure .vscode/settings.json exists and sets python.defaultInterpreterPath to the venv Python.
+    If settings.json is invalid JSON, back it up before overwriting. Only update the interpreter path, preserve other settings.
+    Adds a comment to clarify uv integration.
+    """
     action_name = "configure_vscode_settings"
     _log_action(action_name, "INFO", f"Configuring VS Code settings in '{VSCODE_DIR_NAME}'.")
     vscode_dir_path = project_root / VSCODE_DIR_NAME
     settings_file_path = vscode_dir_path / SETTINGS_FILE_NAME
-
+    vscode_dir_path.mkdir(exist_ok=True)
+    settings_data = {}
+    backup_made = False
+    if settings_file_path.exists():
+        try:
+            with open(settings_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if content.strip():
+                    settings_data = json.loads(content)
+        except json.JSONDecodeError:
+            # Backup invalid JSON before overwriting
+            backup_path = settings_file_path.with_suffix(f".bak_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
+            shutil.copy2(settings_file_path, backup_path)
+            backup_made = True
+            _log_action(action_name, "WARN", f"Existing '{settings_file_path.name}' is not valid JSON. Backed up before overwrite.", details={"backup": str(backup_path)})
+            settings_data = {}
+        except Exception as e:
+            _log_action(action_name, "WARN", f"Could not read existing '{settings_file_path.name}': {e}. It may be overwritten.", details={"exception": str(e)})
+            settings_data = {}
+    resolved_interpreter_path = str(venv_python_executable.resolve())
+    settings_data["python.defaultInterpreterPath"] = resolved_interpreter_path
+    # Add a comment for uv integration (not valid JSON, but VS Code ignores comments in settings.json)
+    # So we prepend a comment line if not present
+    comment_line = "// This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
     try:
-        vscode_dir_path.mkdir(exist_ok=True)
-        settings_data = {}
-        if settings_file_path.exists():
-            try:
-                with open(settings_file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    if content.strip(): settings_data = json.loads(content)
-            except json.JSONDecodeError:
-                _log_action(action_name, "WARN", f"Existing '{settings_file_path.name}' is not valid JSON. It will be overwritten.")
-            except Exception as e:
-                _log_action(action_name, "WARN", f"Could not read existing '{settings_file_path.name}': {e}. It may be overwritten.", details={"exception": str(e)})
+        with open(settings_file_path, 'r', encoding='utf-8') as f:
+            first_line = f.readline()
+    except Exception:
+        first_line = ""
+    with open(settings_file_path, 'w', encoding='utf-8') as f:
+        if not first_line.strip().startswith("// This interpreter path is managed by pyuvstarter"):
+            f.write(comment_line + "\n")
+        json.dump(settings_data, f, indent=4)
+    msg = f"VS Code 'python.defaultInterpreterPath' set.{' (Backed up old file)' if backup_made else ''}"
+    _log_action(action_name, "SUCCESS", msg, details={"interpreter_path": resolved_interpreter_path})
+    print(f"INFO: VS Code 'python.defaultInterpreterPath' set in '{settings_file_path.name}'\n      Path: {resolved_interpreter_path}\n      (Managed by pyuvstarter and uv)")
 
-        resolved_interpreter_path = str(venv_python_executable.resolve())
-        settings_data["python.defaultInterpreterPath"] = resolved_interpreter_path
-        with open(settings_file_path, 'w', encoding='utf-8') as f: json.dump(settings_data, f, indent=4)
-
-        _log_action(action_name, "SUCCESS", f"VS Code 'python.defaultInterpreterPath' set.", details={"interpreter_path": resolved_interpreter_path})
-        print(f"INFO: VS Code 'python.defaultInterpreterPath' set in '{settings_file_path.name}'\n      Path: {resolved_interpreter_path}")
-    except Exception as e:
-        _log_action(action_name, "ERROR", f"Failed to configure VS Code settings in '{settings_file_path.name}'.", details={"exception": str(e)})
-        print(f"ERROR: Failed to configure VS Code settings: {e}\n       Check permissions for '{vscode_dir_path}' and '{settings_file_path.name}'.\n       Manually set Python interpreter in VS Code to: {str(venv_python_executable.resolve())}", file=sys.stderr)
+def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path):
+    """
+    Ensure .vscode/launch.json exists and has a launch config for the currently active Python file using the venv Python.
+    If launch.json is invalid JSON, back it up before overwriting. Only add a new config if needed, never remove user configs.
+    The launch config is maximally integrated with uv: it uses the venv interpreter and is generic for any Python file.
+    """
+    action_name = "ensure_vscode_launch_json"
+    vscode_dir = project_root / VSCODE_DIR_NAME
+    launch_path = vscode_dir / "launch.json"
+    vscode_dir.mkdir(exist_ok=True)
+    # Use ${file} so the user can run any Python file they have open in the editor
+    default_config = {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Python: Run Current File (uv venv)",
+                "type": "python",
+                "request": "launch",
+                "program": "${file}",
+                "console": "integratedTerminal",
+                "python": str(venv_python_executable.resolve()),
+                "justMyCode": True,
+                "internalConsoleOptions": "neverOpen",
+                "env": {},
+                "cwd": "${workspaceFolder}",
+                "args": [],
+                "description": "Runs the currently open Python file using the uv-managed virtual environment."
+            }
+        ]
+    }
+    backup_made = False
+    if launch_path.exists():
+        try:
+            with open(launch_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            configs = data.get("configurations", [])
+            # Check if a config for ${file} and the venv python already exists
+            already_present = any(
+                c.get("type") == "python" and c.get("program") == "${file}" and c.get("python") == str(venv_python_executable.resolve())
+                for c in configs
+            )
+            if not already_present:
+                configs.append(default_config["configurations"][0])
+                data["configurations"] = configs
+                with open(launch_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
+                _log_action(action_name, "SUCCESS", "Added launch config for current file to existing launch.json.")
+                print(f"INFO: Added launch config for current file to existing .vscode/launch.json.")
+            else:
+                _log_action(action_name, "INFO", "Launch config for current file and venv python already present in launch.json.")
+                print(f"INFO: Launch config for current file and venv python already present in .vscode/launch.json.")
+        except json.JSONDecodeError:
+            # Backup invalid JSON before overwriting
+            backup_path = launch_path.with_suffix(f".bak_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
+            shutil.copy2(launch_path, backup_path)
+            backup_made = True
+            _log_action(action_name, "WARN", f"Existing '{launch_path.name}' is not valid JSON. Backed up before overwrite.", details={"backup": str(backup_path)})
+            with open(launch_path, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=4)
+            _log_action(action_name, "SUCCESS", f"Created new launch.json for current file. (Backed up old file)")
+            print(f"INFO: Created new .vscode/launch.json for current file. (Backed up old file)")
+        except Exception as e:
+            _log_action(action_name, "ERROR", f"Could not update existing launch.json: {e}")
+            print(f"ERROR: Could not update .vscode/launch.json: {e}", file=sys.stderr)
+    else:
+        with open(launch_path, "w", encoding="utf-8") as f:
+            json.dump(default_config, f, indent=4)
+        _log_action(action_name, "SUCCESS", "Created new launch.json for current file.")
+        print(f"INFO: Created new .vscode/launch.json for current file.")
 
 # --- Main Orchestration Function ---
 def main():
@@ -718,6 +806,7 @@ def main():
             print("WARN: `pipreqs` setup failed. Skipping automatic import discovery and addition of new dependencies.", file=sys.stderr)
 
         _configure_vscode_settings(project_root, venv_python_executable)
+        _ensure_vscode_launch_json(project_root, venv_python_executable)
 
         _log_action("script_end", "SUCCESS", "Automated project setup script completed successfully.")
         print("\n--- Automated Project Setup Complete ---")
