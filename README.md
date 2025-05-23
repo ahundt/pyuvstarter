@@ -35,7 +35,7 @@ In short, `pyuvstarter` handles the boilerplate, so you can focus on coding, whe
     * Uses `pipreqs` (via `uvx`) to scan project source code for imported packages.
     * Automatically adds newly discovered, undeclared dependencies to `pyproject.toml` using `uv add`.
 * **IDE & Version Control:**
-    * Configures VS Code's Python interpreter path in `.vscode/settings.json`.
+    * Configures VS Code's Python interpreter path in `.vscode/settings.json` and `.vscode/launch.json`.
     * Ensures a `.gitignore` file exists with common Python, virtual environment, and OS-specific exclusions, also ignoring the script's own JSON log file.
 * **Automation & Logging:**
     * Runs non-interactively, making sensible default choices.
@@ -81,14 +81,24 @@ After these steps, you should be able to run `pyuvstarter` from any directory.
 
 **Alternative Installation (from a local clone):**
 
-If you have cloned the `pyuvstarter` repository locally:
+```bash
+# 1. Clone the repository (if you haven't already)
+git clone https://github.com/yourusername/pyuvstarter.git
+cd pyuvstarter
 
-1.  Navigate into the cloned `pyuvstarter` directory.
-2.  Run:
-    ```bash
-    uv tool install .
-    ```
-    (Again, this relies on `pyuvstarter`'s `pyproject.toml` being set up to expose the script).
+# 2. Install pyuvstarter as a uv tool
+uv tool install .
+
+# 3. (Optional) Force reinstall if you want to overwrite an existing install
+uv pip install .
+```
+
+**Uninstall pyuvstarter**
+
+```bash
+uv tool uninstall pyuvstarter
+uv pip uninstall pyuvstarter
+```
 
 ### 3. Running `pyuvstarter` to Set Up a Project
 
@@ -104,6 +114,29 @@ The script will then perform all its automated setup actions in that directory.
 
 *(If you haven't installed `pyuvstarter` system-wide, you would place the `pyuvstarter.py` script directly into your target project's root directory, make it executable (`chmod +x pyuvstarter.py` on Linux/macOS), and run it with `./pyuvstarter.py` or `python3 pyuvstarter.py` from within that directory.)*
 
+### Command-Line Arguments
+
+You can run `pyuvstarter` with the following options:
+
+- `pyuvstarter [project_dir]`
+  Run setup in the specified `project_dir`. If omitted, uses the current directory.
+
+- `pyuvstarter --version`
+  Print the installed version of `pyuvstarter` and exit.
+
+**Examples:**
+
+```bash
+# Run in the current directory
+pyuvstarter
+
+# Run in a specific directory
+pyuvstarter /path/to/your/project
+
+# Show version
+pyuvstarter --version
+```
+
 ## Expected Outcome After `pyuvstarter` Runs
 
 * A `pyproject.toml` file will define your project's dependencies.
@@ -111,7 +144,7 @@ The script will then perform all its automated setup actions in that directory.
 * A `.venv/` directory will contain the Python virtual environment.
 * A `uv.lock` file will ensure reproducible dependency installations.
 * Dependencies (migrated, declared, and discovered) will be installed.
-* `.vscode/settings.json` will be configured for VS Code.
+* `.vscode/settings.json` and `.vscode/launch.json` will be configured for vscode.
 * A `pyuvstarter_setup_log.json` file will detail the script's operations.
 * The console output (and the JSON log) will provide "Next Steps" guidance.
 

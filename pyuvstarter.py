@@ -60,6 +60,9 @@ Outcome:
 - A 'pyuvstarter_setup_log.json' file will detail the script's execution.
 - The script will print recommended next steps to the console, and these will
   also be included in the JSON log if the script completes without critical failure.
+- you should source the virtual environment in your terminal:
+    - `source .venv/bin/activate` (Linux/macOS)
+    - `.venv\\Scripts\\activate` (Windows PowerShell)
 
 Committing to Git:
 - After running, you should typically commit:
@@ -71,6 +74,25 @@ Committing to Git:
   - `.vscode/settings.json` (optional, if you want to share VS Code settings).
 - Do NOT commit the `.venv/` directory or the `pyuvstarter_setup_log.json` file
   (this script adds them to `.gitignore`).
+
+
+Installing and uninstalling pyuvstarter:
+
+install pyuvstarter:
+uv tool install .
+
+Force reinstall (sorta works):
+
+uv pip install --force-reinstall .
+
+
+Uninstall pyuvstarter:
+
+(hacky way to clear out pyuvstarter on mac when testing uv tool install . which is partly broken has problems like not removing the .venv and highlighting the name of the tool after uninstall):
+
+uv tool uninstall pyuvstarter
+uv pip uninstall pyuvstarter
+find ~/.local/share/uv/tools ~/.cache/uv ~/.local/lib ~/.pyenv .venv -iname 'pyuvstarter*' -delete
 """
 
 import os
@@ -82,6 +104,7 @@ import datetime
 import platform
 import importlib.util
 from pathlib import Path
+import argparse
 
 # --- Configuration Constants ---
 VENV_NAME = ".venv"
@@ -90,25 +113,87 @@ GITIGNORE_NAME = ".gitignore"
 LEGACY_REQUIREMENTS_TXT = "requirements.txt" # For migration
 VSCODE_DIR_NAME = ".vscode"
 SETTINGS_FILE_NAME = "settings.json"
+LAUNCH_FILE_NAME = "launch.json"
 JSON_LOG_FILE_NAME = "pyuvstarter_setup_log.json"
+
+
+# --- Argument Parsing ---
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Automate Python project setup with uv, VS Code config, and dependency management."
+    )
+    parser.add_argument(
+        "project_dir",
+        nargs="?",
+        default=".",
+        help="Project directory to operate on (default: current directory)"
+    )
+    parser.add_argument(
+        "-v", "--version",
+        action="store_true",
+        help="Show pyuvstarter version and exit"
+    )
+    return parser.parse_args()
+
+
+# --- Project Version Extraction ---
+def _get_project_version(pyproject_path: Path = Path(__file__), project_name: str = "pyuvstarter") -> str:
+    """
+    Robustly reads the version from the [project] section of a pyproject.toml.
+    If project_name is given, only returns the version if [project].name matches.
+    Returns the version string, or 'unknown' if not found or on error.
+
+    Note: don't call me on a project before uv init, as I will return 'unknown'.
+    """
+    # Try importlib.metadata.version if project_name is given
+    if project_name:
+        try:
+            import importlib.metadata
+            return importlib.metadata.version(project_name)
+        except Exception:
+            pass
+    # Fallback: try to read pyproject.toml
+    if pyproject_path is not None and pyproject_path.exists():
+        try:
+            if sys.version_info >= (3, 11):
+                import tomllib
+                with open(pyproject_path, "rb") as f:
+                    data = tomllib.load(f)
+            else:
+                import toml
+                with open(pyproject_path, "r", encoding="utf-8") as f:
+                    data = toml.load(f)
+            project = data.get("project", {})
+            if project_name and project.get("name") != project_name:
+                return "unknown"
+            return project.get("version", "unknown")
+        except Exception as e:
+            _log_action("get_project_version", "ERROR", f"Failed to read version from '{pyproject_path.name}'", details={"exception": str(e)})
+    return "unknown"
+
 
 # --- JSON Logging Utilities ---
 _log_data_global = {}
 
-def _init_log():
+def _init_log(project_root: Path):
     """Initializes the global log data structure."""
     global _log_data_global
+    pyproject_path = project_root / PYPROJECT_TOML_NAME
+    project_version = _get_project_version(pyproject_path)
     _log_data_global = {
         "script_name": Path(__file__).name,
+        "pyuvstarter_version": _get_project_version(Path(__file__).parent / "pyproject.toml", "pyuvstarter"),
+        "project_version": project_version,
         "start_time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "end_time_utc": None, "overall_status": "IN_PROGRESS",
         "platform_info": {"system": platform.system(), "release": platform.release(),
                           "version": platform.version(), "machine": platform.machine(),
                           "python_version_script_host": sys.version},
-        "project_root": str(Path.cwd()), "actions": [],
+        "project_root": str(project_root), "actions": [],
         "final_summary": None, "errors_encountered_summary": []
     }
-    _log_action("script_bootstrap", "INFO", f"Script execution initiated for project at {Path.cwd()}.")
+    _log_action("script_bootstrap", "INFO", f"Script execution initiated for project at {project_root}.")
+
 
 def _log_action(action_name: str, status: str, message: str = "", details: dict = None):
     """Logs an action and prints to console."""
@@ -132,6 +217,17 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
     details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
     print(f"{console_prefix}: ({action_name}) {message}{details_str}")
 
+
+def _get_next_steps_text():
+    return (
+        "Next Steps:\n"
+        "1. If VS Code is open with this project, reload the window (Ctrl+Shift+P > 'Developer: Reload Window').\n"
+        f"2. Activate the environment in your terminal:\n    {'./' + VENV_NAME + '/bin/activate' if sys.platform != 'win32' else '.\\\\' + VENV_NAME + '\\\\Scripts\\\\activate'}\n"
+        f"3. Review `{PYPROJECT_TOML_NAME}`, `uv.lock`, and '{GITIGNORE_NAME}', then test your project to ensure all dependencies are correctly captured and functional.\n"
+        f"4. Commit `{PYPROJECT_TOML_NAME}`, `uv.lock`, `{GITIGNORE_NAME}`, and your source files (including this script if desired) to version control."
+    )
+
+
 def _save_log(log_file_path: Path):
     """Saves the accumulated log data to a JSON file."""
     global _log_data_global
@@ -149,12 +245,7 @@ def _save_log(log_file_path: Path):
          _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
 
     if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS"]:
-        next_steps_text = (
-            f"\n\nRecommended Next Steps (also printed to console):\n"
-            f"1. If VS Code is open with this project, reload the window (Ctrl+Shift+P > 'Developer: Reload Window').\n"
-            f"2. Activate the virtual environment in your terminal: source {VENV_NAME}/bin/activate (Linux/macOS) or .\\{VENV_NAME}\\Scripts\\activate (Windows PowerShell).\n"
-            f"3. Review `{PYPROJECT_TOML_NAME}` and `uv.lock`, then test your project to ensure all dependencies are correctly captured and functional."
-        )
+        next_steps_text = _get_next_steps_text()
         if _log_data_global.get("final_summary"): _log_data_global["final_summary"] += next_steps_text
         else: _log_data_global["final_summary"] = f"Script Status: {_log_data_global['overall_status']}.{next_steps_text}"
 
@@ -721,9 +812,14 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path)
 
 # --- Main Orchestration Function ---
 def main():
-    project_root = Path.cwd()
+    args = parse_args()
+    if getattr(args, "version", False):
+        version = _get_project_version(Path(__file__).parent / "pyproject.toml", "pyuvstarter")
+        print(f"pyuvstarter version: {version}")
+        sys.exit(0)
+    project_root = Path(args.project_dir).expanduser().resolve()
     log_file_path = project_root / JSON_LOG_FILE_NAME
-    _init_log()
+    _init_log(project_root)
 
     pyproject_file_path = project_root / PYPROJECT_TOML_NAME
     legacy_req_path = project_root / LEGACY_REQUIREMENTS_TXT
@@ -734,6 +830,8 @@ def main():
     print(f"--- JSON Log will be saved to: '{log_file_path.name}' ---")
 
     venv_python_executable = None
+    settings_json_status = "NOT_ATTEMPTED"
+    launch_json_status = "NOT_ATTEMPTED"
 
     try:
         if not _ensure_uv_installed():
@@ -805,30 +903,33 @@ def main():
             print("WARN: `pipreqs` setup failed. Skipping automatic import discovery and addition of new dependencies.", file=sys.stderr)
 
         _configure_vscode_settings(project_root, venv_python_executable)
+        settings_json_status = "SUCCESS"
         _ensure_vscode_launch_json(project_root, venv_python_executable)
+        launch_json_status = "SUCCESS"
 
         _log_action("script_end", "SUCCESS", "Automated project setup script completed successfully.")
         print("\n--- Automated Project Setup Complete ---")
         print(f"Virtual Environment: {venv_path}")
         print(f"Primary Dependency File: {pyproject_file_path.name} (should be up-to-date)")
         print(f"Lock File: {project_root / 'uv.lock'} (should be up-to-date)")
-        print(f"VS Code Configured: Check '{VSCODE_DIR_NAME}/{SETTINGS_FILE_NAME}'")
+        print(f"vscode Configured: Check '{VSCODE_DIR_NAME}/{SETTINGS_FILE_NAME}'")
+        print(f"vscode Launch Configured: Check '{VSCODE_DIR_NAME}/launch.json' (created or updated)")
         print(f"Git Ignore File: '{GITIGNORE_NAME}' (created or checked)")
         print(f"Detailed Log: '{JSON_LOG_FILE_NAME}'")
-        print("\nNext Steps:")
-        print(f"- If VS Code is open with this project, reload the window (Ctrl+Shift+P > 'Developer: Reload Window').")
-        print(f"- Activate the environment in your terminal: source {VENV_NAME}/bin/activate (Linux/macOS) or .\\{VENV_NAME}\\Scripts\\activate (Windows PowerShell)")
-        print(f"- Review `pyproject.toml`, `uv.lock`, and '{GITIGNORE_NAME}', then test your project to ensure all dependencies are correctly captured and functional.")
-        print(f"- Commit `pyproject.toml`, `uv.lock`, `{GITIGNORE_NAME}`, and your source files (including this script if desired) to version control.")
+        print(f"\n{_get_next_steps_text()}")
 
     except SystemExit as e:
         msg = f"Script halted by explicit exit: {e}"
+        settings_json_status = "FAILED"
+        launch_json_status = "FAILED"
         if _log_data_global.get("overall_status") == "IN_PROGRESS": _log_data_global["overall_status"] = "HALTED_BY_SCRIPT_LOGIC"
         _log_data_global["final_summary"] = _log_data_global.get("final_summary", msg)
         print(f"\nSCRIPT HALTED: {e}", file=sys.stderr)
     except subprocess.CalledProcessError as e:
         failed_cmd_str = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
         msg = f"A critical command failed execution: {failed_cmd_str}"
+        settings_json_status = "FAILED"
+        launch_json_status = "FAILED"
         _log_data_global["final_summary"] = msg
         _log_data_global["overall_status"] = "CRITICAL_COMMAND_FAILED"
         print(f"\nCRITICAL ERROR: {msg}, halting script.", file=sys.stderr)
@@ -860,6 +961,8 @@ def main():
         sys.exit(1)
     except FileNotFoundError as e:
         cmd_name = e.filename if hasattr(e, 'filename') and e.filename else "An external command"
+        settings_json_status = "FAILED"
+        launch_json_status = "FAILED"
         msg = f"Required system command '{cmd_name}' was not found."
         _log_data_global["final_summary"] = msg
         _log_data_global["overall_status"] = "MISSING_SYSTEM_COMMAND"
@@ -871,6 +974,8 @@ def main():
     except Exception as e:
         import traceback
         tb_str = traceback.format_exc()
+        settings_json_status = "FAILED"
+        launch_json_status = "FAILED"
         msg = f"An unexpected critical error occurred: {e}"
         _log_action("unexpected_critical_error_main", "ERROR", msg, details={"exception_type": type(e).__name__, "exception_message": str(e), "traceback": tb_str.splitlines()})
         print(f"\nAN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", file=sys.stderr)
@@ -880,7 +985,10 @@ def main():
         _log_data_global["overall_status"] = "UNEXPECTED_ERROR"
         sys.exit(1)
     finally:
+        # Update summary in log with VS Code config status
         if "start_time_utc" in _log_data_global:
+            _log_data_global["vscode_settings_json_status"] = settings_json_status
+            _log_data_global["vscode_launch_json_status"] = launch_json_status
             _save_log(log_file_path)
 
 if __name__ == "__main__":
