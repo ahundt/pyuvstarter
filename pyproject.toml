@@ -1,6 +1,6 @@
 [project]
 name = "pyuvstarter"
-version = "0.1.0" # You can update the version as you develop
+version = "0.1.2" # You can update the version as you develop
 description = "A script to automate Python project setup using uv, focusing on pyproject.toml, and configuring VS Code."
 readme = "README.md"
 requires-python = ">=3.8" # The pyuvstarter.py script aims for 3.8+ compatibility

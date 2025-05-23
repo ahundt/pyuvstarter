@@ -635,8 +635,8 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path)
         except Exception as e:
             _log_action(action_name, "WARN", f"Could not read existing '{settings_file_path.name}': {e}. It may be overwritten.", details={"exception": str(e)})
             settings_data = {}
-    resolved_interpreter_path = str(venv_python_executable.resolve())
-    settings_data["python.defaultInterpreterPath"] = resolved_interpreter_path
+    interpreter_path = str(venv_python_executable)
+    settings_data["python.defaultInterpreterPath"] = interpreter_path
     # Add a comment for uv integration (not valid JSON, but VS Code ignores comments in settings.json)
     # So we prepend a comment line if not present
     comment_line = "// This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
@@ -650,8 +650,8 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path)
             f.write(comment_line + "\n")
         json.dump(settings_data, f, indent=4)
     msg = f"VS Code 'python.defaultInterpreterPath' set.{' (Backed up old file)' if backup_made else ''}"
-    _log_action(action_name, "SUCCESS", msg, details={"interpreter_path": resolved_interpreter_path})
-    print(f"INFO: VS Code 'python.defaultInterpreterPath' set in '{settings_file_path.name}'\n      Path: {resolved_interpreter_path}\n      (Managed by pyuvstarter and uv)")
+    _log_action(action_name, "SUCCESS", msg, details={"interpreter_path": interpreter_path})
+    print(f"INFO: VS Code 'python.defaultInterpreterPath' set in '{settings_file_path.name}'\n      Path: {interpreter_path}\n      (Managed by pyuvstarter and uv)")
 
 def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path):
     """
@@ -660,6 +660,7 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path)
     The launch config is maximally integrated with uv: it uses the venv interpreter and is generic for any Python file.
     """
     action_name = "ensure_vscode_launch_json"
+    _log_action(action_name, "INFO", f"Ensuring VS Code launch.json exists in '{VSCODE_DIR_NAME}'.")
     vscode_dir = project_root / VSCODE_DIR_NAME
     launch_path = vscode_dir / "launch.json"
     vscode_dir.mkdir(exist_ok=True)
@@ -673,55 +674,50 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path)
                 "request": "launch",
                 "program": "${file}",
                 "console": "integratedTerminal",
-                "python": str(venv_python_executable.resolve()),
+                "python": str(venv_python_executable),
                 "justMyCode": True,
                 "internalConsoleOptions": "neverOpen",
-                "env": {},
+                # "env": {},  # Removed to let VS Code inherit the environment, including venv activation
                 "cwd": "${workspaceFolder}",
                 "args": [],
                 "description": "Runs the currently open Python file using the uv-managed virtual environment."
             }
         ]
     }
-    backup_made = False
-    if launch_path.exists():
-        try:
-            with open(launch_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            configs = data.get("configurations", [])
-            # Check if a config for ${file} and the venv python already exists
-            already_present = any(
-                c.get("type") == "python" and c.get("program") == "${file}" and c.get("python") == str(venv_python_executable.resolve())
-                for c in configs
-            )
-            if not already_present:
-                configs.append(default_config["configurations"][0])
-                data["configurations"] = configs
+    try:
+        if launch_path.exists():
+            try:
+                with open(launch_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                configs = data.get("configurations", [])
+                # Check if a config for ${file} and the venv python already exists
+                already_present = any(
+                    c.get("type") == "python" and c.get("program") == "${file}" and c.get("python") == str(venv_python_executable.resolve())
+                    for c in configs
+                )
+                if not already_present:
+                    configs.append(default_config["configurations"][0])
+                    data["configurations"] = configs
+                    with open(launch_path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=4)
+                    _log_action(action_name, "SUCCESS", "Added launch config for current file to existing launch.json.")
+                else:
+                    _log_action(action_name, "INFO", "Launch config for current file and venv python already present in launch.json.")
+            except json.JSONDecodeError:
+                backup_path = launch_path.with_suffix(f".bak_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
+                shutil.copy2(launch_path, backup_path)
+                _log_action(action_name, "WARN", f"Existing '{launch_path.name}' is not valid JSON. Backed up before overwrite.", details={"backup": str(backup_path)})
                 with open(launch_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4)
-                _log_action(action_name, "SUCCESS", "Added launch config for current file to existing launch.json.")
-                print(f"INFO: Added launch config for current file to existing .vscode/launch.json.")
-            else:
-                _log_action(action_name, "INFO", "Launch config for current file and venv python already present in launch.json.")
-                print(f"INFO: Launch config for current file and venv python already present in .vscode/launch.json.")
-        except json.JSONDecodeError:
-            # Backup invalid JSON before overwriting
-            backup_path = launch_path.with_suffix(f".bak_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
-            shutil.copy2(launch_path, backup_path)
-            backup_made = True
-            _log_action(action_name, "WARN", f"Existing '{launch_path.name}' is not valid JSON. Backed up before overwrite.", details={"backup": str(backup_path)})
+                    json.dump(default_config, f, indent=4)
+                _log_action(action_name, "SUCCESS", f"Created new launch.json for current file. (Backed up old file)")
+            except Exception as e:
+                _log_action(action_name, "ERROR", f"Could not update existing launch.json: {e}")
+        else:
             with open(launch_path, "w", encoding="utf-8") as f:
                 json.dump(default_config, f, indent=4)
-            _log_action(action_name, "SUCCESS", f"Created new launch.json for current file. (Backed up old file)")
-            print(f"INFO: Created new .vscode/launch.json for current file. (Backed up old file)")
-        except Exception as e:
-            _log_action(action_name, "ERROR", f"Could not update existing launch.json: {e}")
-            print(f"ERROR: Could not update .vscode/launch.json: {e}", file=sys.stderr)
-    else:
-        with open(launch_path, "w", encoding="utf-8") as f:
-            json.dump(default_config, f, indent=4)
-        _log_action(action_name, "SUCCESS", "Created new launch.json for current file.")
-        print(f"INFO: Created new .vscode/launch.json for current file.")
+            _log_action(action_name, "SUCCESS", "Created new launch.json for current file.")
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create or update launch.json: {e}")
 
 # --- Main Orchestration Function ---
 def main():
@@ -753,6 +749,9 @@ def main():
         _run_command(["uv", "venv", VENV_NAME], f"{action_venv}_uv_venv")
         venv_path = project_root / VENV_NAME
         venv_python_executable = venv_path / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
+        # log action of the two prints above including the executable and the venv path and the resolved path
+        _log_action(action_venv, "INFO", f"Virtual environment '{VENV_NAME}' created/verified. venv_path:'{venv_path}' Python executable: '{venv_python_executable}'. Project venv Python resolved to absolute path: '{venv_python_executable.resolve()}' venv path: '{venv_path}'.")
+
         if not venv_python_executable.exists():
             msg = f"Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command."
             _log_action(action_venv, "ERROR", msg)
