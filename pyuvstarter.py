@@ -291,13 +291,64 @@ def _init_log(project_root: Path):
 
 
 def _log_action(action_name: str, status: str, message: str = "", details: dict = None):
-    """Logs an action and prints to console."""
+    """
+    Logs a single, user-meaningful event to both the console and the structured JSON log, especially when the program takes action to change the system / project or encounters a significant condition.
+
+    Purpose & Philosophy:
+    - _log_action is the ONLY approved way to communicate actions, errors, and next steps to users and to the log in pyuvstarter.
+    - It enforces a one-event, one-call discipline: every important event (success, warning, error, or user guidance) must be logged ONCE, with all relevant info.
+    - This prevents log spam, double-logging, and user confusion, and ensures the JSON log is a faithful, machine-parseable record of what happened.
+
+    Status Usage:
+    - **INFO:** Routine progress, context, or non-critical information. No user action required.
+    - **SUCCESS:** A key step completed as intended. No user action required unless you provide explicit next steps.
+    - **WARN:** Something unexpected happened, but the script can continue. User may want to check or fix something. Provide next steps if user intervention is recommended.
+    - **ERROR:** A critical failure. The script cannot proceed, or user intervention is required. Always provide clear, step-by-step next steps if the user can resolve the issue.
+
+    When to Provide Next Steps:
+    - Only include next steps if the user must take action to recover, fix, or continue.
+    - If the script can handle the issue automatically, do NOT tell the user to do anything.
+    - If next steps are needed, be specific and step-by-step (e.g., “Run this command: ...”, “Edit this file: ...”).
+    - Avoid vague or generic advice (“Try again”, “Contact support”) unless there is no other option.
+
+    Examples:
+        # Good: (clear status, actionable next steps)
+        _log_action('venv_create', 'SUCCESS', 'Virtual environment created at .venv. Next steps: Activate it with "source .venv/bin/activate".')
+
+        _log_action('install_uv', 'ERROR', 'Failed to install uv. Next steps: Run "brew install uv" in your terminal, then re-run this script.', details={'exception': str(e)})
+
+        # Bad: (split event, vague next steps, or unnecessary instruction)
+        _log_action('venv_create', 'SUCCESS', 'Virtual environment created at .venv.')
+        _log_action('venv_create', 'INFO', 'You may want to activate it.')  # Too vague, not actionable
+
+        _log_action('install_uv', 'ERROR', 'Failed to install uv. Try something else.')  # Not specific
+
+    Quick Reference:
+    | Status   | Meaning                | User Action Needed? | Next Steps?         |
+    |----------|------------------------|---------------------|---------------------|
+    | INFO     | Routine info/progress  | No                  | Rarely              |
+    | SUCCESS  | Step completed         | No (unless noted)   | Sometimes           |
+    | WARN     | Unexpected, recoverable| Maybe               | If user can help    |
+    | ERROR    | Critical failure       | Yes                 | Always, if possible |
+
+    Parameters:
+    - action_name: Short identifier for the event (e.g. 'install_uv').
+    - status: 'INFO', 'SUCCESS', 'WARN', or 'ERROR'.
+    - message: User-facing and/or technical message. Include next steps if needed.
+    - details: Optional dict for structured, technical info.
+
+    Always print to console and log to JSON. Never split a single event across multiple calls.
+    """
     global _log_data_global
     if "actions" not in _log_data_global:
         _log_data_global["actions"] = []
-    entry = {"timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-             "action": action_name, "status": status.upper(),
-             "message": message, "details": details or {}}
+    entry = {
+        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "action": action_name,
+        "status": status.upper(),
+        "message": message,
+        "details": details or {},
+    }
     _log_data_global["actions"].append(entry)
 
     if status.upper() == "ERROR":
@@ -313,11 +364,8 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
     console_prefix = status.upper()
     if console_prefix == "SUCCESS":
         console_prefix = "INFO"
-
     details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
-    # FIXED malformed f-string below
     print(f"{console_prefix}: ({action_name}) {message}{details_str}")
-
 
 def _get_next_steps_text():
     return (
@@ -375,7 +423,7 @@ def _run_command(command_list, action_log_name: str, work_dir=None, shell=False,
     if work_dir is None:
         work_dir = Path.cwd()
     cmd_str = ' '.join(command_list) if isinstance(command_list, list) else command_list
-    print(f"EXEC: \"{cmd_str}\" in \"{work_dir}\" (Logged as action: {action_log_name})")
+    _log_action(action_log_name, "INFO", f"EXEC: \"{cmd_str}\" in \"{work_dir}\" (Logged as action: {action_log_name})")
 
     log_details = {"command": cmd_str, "working_directory": str(work_dir), "shell_used": shell, "capture_output_setting": capture_output}
 
@@ -389,22 +437,21 @@ def _run_command(command_list, action_log_name: str, work_dir=None, shell=False,
         _log_action(action_log_name, "SUCCESS", f"Command executed successfully: {cmd_str}", details=log_details)
         if capture_output and not suppress_console_output_on_success:
             if stdout:
-                print(f"  OUT: {stdout}")
+                _log_action(action_log_name, "INFO", f"  OUT: {stdout}")
             if stderr:
-                print(f"  INF_STDERR: {stderr}", file=sys.stdout)
+                _log_action(action_log_name, "INFO", f"  INF_STDERR: {stderr}")
         return stdout, stderr
     except subprocess.CalledProcessError as e:
         log_details.update({"error_type": "CalledProcessError", "return_code": e.returncode,
                             "stdout": e.stdout.strip() if e.stdout and capture_output else ("Output streamed directly to console." if not capture_output else ""),
                             "stderr": e.stderr.strip() if e.stderr and capture_output else ("Output streamed directly to console." if not capture_output else ""),
                             "exception_message": str(e)})
-        _log_action(action_log_name, "ERROR", f"Command failed: {cmd_str}", details=log_details)
-        print(f"  CMD_ERROR: Command \"{cmd_str}\" failed with exit code {e.returncode}.", file=sys.stderr)
+        _log_action(action_log_name, "ERROR", f"  CMD_ERROR: Command failed: \"{cmd_str}\" failed with exit code {e.returncode}.", details=log_details)
         if capture_output:
             if e.stdout:
-                print(f"  FAIL_STDOUT:\n{e.stdout.strip()}", file=sys.stderr)
+                _log_action(action_log_name, "ERROR", f"  FAIL_STDOUT:\n{e.stdout.strip()}")
             if e.stderr:
-                print(f"  FAIL_STDERR:\n{e.stderr.strip()}", file=sys.stderr)
+                _log_action(action_log_name, "ERROR", f"  FAIL_STDERR:\n{e.stderr.strip()}")
         raise
     except FileNotFoundError as e:
         cmd_name = command_list[0] if isinstance(command_list, list) else command_list.split()[0]
@@ -426,8 +473,7 @@ def _install_uv_macos_brew():
     action_name = "install_uv_macos_brew"
     _log_action(action_name, "INFO", "Attempting `uv` installation via Homebrew.")
     if not _command_exists("brew"):
-        _log_action(action_name, "WARN", "Homebrew (brew) not found.")
-        print(f"WARN: Homebrew (brew) not found. Cannot attempt `uv` installation via Homebrew.\n      Please install Homebrew from https://brew.sh/ or allow installation via the official script.", file=sys.stderr)
+        _log_action(action_name, "ERROR", "Homebrew (brew) not found. Cannot attempt `uv` installation via Homebrew.\n      Please install Homebrew from https://brew.sh/ or allow installation via the official script.")
         return False
     try:
         _run_command(["brew", "install", "uv"], f"{action_name}_exec", suppress_console_output_on_success=False)
@@ -435,12 +481,10 @@ def _install_uv_macos_brew():
             _log_action(action_name, "SUCCESS", "`uv` installed/updated via Homebrew.")
             return True
         else:
-            _log_action(action_name, "ERROR", "`brew install uv` seemed complete, but `uv` command is still not found.")
-            print(f"ERROR: `brew install uv` seemed to complete, but `uv` command is still not found.\n       Try running `brew doctor` or check Homebrew's output.\n       Ensure Homebrew's bin directory is in your PATH.", file=sys.stderr)
+            _log_action(action_name, "ERROR", "`brew install uv` seemed complete, but `uv` command is still not found.\nTry running `brew doctor` or check Homebrew's output.\n       Ensure Homebrew's bin directory is in your PATH.")
             return False
     except Exception:
-        _log_action(action_name, "ERROR", "`uv` installation via Homebrew failed. See command execution log.")
-        print("ERROR: `uv` installation via Homebrew failed. See details above.\n       Try running `brew install uv` manually.", file=sys.stderr)
+        _log_action(action_name, "ERROR", "`uv` installation via Homebrew failed. See command execution log.\nTry running `brew install uv` manually.")
         return False
 
 def _install_uv_script():
@@ -454,24 +498,20 @@ def _install_uv_script():
             _run_command(command_str, f"{action_name}_exec_ps", shell=True, capture_output=False)
         else:
             if not _command_exists("curl"):
-                _log_action(action_name, "ERROR", "`curl` is not installed. Cannot download `uv` installation script.")
-                print("ERROR: `curl` is not installed.\n       Please install `curl` (e.g., 'sudo apt install curl') and try again.", file=sys.stderr)
+                _log_action(action_name, "ERROR", "`curl` is not installed. Cannot download `uv` installation script.\nInstall `curl` (e.g., 'sudo apt install curl') and try again.")
                 return False
             command_str = "curl -LsSf https://astral.sh/uv/install.sh | sh"
             _run_command(command_str, f"{action_name}_exec_curl", shell=True, capture_output=False)
 
-        print("INFO: `uv` installation script execution finished. It usually adds `uv` to your PATH.")
-        print("INFO: If `uv` is not found immediately, you might need to restart your terminal or source your shell profile.")
+        _log_action(action_name, "SUCCESS", "`uv` installation script executed. It usually adds `uv` to your PATH.\nIf `uv` is not found immediately, you might need to restart your terminal or source your shell profile.")
         if _command_exists("uv"):
             _log_action(action_name, "SUCCESS", "`uv` now available after script install.")
             return True
         else:
-            _log_action(action_name, "WARN", "`uv` command still not found after script install. PATH adjustment or shell restart may be needed.")
-            print("WARN: `uv` command still not found after official script execution.\n      `uv` typically installs to $HOME/.local/bin or similar. Ensure this is in your PATH.", file=sys.stderr)
+            _log_action(action_name, "WARN", "`uv` command still not found after script install. PATH adjustment or shell restart may be needed.\n`uv` typically installs to $HOME/.local/bin or similar. Ensure this is in your PATH.")
             return False
     except Exception:
-        _log_action(action_name, "ERROR", f"Official `uv` installation script execution failed. Command: {command_str}. See command execution log.")
-        print(f"ERROR: Official `uv` installation script failed. See details above.\n       Try running manually: {command_str}", file=sys.stderr)
+        _log_action(action_name, "ERROR", f"Official `uv` installation script execution failed. Command: {command_str}. See command execution log.\nTry running manually: {command_str}")
         return False
 
 def _ensure_uv_installed():
@@ -482,14 +522,11 @@ def _ensure_uv_installed():
         if _command_exists("uv"):
             version_out, _ = _run_command(["uv", "--version"], f"{action_name}_version_check", suppress_console_output_on_success=True)
             _log_action(action_name, "SUCCESS", f"`uv` is already installed. Version: {version_out}")
-            print(f"INFO: `uv` is already installed. Version: {version_out}")
             return True
     except Exception as e:
-         _log_action(f"{action_name}_version_check", "ERROR", "`uv --version` failed, though `uv` command seems to exist.", details={"exception": str(e)})
-         print(f"WARN: `uv` command seems to exist, but 'uv --version' failed: {e}. Will attempt to ensure/reinstall.", file=sys.stderr)
+         _log_action(f"{action_name}_version_check", "ERROR", "`uv --version` failed, though `uv` command seems to exist. Will attempt to ensure it is installed correctly or reinstall.", details={"exception": str(e)})
 
     _log_action(action_name, "INFO", "`uv` not found or version check failed. Attempting installation.")
-    print("INFO: `uv` not found in PATH or `uv --version` verification failed. Attempting installation...")
 
     installed_successfully = False
     install_method_log = "None"
@@ -507,23 +544,19 @@ def _ensure_uv_installed():
         if _install_uv_script():
             installed_successfully = True
     else:
-        _log_action(action_name, "ERROR", f"Unsupported platform for automatic `uv` installation: {sys.platform}")
-        print(f"ERROR: Unsupported platform for automatic `uv` installation: {sys.platform}\n       Please install `uv` manually from https://astral.sh/uv", file=sys.stderr)
+        _log_action(action_name, "ERROR", f"Unsupported platform for automatic `uv` installation: {sys.platform} Please install `uv` manually from https://astral.sh/uv")
         return False
 
     if installed_successfully and _command_exists("uv"):
         try:
             version_out, _ = _run_command(["uv", "--version"], f"{action_name}_post_install_version_check", suppress_console_output_on_success=True)
             _log_action(action_name, "SUCCESS", f"`uv` successfully installed/ensured via {install_method_log}. Version: {version_out}")
-            print(f"INFO: `uv` successfully installed/ensured. Version: {version_out}")
             return True
         except Exception as e:
-            _log_action(action_name, "ERROR", f"`uv` reported installed via {install_method_log}, but 'uv --version' still fails post-install.", details={"exception": str(e)})
-            print(f"ERROR: `uv --version` still fails post-install: {e}\n       This might indicate an issue with the `uv` binary or its PATH setup.", file=sys.stderr)
+            _log_action(action_name, "ERROR", f"`uv` reported installed via {install_method_log}, but 'uv --version' still fails post-install.\nThis might indicate an issue with the `uv` binary or its PATH setup.", details={"exception": str(e)})
             return False
     else:
-        _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.")
-        print(f"ERROR: `uv` installation failed or `uv` command is still not available after attempts.\n       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.", file=sys.stderr)
+        _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.")
         return False
 
 def _ensure_tool_available(tool_name, package_to_install_via_uv_tool):
@@ -532,12 +565,10 @@ def _ensure_tool_available(tool_name, package_to_install_via_uv_tool):
     _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install_via_uv_tool}`) is available for `uvx`.")
     try:
         _run_command(["uv", "tool", "install", package_to_install_via_uv_tool], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True)
-        _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install_via_uv_tool}') install/check via `uv tool install` complete.")
-        print(f"INFO: `{tool_name}` will be run via `uvx`. For direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
+        _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install_via_uv_tool}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
         return True
     except Exception:
-        _log_action(action_name, "ERROR", f"Failed to ensure `{tool_name}` via `uv tool install`. See command execution log.")
-        print(f"ERROR: Failed to ensure `{tool_name}` is available. Check details above.\n       If `uv` is working, try manually: `uv tool install {package_to_install_via_uv_tool}`", file=sys.stderr)
+        _log_action(action_name, "ERROR", f"Failed to ensure `{tool_name}` via `uv tool install`. See command execution log.\nIf `uv` is working, try manually: `uv tool install {package_to_install_via_uv_tool}`")
         return False
 
 # --- Project and Dependency Handling ---
@@ -555,8 +586,7 @@ def _ensure_project_initialized(project_root: Path):
         _log_action(action_name, "INFO", f"'{PYPROJECT_TOML_NAME}' already exists at {project_root}.")
         return True
 
-    _log_action(action_name, "INFO", f"'{PYPROJECT_TOML_NAME}' not found. Will run `uv init`.")
-    print(f"INFO: '{PYPROJECT_TOML_NAME}' not found. Running `uv init`...")
+    _log_action(action_name, "INFO", f"'{PYPROJECT_TOML_NAME}' not found. Running `uv init`...")
 
     # Check for existing Python files before running uv init
     existing_py_files = list(project_root.rglob("*.py"))
@@ -571,33 +601,27 @@ def _ensure_project_initialized(project_root: Path):
     try:
         _run_command(["uv", "init"], f"{action_name}_uv_init_exec")
         if not pyproject_path.exists():
-            _log_action(action_name, "ERROR", f"`uv init` ran but '{PYPROJECT_TOML_NAME}' was not created. This is unexpected.")
-            print(f"ERROR: `uv init` ran but '{PYPROJECT_TOML_NAME}' was not created.\n       Check `uv init` output. Manual creation of `pyproject.toml` might be needed.", file=sys.stderr)
+            _log_action(action_name, "ERROR", f"`uv init` ran but '{PYPROJECT_TOML_NAME}' was not created. This is unexpected.\nCheck `uv init` output. Manual creation of `pyproject.toml` might be needed.")
             return False
 
         _log_action(action_name, "SUCCESS", f"`uv init` completed. '{PYPROJECT_TOML_NAME}' created/updated.")
-        print(f"INFO: `uv init` completed. '{PYPROJECT_TOML_NAME}' is present.")
 
         # Conditional removal of main.py created by `uv init`
         main_py_exists_after_init = main_py_path.exists()
         if main_py_exists_after_init and not main_py_existed_before_init: # `uv init` created main.py
             if project_had_py_files_before_init: # And there were other .py files
-                _log_action(f"{action_name}_remove_main_py", "INFO", f"`uv init` created '{main_py_path.name}', but other .py files existed. Removing '{main_py_path.name}'.")
-                print(f"INFO: `uv init` created '{main_py_path.name}'. Removing it as other Python files already exist in the project.")
+                _log_action(f"{action_name}_remove_main_py", "INFO", f"`uv init` created '{main_py_path.name}', but other .py files existed. Removing '{main_py_path.name}'.\nINFO: `uv init` created '{main_py_path.name}'. Removing it as other Python files already exist in the project.")
                 try:
                     main_py_path.unlink()
                     _log_action(f"{action_name}_remove_main_py", "SUCCESS", f"Successfully removed '{main_py_path.name}' created by `uv init`.")
                 except OSError as e:
-                    _log_action(f"{action_name}_remove_main_py", "ERROR", f"Failed to remove '{main_py_path.name}': {e}")
-                    print(f"ERROR: Failed to remove '{main_py_path.name}': {e}", file=sys.stderr)
+                    _log_action(f"{action_name}_remove_main_py", "ERROR", f"Failed to remove '{main_py_path.name}': {e}\nERROR: Failed to remove '{main_py_path.name}': {e}")
             else: # Project was empty of .py files, so main.py from uv init is fine
-                _log_action(f"{action_name}_keep_main_py", "INFO", f"`uv init` created '{main_py_path.name}' in an otherwise empty Python project. It will be kept.")
-                print(f"INFO: `uv init` created '{main_py_path.name}'. Keeping it as standard for a new project.")
+                _log_action(f"{action_name}_keep_main_py", "INFO", f"`uv init` created '{main_py_path.name}' in an otherwise empty Python project. It will be kept.\nINFO: `uv init` created '{main_py_path.name}'. Keeping it as standard for a new project.")
         return True
 
     except Exception: # Error logged by _run_command
-        _log_action(action_name, "ERROR", "Failed to initialize project with `uv init`. See command execution log.")
-        print("ERROR: Failed to initialize project with `uv init`. See details above.\n       Manual `pyproject.toml` creation or `uv init` troubleshooting needed.", file=sys.stderr)
+        _log_action(action_name, "ERROR", "Failed to initialize project with `uv init`. See command execution log.\nManual `pyproject.toml` creation or `uv init` troubleshooting needed.")
         return False
 
 
@@ -658,26 +682,21 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str):
                     f.write("\n# Added/Ensured by pyuvstarter.py\n")
                     for entry in entries_to_add_with_comments:
                         f.write(f"{entry}\n")
-                    _log_action(action_name, "SUCCESS", f"Appended essential missing entries to existing '{GITIGNORE_NAME}'.", details={"appended": entries_to_add_with_comments})
-                    print(f"INFO: Appended essential entries to '{GITIGNORE_NAME}'.")
+                    _log_action(action_name, "SUCCESS", f"Appended essential missing entries to existing '{GITIGNORE_NAME}'.\nAppended essential entries to '{GITIGNORE_NAME}'.", details={"appended": entries_to_add_with_comments})
                 else:
                     _log_action(action_name, "INFO", f"Existing '{GITIGNORE_NAME}' seems to cover essential exclusions for venv and log file.")
         except Exception as e:
-            _log_action(action_name, "WARN", f"Could not read/update existing '{GITIGNORE_NAME}'. Manual check advised.", details={"exception": str(e)})
-            print(f"WARN: Could not check/update existing '{GITIGNORE_NAME}': {e}. Please verify it manually includes at least '{VENV_NAME}/' and '{JSON_LOG_FILE_NAME}'.", file=sys.stderr)
+            _log_action(action_name, "WARN", f"Could not read/update existing '{GITIGNORE_NAME}'. Manual check advised. Exception: {e}\nCould not check/update existing '{GITIGNORE_NAME}': {e}. Please verify it manually includes at least '{VENV_NAME}/' and '{JSON_LOG_FILE_NAME}'.", details={"exception": str(e)})
     else:
         _log_action(action_name, "INFO", f"'{GITIGNORE_NAME}' not found. Creating a default one.")
-        print(f"INFO: '{GITIGNORE_NAME}' not found. Creating a default one.")
         try:
             with open(gitignore_path, "w", encoding="utf-8") as f:
                 f.write("# Auto-generated by pyuvstarter.py\n")
                 f.write("\n".join(comprehensive_ignores))
                 f.write("\n")
             _log_action(action_name, "SUCCESS", f"Default '{GITIGNORE_NAME}' created.")
-            print(f"INFO: Default '{GITIGNORE_NAME}' created.")
         except Exception as e:
-            _log_action(action_name, "ERROR", f"Failed to create '{GITIGNORE_NAME}'.", details={"exception": str(e)})
-            print(f"ERROR: Failed to create '{GITIGNORE_NAME}': {e}. Please create it manually with standard Python ignores.", file=sys.stderr)
+            _log_action(action_name, "ERROR", f"Failed to create '{GITIGNORE_NAME}'. Exception: {e}. Please create it manually with standard Python ignores.", details={"exception": str(e)})
 
 
 def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
@@ -702,7 +721,7 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
         except ImportError:
             msg = "Cannot parse `pyproject.toml` to read existing dependencies: `tomllib` (Python 3.11+) or `toml` package not available in the environment running this script."
             _log_action(action_name, "WARN", msg + " Dependency checking against `pyproject.toml` will be skipped before `uv add` (this is okay as `uv add` is idempotent).")
-            print(f"WARN: {msg} Script best run with Python 3.11+ or with 'toml' installed in its execution environment.", file=sys.stderr)
+            _log_action(action_name, "INFO", "Script best run with Python 3.11+ or with 'toml' installed in its execution environment.")
             return dependencies
 
     _log_action(action_name, "INFO", f"Attempting to parse '{pyproject_path.name}' for existing dependencies using {tomllib_source}.")
@@ -728,9 +747,8 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
         _log_action(action_name, "SUCCESS", f"Parsed '{pyproject_path.name}'. Found {len(dependencies)} unique base dependency names declared.", details={"source": tomllib_source, "count": len(dependencies), "found_names": sorted(list(dependencies)) if dependencies else "None"})
         return dependencies
     except Exception as e:
-        msg = f"Failed to parse '{pyproject_path.name}' using {tomllib_source} to get dependency list."
+        msg = f"Failed to parse '{pyproject_path.name}' using {tomllib_source} to get dependency list. Check its TOML syntax. Dependency list might be incomplete for subsequent checks. Exception: {e}"
         _log_action(action_name, "ERROR", msg, details={"exception": str(e)})
-        print(f"ERROR: {msg} Exception: {e}. Check its TOML syntax. Dependency list might be incomplete for subsequent checks.", file=sys.stderr)
         return dependencies
 
 def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[str]:
@@ -751,8 +769,7 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[str]:
                     packages_specs.add(line)
         _log_action(action_name, "SUCCESS", f"Read {len(packages_specs)} package specifiers from '{requirements_path.name}'.")
     except Exception as e:
-        _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration.", details={"exception": str(e)})
-        print(f"ERROR: Could not read '{requirements_path.name}': {e}. Skipping migration.", file=sys.stderr)
+        _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration. Exception: {e}. Skipping migration.", details={"exception": str(e)})
     return packages_specs
 
 def _migrate_req_txt_to_pyproject(requirements_path: Path, venv_python_executable: Path, declared_deps_before_migration: set):
@@ -763,8 +780,6 @@ def _migrate_req_txt_to_pyproject(requirements_path: Path, venv_python_executabl
         return
 
     _log_action(action_name, "INFO", f"Attempting to migrate {len(packages_from_req_txt_specs)} specifier(s) from '{requirements_path.name}' to `pyproject.toml` if not already declared.")
-    print(f"INFO: Migrating packages from '{requirements_path.name}' to `pyproject.toml` (if new)...")
-
     migrated_count = 0
     failed_migrations = []
     packages_actually_added_log = []
@@ -778,7 +793,7 @@ def _migrate_req_txt_to_pyproject(requirements_path: Path, venv_python_executabl
             migrated_count += 1
             packages_actually_added_log.append(pkg_specifier)
         except Exception:
-            print(f"ERROR: Failed to `uv add \"{pkg_specifier}\"` from '{requirements_path.name}'. Check `uv add` output above.", file=sys.stderr)
+            _log_action(action_name, "ERROR", f"Failed to `uv add \"{pkg_specifier}\"` from '{requirements_path.name}'. Check `uv add` output above.")
             failed_migrations.append(pkg_specifier)
 
     summary_msg = f"Migration from '{requirements_path.name}': {migrated_count} package specifier(s) processed for addition to `pyproject.toml`."
@@ -787,11 +802,9 @@ def _migrate_req_txt_to_pyproject(requirements_path: Path, venv_python_executabl
         summary_msg += f" {len(failed_migrations)} package specifier(s) failed to be added via `uv add`."
         summary_details["failed_migrations"] = failed_migrations
         _log_action(action_name, "WARN", summary_msg, details=summary_details)
-        print(f"WARN: {summary_msg}", file=sys.stderr)
     else:
         status = "SUCCESS" if migrated_count > 0 or not packages_from_req_txt_specs else "INFO"
         _log_action(action_name, status, summary_msg, details=summary_details)
-        print(f"INFO: {summary_msg}")
 
     if packages_from_req_txt_specs:
         advise_msg = (f"Dependencies from '{requirements_path.name}' have been processed. "
@@ -800,7 +813,7 @@ def _migrate_req_txt_to_pyproject(requirements_path: Path, venv_python_executabl
                       f"You may want to manually archive or delete '{requirements_path.name}', or replace it "
                       f"with one generated from `pyproject.toml` (e.g., using `uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}`) "
                       f"if it's still needed for other tools or workflows.")
-        _log_action(f"{action_name}_advise_user_req_txt", "INFO", advise_msg)
+        _log_action(f"{action_name}_advise_user_req_txt", "INFO", f"IMPORTANT_ADVICE: {advise_msg}")
         print(f"IMPORTANT_ADVICE: {advise_msg}")
 
 
@@ -830,12 +843,9 @@ def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> 
              _log_action(action_name, "INFO", "`pipreqs` (via `uvx`) ran but no parseable package names were found in its output.")
         return packages
     except subprocess.CalledProcessError:
-        _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Cannot automatically discover dependencies. See command execution log for details.")
-        print("ERROR: `uvx pipreqs` command failed. See details above.", file=sys.stderr)
-        print(f"       Hints: This might be due to syntax errors in your Python files that `pipreqs` cannot parse, or `uvx` failing to run `pipreqs`.\n       Consider running manually for debug: {' '.join(pipreqs_args)} --debug", file=sys.stderr)
+        _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Cannot automatically discover dependencies. See command execution log for details.\n       Hints: This might be due to syntax errors in your Python files that `pipreqs` cannot parse, or `uvx` failing to run `pipreqs`.\n       Consider running manually for debug: {' '.join(pipreqs_args)} --debug")
     except Exception as e:
-        _log_action(action_name, "ERROR", "An unexpected error occurred while running/processing `pipreqs`.", details={"exception": str(e)})
-        print(f"ERROR: An unexpected error occurred while running/processing `pipreqs`: {e}", file=sys.stderr)
+        _log_action(action_name, "ERROR", f"An unexpected error occurred while running/processing `pipreqs`: {e}", details={"exception": str(e)})
     return packages
 
 def _configure_vscode_settings(project_root: Path, venv_python_executable: Path):
@@ -881,9 +891,8 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path)
         if not first_line.strip().startswith("// This interpreter path is managed by pyuvstarter"):
             f.write(comment_line + "\n")
         json.dump(settings_data, f, indent=4)
-    msg = f"VS Code 'python.defaultInterpreterPath' set.{' (Backed up old file)' if backup_made else ''}"
+    msg = f"VS Code 'python.defaultInterpreterPath' set.{' (Backed up old file)' if backup_made else ''}\nVS Code 'python.defaultInterpreterPath' set in '{settings_file_path.name}'\n      Path: {interpreter_path}\n      (Managed by pyuvstarter and uv)"
     _log_action(action_name, "SUCCESS", msg, details={"interpreter_path": interpreter_path})
-    print(f"INFO: VS Code 'python.defaultInterpreterPath' set in '{settings_file_path.name}'\n      Path: {interpreter_path}\n      (Managed by pyuvstarter and uv)")
 
 def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path):
     """
@@ -973,18 +982,15 @@ def detect_unused_imports(project_root: Path):
                     if issue.get("code") == "F401":
                         unused.append((issue.get("filename"), issue.get("location", {}).get("row"), issue.get("message")))
             except Exception as e:
-                _log_action(action_name, "ERROR", "Failed to parse ruff output.", details={"exception": str(e)})
-                print("ERROR: Failed to parse ruff output for unused imports.")
+                _log_action(action_name, "ERROR", "Failed to parse ruff output for unused imports.", details={"exception": str(e)})
                 return None
         _log_action(action_name, "SUCCESS", f"Ruff unused import detection complete. Found {len(unused)} unused imports.")
         return unused
     except subprocess.CalledProcessError as e:
         _log_action(action_name, "ERROR", "ruff command failed.", details={"exception": str(e)})
-        print("ERROR: ruff command failed. See details above.")
         return None
     except Exception as e:
         _log_action(action_name, "ERROR", "Unexpected error running ruff.", details={"exception": str(e)})
-        print("ERROR: Unexpected error running ruff.")
         return None
 
 # --- Main Orchestration Function ---
@@ -1129,7 +1135,6 @@ def main():
         # --- Next steps ---
         next_steps = _get_next_steps_text()
         _log_action("explicit_next_steps", "INFO", next_steps)
-        print("\n" + next_steps)
 
         # If any errors or warnings, print/log a final warning
         errors_or_warnings = any(
@@ -1139,12 +1144,10 @@ def main():
         if errors_or_warnings:
             warn_msg = f"\n⚠️  Some warnings/errors occurred. See '{log_file_path.name}' for details."
             _log_action("final_warning", "WARN", warn_msg)
-            print(warn_msg)
 
         # Print and log explicit summary and next steps
         explicit_summary = _get_explicit_summary_text(project_root, VENV_NAME, pyproject_file_path, log_file_path)
-        _log_action("explicit_summary", "INFO", explicit_summary)
-        print(explicit_summary)
+        _log_action("explicit_summary", "INFO", f"\n--- Project Setup Summary ---\n{explicit_summary}")
 
     except SystemExit as e:
         msg = f"Script halted by explicit exit: {e}"
