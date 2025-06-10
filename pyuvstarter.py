@@ -362,17 +362,24 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
     details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
     print(f"{console_prefix}: ({action_name}) {message}{details_str}")
 
-def _get_next_steps_text():
+
+def _get_next_steps_text(project_root: Path = Path.cwd()) -> str:
+    if sys.platform == "win32":
+        activate_path = project_root / VENV_NAME / "Scripts" / "activate"
+        activate_cmd = f"{activate_path}"
+    else:
+        activate_path = project_root / VENV_NAME / "bin" / "activate"
+        activate_cmd = f"source {activate_path}"
     return (
         "Next Steps:\n"
         "1. If VS Code is open with this project, reload the window (Ctrl+Shift+P > 'Developer: Reload Window').\n"
-        f"2. Activate the environment in your terminal:\n    {'./' + VENV_NAME + '/bin/activate' if sys.platform != 'win32' else '.\\\\' + VENV_NAME + '\\\\Scripts\\\\activate'}\n"
+        f"2. Activate the environment in your terminal (to undo activation later, run 'deactivate'):\n    {activate_cmd}\n"
         f"3. Review `{PYPROJECT_TOML_NAME}`, `uv.lock`, and '{GITIGNORE_NAME}', then test your project to ensure all dependencies are correctly captured and functional.\n"
         f"4. Commit `{PYPROJECT_TOML_NAME}`, `uv.lock`, `{GITIGNORE_NAME}`, and your source files (including this script if desired) to version control."
     )
 
 
-def _save_log(log_file_path: Path):
+def _save_log(log_file_path: Path, project_root: Path = Path.cwd()):
     """Saves the accumulated log data to a JSON file."""
     global _log_data_global
     _log_data_global["end_time_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -395,7 +402,7 @@ def _save_log(log_file_path: Path):
         _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
 
     if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS"]:
-        next_steps_text = _get_next_steps_text()
+        next_steps_text = _get_next_steps_text(project_root)
         if _log_data_global.get("final_summary"):
             _log_data_global["final_summary"] += next_steps_text
         else:
@@ -1130,9 +1137,14 @@ def main():
 
         _log_action("script_end", "SUCCESS", "Automated project setup script completed successfully.")
 
-        # --- Final summary table ---
+        # --- File summary table ---
+        # Print and log explicit summary and next steps
+        explicit_summary = _get_explicit_summary_text(project_root, VENV_NAME, pyproject_file_path, log_file_path)
+        _log_action("explicit_summary", "INFO", explicit_summary)
+
+        # --- Project summary table ---
         summary_lines = [
-            "\n--- Final Setup Summary ---",
+            "\n--- Project Setup Summary ---",
             "Step                        | Status",
             "-----------------------------|--------",
         ]
@@ -1143,7 +1155,7 @@ def main():
         _log_action("final_summary_table", "INFO", summary_table)
 
         # --- Next steps ---
-        next_steps = _get_next_steps_text()
+        next_steps = _get_next_steps_text(project_root)
         _log_action("explicit_next_steps", "INFO", next_steps)
 
         # If any errors or warnings, print/log a final warning
@@ -1154,10 +1166,6 @@ def main():
         if errors_or_warnings:
             warn_msg = f"\n⚠️  Some warnings/errors occurred. See '{log_file_path.name}' for details."
             _log_action("final_warning", "WARN", warn_msg)
-
-        # Print and log explicit summary and next steps
-        explicit_summary = _get_explicit_summary_text(project_root, VENV_NAME, pyproject_file_path, log_file_path)
-        _log_action("explicit_summary", "INFO", f"\n--- Project Setup Summary ---\n{explicit_summary}")
 
     except SystemExit as e:
         msg = f"Script halted by explicit exit: {e}"
@@ -1216,7 +1224,7 @@ def main():
         if "start_time_utc" in _log_data_global:
             _log_data_global["vscode_settings_json_status"] = settings_json_status
             _log_data_global["vscode_launch_json_status"] = launch_json_status
-            _save_log(log_file_path)
+            _save_log(log_file_path, project_root)
 
 def _get_explicit_summary_text(project_root: Path, venv_name: str, pyproject_file_path: Path, log_file_path: Path):
     """
@@ -1225,7 +1233,7 @@ def _get_explicit_summary_text(project_root: Path, venv_name: str, pyproject_fil
     vscode_settings = project_root / VSCODE_DIR_NAME / SETTINGS_FILE_NAME
     vscode_launch = project_root / VSCODE_DIR_NAME / LAUNCH_FILE_NAME
     summary_lines = [
-        "\n--- Project Setup Summary ---",
+        "\n--- Project Setup Files Summary ---",
         f"Project root:           {project_root}",
         f"Virtual environment:    {project_root / venv_name}",
         f"Dependency file:        {pyproject_file_path}",
