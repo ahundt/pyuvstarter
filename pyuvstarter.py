@@ -186,14 +186,33 @@ def migrate_requirements_modular(
 ):
     """
     Migrate requirements.txt to pyproject.toml in a robust, user-friendly, and modern way.
-    Supports multiple migration modes and dry-run. All user-facing actions are logged and printed.
+    This is the sole migration logic; all legacy migration helpers and functions have been removed.
+    Supports multiple migration modes and dry-run. All user-facing actions are logged (never printed directly).
+    Provides actionable, context-aware advice and example commands for all scenarios, including:
+      - requirements.txt not found
+      - All packages already declared
+      - Some packages added, some skipped
+      - Some packages failed to add
+      - Migration succeeded
+      - Dry run
+    Example commands and file references are always explicit and actionable.
     """
     req_path = project_root / LEGACY_REQUIREMENTS_TXT
     if not req_path.exists():
-        _log_action("migrate_modern_requirements", "INFO", f"No '{LEGACY_REQUIREMENTS_TXT}' found, skipping modular migration step.")
+        msg = (
+            f"No '{LEGACY_REQUIREMENTS_TXT}' found in the project root. No migration needed.\n"
+            f"If you have legacy dependencies, place them in '{LEGACY_REQUIREMENTS_TXT}' and re-run this script."
+        )
+        _log_action("migrate_modern_requirements_not_found", "INFO", msg)
         return
     with open(req_path, "r", encoding="utf-8") as f:
         req_lines = [line.strip() for line in f if line.strip() and not line.startswith("#") and not line.startswith("-e")]
+    if not req_lines:
+        msg = (
+            f"'{LEGACY_REQUIREMENTS_TXT}' is present but contains no valid package specifiers. No migration needed."
+        )
+        _log_action("migrate_modern_requirements_empty", "INFO", msg)
+        return
     imported_pkgs = set()
     if migration_mode in ("auto", "only-imported"):
         try:
@@ -229,38 +248,75 @@ def migrate_requirements_modular(
                 to_add.append((base, spec))
             else:
                 skipped.append((base, spec, "not imported (auto mode)"))
+    # All packages already declared
+    if not to_add and skipped and all(reason == "already in pyproject.toml" for _, _, reason in skipped):
+        msg = (
+            f"All dependencies from '{LEGACY_REQUIREMENTS_TXT}' are already present in '{PYPROJECT_TOML_NAME}'. No migration needed.\n"
+            f"You may archive or delete '{LEGACY_REQUIREMENTS_TXT}' to avoid confusion.\n"
+            f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}' for legacy tools, run:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
+        )
+        _log_action("migrate_modern_requirements_all_declared", "INFO", msg)
+        return
     # Dry run output
     if dry_run:
-        msg = ("\n--- DRY RUN: Dependency Migration (modular) ---\n"
-               f"Would add: {[spec for base, spec in to_add]}\n"
-               f"Would skip: {[f'{spec} ({reason})' for base, spec, reason in skipped]}")
-        print(msg)
+        msg = (
+            "\n--- DRY RUN: Dependency Migration (modular) ---\n"
+            f"Would add: {[spec for base, spec in to_add] if to_add else 'None'}\n"
+            f"Would skip: {[f'{spec} ({reason})' for base, spec, reason in skipped] if skipped else 'None'}\n"
+            "This was a dry run. No changes were made.\nTo perform the migration, re-run without the --dry-run flag."
+        )
         _log_action("migrate_modern_requirements_dry_run", "INFO", msg)
         return
     # Actually add dependencies
+    added = []
+    failed = []
     for base, spec in to_add:
         try:
             _run_command(["uv", "add", spec, "--python", str(venv_python_executable)], f"uv_add_{base}")
-            msg = f"Added dependency '{spec}' to pyproject.toml."
+            msg = f"Added dependency '{spec}' to {PYPROJECT_TOML_NAME}."
             _log_action("migrate_modern_requirements_add", "SUCCESS", msg, details={"package": spec})
+            added.append(spec)
         except Exception:
             msg = f"Failed to add '{spec}' via uv add."
             _log_action("migrate_modern_requirements_add", "ERROR", msg, details={"package": spec})
-    if to_add or skipped:
-        # Print and log a summary table for transparency
-        summary_lines = [
-            "\n--- Dependency Migration Summary ---",
-            f"Mode: {migration_mode}",
-            f"Dry Run: {dry_run}",
-            f"Added:   {[spec for base, spec in to_add] if to_add else 'None'}",
-            f"Skipped: {[f'{spec} ({reason})' for base, spec, reason in skipped] if skipped else 'None'}",
-        ]
-        summary_table = "\n".join(summary_lines)
-        _log_action("migrate_modern_requirements_summary_table", "INFO", summary_table)
-
-    msg = (f"IMPORTANT: The original '{LEGACY_REQUIREMENTS_TXT}' was not modified. "
-           "Consider archiving or regenerating it if needed.")
-    _log_action("migrate_modern_requirements_final_advice", "INFO", msg)
+            failed.append(spec)
+    # Summary and advice
+    summary_lines = [
+        "\n--- Dependency Migration Summary ---",
+        f"Mode: {migration_mode}",
+        f"Added:   {added if added else 'None'}",
+        f"Skipped: {[f'{spec} ({reason})' for base, spec, reason in skipped] if skipped else 'None'}",
+        f"Failed:  {failed if failed else 'None'}",
+    ]
+    summary_table = "\n".join(summary_lines)
+    _log_action("migrate_modern_requirements_summary_table", "INFO", summary_table)
+    # Actionable advice for all scenarios
+    if failed:
+        advice = (
+            f"Some dependencies could not be migrated from '{LEGACY_REQUIREMENTS_TXT}'.\n"
+            f"Please review the errors above and try adding them manually, e.g.:\n  uv add <package>\n"
+            f"You may also need to check for typos or unsupported specifiers in '{LEGACY_REQUIREMENTS_TXT}'.\n"
+            f"The original '{LEGACY_REQUIREMENTS_TXT}' was not modified.\n"
+            f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}', run:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
+        )
+        _log_action("migrate_modern_requirements_failed", "WARN", advice, details={"failed": failed})
+    elif added:
+        advice = (
+            f"Migration complete. The following packages were added to '{PYPROJECT_TOML_NAME}': {added}\n"
+            f"The following were already present and skipped: {[spec for base, spec, reason in skipped if reason == 'already in pyproject.toml']}\n"
+            f"The original '{LEGACY_REQUIREMENTS_TXT}' was not modified.\n"
+            f"To keep your project modern and reproducible, use '{PYPROJECT_TOML_NAME}' as your primary dependency file.\n"
+            f"If you still need '{LEGACY_REQUIREMENTS_TXT}' for other tools, regenerate it with:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
+        )
+        _log_action("migrate_modern_requirements_success", "SUCCESS", advice, details={"added": added, "skipped": skipped})
+    else:
+        advice = (
+            f"No new dependencies were added from '{LEGACY_REQUIREMENTS_TXT}'.\n"
+            f"The following were skipped: {[f'{spec} ({reason})' for base, spec, reason in skipped]}\n"
+            f"The original '{LEGACY_REQUIREMENTS_TXT}' was not modified.\n"
+            f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}', run:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
+        )
+        _log_action("migrate_modern_requirements_nothing_added", "INFO", advice, details={"skipped": skipped})
 
 # --- JSON Logging Utilities ---
 _log_data_global = {}
