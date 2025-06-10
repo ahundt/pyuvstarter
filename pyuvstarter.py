@@ -5,31 +5,31 @@ pyuvstarter.py (v6.6 - Conditional main.py removal)
 Copyright (c) 2025 Andrew Hundt
 
 Purpose:
-This script automates the setup of a Python project environment using `uv`,
-focusing on `pyproject.toml` for dependency management, configures Visual
-Studio Code, and prepares the project for version control by ensuring a
-`.gitignore` file is present. It operates without user prompts for a standard
-setup and creates a detailed JSON log file of its actions. It uses `uv init`
-to create `pyproject.toml` if missing, and conditionally removes `main.py`
-if `uv init` creates it in a directory that already contained other Python files.
+    Automates Python project and environment setup using `uv`, focusing on modern, reproducible, and user-friendly workflows.
+    - Sets up `pyproject.toml` for dependency management.
+    - Configures Visual Studio Code for the project.
+    - Prepares the project for version control with a robust `.gitignore`.
+    - Migrates legacy `requirements.txt` dependencies if present.
+    - Ensures required CLI tools (e.g., pipreqs) are available via `uv tool install`.
+    - Discovers and adds missing dependencies by scanning imports.
+    - Logs all actions, errors, and next steps to a detailed JSON log.
 
 Key Actions:
-1. Ensures `uv` is installed (platform-aware installation if missing).
+1. Ensures `uv` is installed (platform-aware, automatic installation if missing).
 2. Ensures a `pyproject.toml` file exists, running `uv init` if necessary.
-   If `uv init` creates `main.py` in a pre-existing Python project, `main.py` is removed.
-3. Ensures a `.gitignore` file exists with common Python/venv exclusions.
+   - If `uv init` creates `main.py` in a project with existing Python files, `main.py` is removed.
+3. Ensures a `.gitignore` file exists with common Python/venv/log exclusions.
 4. Creates a virtual environment (default: '.venv') using `uv venv`.
-5. Migrates dependencies from an existing 'requirements.txt' (if present and not
-   already in `pyproject.toml`) by adding them to `pyproject.toml` using `uv add`.
-   The original 'requirements.txt' is NOT modified; user is advised.
+5. Migrates dependencies from an existing 'requirements.txt' (if present and not already in `pyproject.toml`) by adding them to `pyproject.toml` using `uv add`.
+   - The original 'requirements.txt' is NOT modified; user is advised on next steps.
 6. Installs all declared dependencies from `pyproject.toml` and `uv.lock` using `uv sync`.
-7. Ensures `pipreqs` is available (installs via `uv tool install` if missing).
+7. Ensures required CLI tools (e.g., `pipreqs`) are available via `uv tool install` (can be extended to other tools).
 8. Scans project Python files using `pipreqs` (via `uvx`) to discover imported packages.
 9. For newly discovered packages not already in `pyproject.toml`, automatically adds
    them using `uv add <package>`. This updates `pyproject.toml` and `uv.lock`.
 10. Configures VS Code's 'python.defaultInterpreterPath' in '.vscode/settings.json'.
-11. Logs all major actions, command executions, statuses, and errors to a
-    'pyuvstarter_setup_log.json' file.
+11. Logs all major actions, command executions, statuses, errors, and user guidance to 'pyuvstarter_setup_log.json' and prints them to the console.
+12. Halts with clear, actionable error messages if a critical step fails (e.g., missing tool, venv creation failure).
 
 How to Use:
 1. Prerequisites:
@@ -41,8 +41,7 @@ How to Use:
    - (Optional) An existing 'requirements.txt' file if migrating an old project.
 
 2. Placement:
-   - Save this script as 'pyuvstarter.py' (or your preferred name) in the
-     root directory of your new or existing Python project.
+   - Save this script as 'pyuvstarter.py' (or your preferred name) in the root directory of your new or existing Python project.
 
 3. Execution:
    - Open your terminal or command prompt.
@@ -56,13 +55,10 @@ Outcome:
 - A '.venv' directory will contain the Python virtual environment.
 - A `uv.lock` file will ensure reproducible dependency resolution.
 - Dependencies (migrated, declared, and discovered) will be installed.
-- '.vscode/settings.json' will be configured.
-- A 'pyuvstarter_setup_log.json' file will detail the script's execution.
-- The script will print recommended next steps to the console, and these will
-  also be included in the JSON log if the script completes without critical failure.
-- you should source the virtual environment in your terminal:
-    - `source .venv/bin/activate` (Linux/macOS)
-    - `.venv\\Scripts\\activate` (Windows PowerShell)
+- '.vscode/settings.json' will be configured for the venv interpreter.
+- A 'pyuvstarter_setup_log.json' file will detail the script's execution, actions, errors, and next steps.
+- The script will print recommended next steps to the console and include them in the JSON log if the script completes without critical failure.
+- If a critical error occurs, the script will halt and print/log clear, actionable guidance.
 
 Committing to Git:
 - After running, you should typically commit:
@@ -72,8 +68,7 @@ Committing to Git:
   - `.gitignore`
   - Your actual project source code.
   - `.vscode/settings.json` (optional, if you want to share VS Code settings).
-- Do NOT commit the `.venv/` directory or the `pyuvstarter_setup_log.json` file
-  (this script adds them to `.gitignore`).
+- Do NOT commit the `.venv/` directory or the `pyuvstarter_setup_log.json` file (this script adds them to `.gitignore`).
 
 
 Installing and uninstalling pyuvstarter:
