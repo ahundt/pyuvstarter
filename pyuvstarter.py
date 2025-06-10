@@ -280,7 +280,7 @@ def _init_log(project_root: Path):
                           "version": platform.version(), "machine": platform.machine(),
                           "python_version_script_host": sys.version},
         "project_root": str(project_root), "actions": [],
-        "final_summary": None, "errors_encountered_summary": []
+        "final_summary": "", "errors_encountered_summary": []
     }
     _log_action("script_bootstrap", "INFO", f"Script execution initiated for project at {project_root}.")
 
