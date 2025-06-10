@@ -567,7 +567,7 @@ def _ensure_tool_available(tool_name, major_action_results, website=None):
         _run_command(["uv", "tool", "install", package_to_install], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True)
         _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
         major_action_results.append((f"{tool_name}_cli_tool", "SUCCESS"))
-        return
+        return True
     except Exception:
         website_msg = f"\nSee documentation or troubleshooting at: {website}" if website else ""
         _log_action(
@@ -576,7 +576,8 @@ def _ensure_tool_available(tool_name, major_action_results, website=None):
             f"Failed to ensure `{tool_name}` via `uv tool install`.\nTry running: uv tool install {package_to_install}{website_msg}"
         )
         major_action_results.append((f"{tool_name}_cli_tool", "FAILED"))
-        raise SystemExit(f"Halting: Required tool '{tool_name}' could not be installed or verified. See log for details.")
+        return False
+    return False
 
 # --- Project and Dependency Handling ---
 
@@ -1051,13 +1052,6 @@ def main():
 
         declared_deps_before_migration = _get_declared_dependencies(pyproject_file_path)
 
-        # Ensure all required CLI tools are available (simple, one-liner calls)
-        _ensure_tool_available("pipreqs", major_action_results, website="https://github.com/bndr/pipreqs")
-        _ensure_tool_available("ruff", major_action_results, website="https://docs.astral.sh/ruff/")
-        # Add more tools here as needed, e.g.:
-        # _ensure_tool_available("black", major_action_results, website="https://black.readthedocs.io/")
-        major_action_results.append(("cli_tools", "SUCCESS"))
-
         # --- New: Modular requirements.txt migration with CLI modes/dry-run ---
         if legacy_req_path.exists():
             migrate_requirements_modular(
@@ -1084,7 +1078,7 @@ def main():
         action_pipreqs_phase = "pipreqs_discovery_and_add_phase"
         _log_action(action_pipreqs_phase, "INFO", "Starting dependency discovery with `pipreqs` to add to `pyproject.toml`.")
 
-        if _ensure_tool_available("pipreqs", "pipreqs"):
+        if _ensure_tool_available("pipreqs", major_action_results, website="https://github.com/bndr/pipreqs"):
             discovered_by_pipreqs = _get_packages_from_pipreqs(project_root, VENV_NAME)
             if discovered_by_pipreqs:
                 current_declared_deps = _get_declared_dependencies(pyproject_file_path)
@@ -1111,20 +1105,21 @@ def main():
         major_action_results.append(("pipreqs_discovery", "SUCCESS"))
 
         # --- New: Ruff unused import detection ---
-        unused_imports = detect_unused_imports(project_root)
-        if unused_imports is not None:
-            if unused_imports:
-                msg = ("Ruff detected unused imports (F401):\n" +
-                       "\n".join([f"  {file}:{lineno} {desc}" for file, lineno, desc in unused_imports]) +
-                       "\nConsider removing these unused imports for a cleaner project.")
-                _log_action("ruff_unused_imports", "WARN", msg, details={"unused_imports": unused_imports})
+        if _ensure_tool_available("ruff", major_action_results, website="https://docs.astral.sh/ruff/"):
+            unused_imports = detect_unused_imports(project_root)
+            if unused_imports is not None:
+                if unused_imports:
+                    msg = ("Ruff detected unused imports (F401):\n" +
+                        "\n".join([f"  {file}:{lineno} {desc}" for file, lineno, desc in unused_imports]) +
+                        "\nConsider removing these unused imports for a cleaner project.")
+                    _log_action("ruff_unused_imports", "WARN", msg, details={"unused_imports": unused_imports})
+                else:
+                    msg = "No unused imports detected by ruff (F401)."
+                    _log_action("ruff_unused_imports", "INFO", msg)
             else:
-                msg = "No unused imports detected by ruff (F401)."
-                _log_action("ruff_unused_imports", "INFO", msg)
-        else:
-            msg = "Ruff could not be run for unused import detection."
-            _log_action("ruff_unused_imports", "WARN", msg)
-        major_action_results.append(("ruff_unused_imports", "SUCCESS"))
+                msg = "Ruff could not be run for unused import detection."
+                _log_action("ruff_unused_imports", "WARN", msg)
+            major_action_results.append(("ruff_unused_imports", "SUCCESS"))
 
         # --- VS Code config ---
         _configure_vscode_settings(project_root, venv_python_executable)
