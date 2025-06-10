@@ -559,17 +559,29 @@ def _ensure_uv_installed():
         _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.")
         return False
 
-def _ensure_tool_available(tool_name, package_to_install_via_uv_tool):
-    """Ensures a CLI tool is installed via `uv tool install` for use with `uvx`."""
+def _ensure_tool_available(tool_name, major_action_results, website=None):
+    """
+    Ensures a CLI tool is installed via `uv tool install` for use with `uvx`.
+    Optionally provide a website for user guidance. Handles all error logging and halting internally.
+    Updates major_action_results for each tool.
+    """
     action_name = f"ensure_tool_{tool_name}"
-    _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install_via_uv_tool}`) is available for `uvx`.")
+    package_to_install = tool_name
+    _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install}`) is available for `uvx`.")
     try:
-        _run_command(["uv", "tool", "install", package_to_install_via_uv_tool], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True)
-        _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install_via_uv_tool}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
-        return True
+        _run_command(["uv", "tool", "install", package_to_install], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True)
+        _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
+        major_action_results.append((f"{tool_name}_cli_tool", "SUCCESS"))
+        return
     except Exception:
-        _log_action(action_name, "ERROR", f"Failed to ensure `{tool_name}` via `uv tool install`. See command execution log.\nIf `uv` is working, try manually: `uv tool install {package_to_install_via_uv_tool}`")
-        return False
+        website_msg = f"\nSee documentation or troubleshooting at: {website}" if website else ""
+        _log_action(
+            action_name,
+            "ERROR",
+            f"Failed to ensure `{tool_name}` via `uv tool install`.\nTry running: uv tool install {package_to_install}{website_msg}"
+        )
+        major_action_results.append((f"{tool_name}_cli_tool", "FAILED"))
+        raise SystemExit(f"Halting: Required tool '{tool_name}' could not be installed or verified. See log for details.")
 
 # --- Project and Dependency Handling ---
 
@@ -1043,6 +1055,14 @@ def main():
         major_action_results.append(("venv_ready", "SUCCESS"))
 
         declared_deps_before_migration = _get_declared_dependencies(pyproject_file_path)
+
+        # Ensure all required CLI tools are available (simple, one-liner calls)
+        _ensure_tool_available("pipreqs", major_action_results, website="https://github.com/bndr/pipreqs")
+        _ensure_tool_available("ruff", major_action_results, website="https://docs.astral.sh/ruff/")
+        # Add more tools here as needed, e.g.:
+        # _ensure_tool_available("black", major_action_results, website="https://black.readthedocs.io/")
+        major_action_results.append(("cli_tools", "SUCCESS"))
+
         # --- New: Modular requirements.txt migration with CLI modes/dry-run ---
         if legacy_req_path.exists():
             migrate_requirements_modular(
@@ -1175,7 +1195,7 @@ def main():
         elif "uv tool install" in cmd_str_lower:
             _log_action("uv_tool_install_hint", "WARN", "UV TOOL INSTALL HINT: `uv tool install` (likely for pipreqs) failed.\n  - This could be due to network issues, `uv` problems, or the tool package ('pipreqs') not being found by `uv`.\n  - Try running `uv tool install pipreqs` manually in your terminal.")
         elif "uv init" in cmd_str_lower:
-            _log_action("uv_init_hint", "WARN", "UV INIT HINT: `uv init` command failed.\n  - Ensure `uv` is correctly installed. Try running `uv init` manually in an empty directory to test.\n  - Check for permissions issues in the project directory '{project_root}'.")
+            _log_action("uv_init_hint", "WARN", "UV INIT HINT: `uv init` command failed.\n  - Ensure `uv` is correctly installed. Try running `uv init` manually in an empty directory to test.\n   - Check for permissions issues in the project directory '{project_root}'.")
         sys.exit(1)
     except FileNotFoundError as e:
         cmd_name = e.filename if hasattr(e, 'filename') and e.filename else "An external command"
