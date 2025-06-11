@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pyuvstarter.py (v6.6 - Conditional main.py removal)
+pyuvstarter.py (v6.7 - Advanced Dependency Management)
 
 Copyright (c) 2025 Andrew Hundt
 
@@ -9,9 +9,9 @@ Purpose:
     - Sets up `pyproject.toml` for dependency management.
     - Configures Visual Studio Code for the project.
     - Prepares the project for version control with a robust `.gitignore`.
-    - Migrates legacy `requirements.txt` dependencies if present.
-    - Ensures required CLI tools (e.g., pipreqs) are available via `uv tool install`.
-    - Discovers and adds missing dependencies by scanning imports.
+    - Manages legacy `requirements.txt` dependencies and discovers new ones with robust configuration options.
+    - Ensures required CLI tools (e.g., pipreqs, ruff) are available via `uv tool install`.
+    - Detects unused imports to advise on a cleaner dependency graph.
     - Logs all actions, errors, and next steps to a detailed JSON log.
 
 Key Actions:
@@ -20,14 +20,19 @@ Key Actions:
    - If `uv init` creates `main.py` in a project with existing Python files, `main.py` is removed.
 3. Ensures a `.gitignore` file exists with common Python/venv/log exclusions.
 4. Creates a virtual environment (default: '.venv') using `uv venv`.
-5. Migrates dependencies from an existing 'requirements.txt' (if present and not already in `pyproject.toml`) by adding them to `pyproject.toml` using `uv add`.
-   - The original 'requirements.txt' is NOT modified; user is advised on next steps.
-6. Installs all declared dependencies from `pyproject.toml` and `uv.lock` using `uv sync`.
-7. Ensures required CLI tools (e.g., `pipreqs`) are available via `uv tool install` (can be extended to other tools).
-8. Scans project Python files using `pipreqs` (via `uvx`) to discover imported packages.
-9. For newly discovered packages not already in `pyproject.toml`, automatically adds
-   them using `uv add <package>`. This updates `pyproject.toml` and `uv.lock`.
-10. Configures VS Code's 'python.defaultInterpreterPath' in '.vscode/settings.json'.
+5. Ensures necessary CLI tools (`pipreqs`, `ruff`) are installed via `uv tool install`.
+6. Performs a pre-flight check for unused imports using `ruff` and warns the user.
+7. Discovers packages imported in project Python files using `pipreqs`.
+8. Intelligently manages dependencies:
+   - Reads existing dependencies from `pyproject.toml`.
+   - Processes `requirements.txt` (if present) based on the `--dependency-migration` mode:
+     - `auto` (default): Migrates `requirements.txt` entries only if they are actively imported, and adds all other imported packages. Warns about unused `requirements.txt` entries.
+     - `all-requirements`: Migrates all entries from `requirements.txt` and then adds any additional discovered imported packages.
+     - `only-imported`: Explicitly migrates only `requirements.txt` entries that are actively imported, and adds all other imported packages.
+     - `skip-requirements`: Ignores `requirements.txt` and only considers packages discovered from imports.
+   - Adds newly identified dependencies to `pyproject.toml` using `uv add`.
+9. Installs/syncs all declared dependencies from `pyproject.toml` and `uv.lock` using `uv sync`.
+10. Configures VS Code's 'python.defaultInterpreterPath' and adds a generic launch configuration in '.vscode/settings.json' and 'launch.json'.
 11. Logs all major actions, command executions, statuses, errors, and user guidance to 'pyuvstarter_setup_log.json' and prints them to the console.
 12. Halts with clear, actionable error messages if a critical step fails (e.g., missing tool, venv creation failure).
 
@@ -48,6 +53,7 @@ How to Use:
    - Navigate to the project root (the directory containing this script).
    - Make executable (Linux/macOS): `chmod +x pyuvstarter.py`
    - Run: `./pyuvstarter.py` (or `python3 pyuvstarter.py`)
+   - Use `--help` to see additional options like `--dependency-migration` and `--dry-run`.
 
 Outcome:
 - A `pyproject.toml` will define project dependencies.
@@ -55,7 +61,7 @@ Outcome:
 - A '.venv' directory will contain the Python virtual environment.
 - A `uv.lock` file will ensure reproducible dependency resolution.
 - Dependencies (migrated, declared, and discovered) will be installed.
-- '.vscode/settings.json' will be configured for the venv interpreter.
+- '.vscode/settings.json' and 'launch.json' will be configured for the venv interpreter.
 - A 'pyuvstarter_setup_log.json' file will detail the script's execution, actions, errors, and next steps.
 - The script will print recommended next steps to the console and include them in the JSON log if the script completes without critical failure.
 - If a critical error occurs, the script will halt and print/log clear, actionable guidance.
@@ -67,7 +73,7 @@ Committing to Git:
   - `uv.lock`
   - `.gitignore`
   - Your actual project source code.
-  - `.vscode/settings.json` (optional, if you want to share VS Code settings).
+  - `.vscode/settings.json` and `.vscode/launch.json` (optional, if you want to share VS Code settings).
 - Do NOT commit the `.venv/` directory or the `pyuvstarter_setup_log.json` file (this script adds them to `.gitignore`).
 
 
@@ -131,7 +137,7 @@ def parse_args():
         "--dependency-migration",
         choices=["auto", "all-requirements", "only-imported", "skip-requirements"],
         default="auto",
-        help="Dependency migration mode: 'auto' (default, smart), 'all-requirements' (migrate all requirements.txt), 'only-imported' (only migrate actually imported), 'skip-requirements' (ignore requirements.txt)."
+        help="Dependency migration mode: 'auto' (default, intelligent), 'all-requirements' (migrate all requirements.txt and discover imports), 'only-imported' (only migrate imported entries from requirements.txt, and discover other imports), 'skip-requirements' (ignore requirements.txt, rely only on imports)."
     )
     parser.add_argument(
         "--dry-run",
@@ -174,149 +180,6 @@ def _get_project_version(pyproject_path: Path = Path(__file__), project_name: st
         except Exception as e:
             _log_action("get_project_version", "ERROR", f"Failed to read version from '{pyproject_path.name}'", details={"exception": str(e)})
     return "unknown"
-
-# --- Modular requirements.txt migration supporting new modes ---
-def migrate_requirements_modular(
-    project_root,
-    venv_python_executable,
-    pyproject_file_path,
-    migration_mode,
-    dry_run,
-    declared_deps_before_migration
-):
-    """
-    Migrate requirements.txt to pyproject.toml in a robust, user-friendly, and modern way.
-    This is the sole migration logic; all legacy migration helpers and functions have been removed.
-    Supports multiple migration modes and dry-run. All user-facing actions are logged (never printed directly).
-    Provides actionable, context-aware advice and example commands for all scenarios, including:
-      - requirements.txt not found
-      - All packages already declared
-      - Some packages added, some skipped
-      - Some packages failed to add
-      - Migration succeeded
-      - Dry run
-    Example commands and file references are always explicit and actionable.
-    """
-    req_path = project_root / LEGACY_REQUIREMENTS_TXT
-    if not req_path.exists():
-        msg = (
-            f"No '{LEGACY_REQUIREMENTS_TXT}' found in the project root. No migration needed.\n"
-            f"If you have legacy dependencies, place them in '{LEGACY_REQUIREMENTS_TXT}' and re-run this script."
-        )
-        _log_action("migrate_modern_requirements_not_found", "INFO", msg)
-        return
-    with open(req_path, "r", encoding="utf-8") as f:
-        req_lines = [line.strip() for line in f if line.strip() and not line.startswith("#") and not line.startswith("-e")]
-    if not req_lines:
-        msg = (
-            f"'{LEGACY_REQUIREMENTS_TXT}' is present but contains no valid package specifiers. No migration needed."
-        )
-        _log_action("migrate_modern_requirements_empty", "INFO", msg)
-        return
-    imported_pkgs = set()
-    if migration_mode in ("auto", "only-imported"):
-        try:
-            pipreqs_args = ["uvx", "pipreqs", "--print", "--ignore", VENV_NAME, str(project_root)]
-            stdout, _ = _run_command(pipreqs_args, "pipreqs_discover_imports", suppress_console_output_on_success=True)
-            for line in stdout.splitlines():
-                pkg = line.split("==")[0].split(">=")[0].split("<=")[0].split("!=")[0].split("~=")[0].strip().lower()
-                if pkg:
-                    imported_pkgs.add(pkg)
-        except Exception:
-            _log_action("migrate_modern_requirements", "WARN", "Could not run pipreqs for import-based discovery. Proceeding without it.")
-    req_pkgs = set()
-    for line in req_lines:
-        base = line.split("[")[0].split("=")[0].split(">=")[0].split("<=")[0].split("!=")[0].split("~=")[0].strip().lower()
-        req_pkgs.add((base, line))
-    to_add = []
-    skipped = []
-    for base, spec in req_pkgs:
-        if base in declared_deps_before_migration:
-            skipped.append((base, spec, "already in pyproject.toml"))
-            continue
-        if migration_mode == "all-requirements":
-            to_add.append((base, spec))
-        elif migration_mode == "skip-requirements":
-            skipped.append((base, spec, "mode=skip-requirements"))
-        elif migration_mode == "only-imported":
-            if base in imported_pkgs:
-                to_add.append((base, spec))
-            else:
-                skipped.append((base, spec, "not imported"))
-        elif migration_mode == "auto":
-            if base in imported_pkgs:
-                to_add.append((base, spec))
-            else:
-                skipped.append((base, spec, "not imported (auto mode)"))
-    # All packages already declared
-    if not to_add and skipped and all(reason == "already in pyproject.toml" for _, _, reason in skipped):
-        msg = (
-            f"All dependencies from '{LEGACY_REQUIREMENTS_TXT}' are already present in '{PYPROJECT_TOML_NAME}'. No migration needed.\n"
-            f"You may archive or delete '{LEGACY_REQUIREMENTS_TXT}' to avoid confusion.\n"
-            f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}' for legacy tools, run:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
-        )
-        _log_action("migrate_modern_requirements_all_declared", "INFO", msg)
-        return
-    # Dry run output
-    if dry_run:
-        msg = (
-            "\n--- DRY RUN: Dependency Migration (modular) ---\n"
-            f"Would add: {[spec for base, spec in to_add] if to_add else 'None'}\n"
-            f"Would skip: {[f'{spec} ({reason})' for base, spec, reason in skipped] if skipped else 'None'}\n"
-            "This was a dry run. No changes were made.\nTo perform the migration, re-run without the --dry-run flag."
-        )
-        _log_action("migrate_modern_requirements_dry_run", "INFO", msg)
-        return
-    # Actually add dependencies
-    added = []
-    failed = []
-    for base, spec in to_add:
-        try:
-            _run_command(["uv", "add", spec, "--python", str(venv_python_executable)], f"uv_add_{base}")
-            msg = f"Added dependency '{spec}' to {PYPROJECT_TOML_NAME}."
-            _log_action("migrate_modern_requirements_add", "SUCCESS", msg, details={"package": spec})
-            added.append(spec)
-        except Exception:
-            msg = f"Failed to add '{spec}' via uv add."
-            _log_action("migrate_modern_requirements_add", "ERROR", msg, details={"package": spec})
-            failed.append(spec)
-    # Summary and advice
-    summary_lines = [
-        "\n--- Dependency Migration Summary ---",
-        f"Mode: {migration_mode}",
-        f"Added:   {added if added else 'None'}",
-        f"Skipped: {[f'{spec} ({reason})' for base, spec, reason in skipped] if skipped else 'None'}",
-        f"Failed:  {failed if failed else 'None'}",
-    ]
-    summary_table = "\n".join(summary_lines)
-    _log_action("migrate_modern_requirements_summary_table", "INFO", summary_table)
-    # Actionable advice for all scenarios
-    if failed:
-        advice = (
-            f"Some dependencies could not be migrated from '{LEGACY_REQUIREMENTS_TXT}'.\n"
-            f"Please review the errors above and try adding them manually, e.g.:\n  uv add <package>\n"
-            f"You may also need to check for typos or unsupported specifiers in '{LEGACY_REQUIREMENTS_TXT}'.\n"
-            f"The original '{LEGACY_REQUIREMENTS_TXT}' was not modified.\n"
-            f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}', run:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
-        )
-        _log_action("migrate_modern_requirements_failed", "WARN", advice, details={"failed": failed})
-    elif added:
-        advice = (
-            f"Migration complete. The following packages were added to '{PYPROJECT_TOML_NAME}': {added}\n"
-            f"The following were already present and skipped: {[spec for base, spec, reason in skipped if reason == 'already in pyproject.toml']}\n"
-            f"The original '{LEGACY_REQUIREMENTS_TXT}' was not modified.\n"
-            f"To keep your project modern and reproducible, use '{PYPROJECT_TOML_NAME}' as your primary dependency file.\n"
-            f"If you still need '{LEGACY_REQUIREMENTS_TXT}' for other tools, regenerate it with:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
-        )
-        _log_action("migrate_modern_requirements_success", "SUCCESS", advice, details={"added": added, "skipped": skipped})
-    else:
-        advice = (
-            f"No new dependencies were added from '{LEGACY_REQUIREMENTS_TXT}'.\n"
-            f"The following were skipped: {[f'{spec} ({reason})' for base, spec, reason in skipped]}\n"
-            f"The original '{LEGACY_REQUIREMENTS_TXT}' was not modified.\n"
-            f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}', run:\n  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
-        )
-        _log_action("migrate_modern_requirements_nothing_added", "INFO", advice, details={"skipped": skipped})
 
 # --- JSON Logging Utilities ---
 _log_data_global = {}
@@ -414,7 +277,7 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
 
     console_prefix = status.upper()
     if console_prefix == "SUCCESS":
-        console_prefix = "INFO"
+        console_prefix = "INFO" # Success messages are often displayed as INFO on console
     details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
     print(f"{console_prefix}: ({action_name}) {message}{details_str}")
 
@@ -444,25 +307,17 @@ def _save_log(log_file_path: Path, project_root: Path = Path.cwd()):
     if current_overall_status == "IN_PROGRESS":
         if _log_data_global.get("errors_encountered_summary"):
             _log_data_global["overall_status"] = "COMPLETED_WITH_ERRORS"
-            if "final_summary" in _log_data_global:
-                _log_data_global["final_summary"] += "Script completed, but some errors/warnings occurred. Check 'errors_encountered_summary' and 'actions' list in this log."
-            else:
-                _log_data_global["final_summary"] = "Script completed, but some errors/warnings occurred. Check 'errors_encountered_summary' and 'actions' list in this log."
+            _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed, but some errors/warnings occurred. Check 'errors_encountered_summary' and 'actions' list in this log."
         else:
             _log_data_global["overall_status"] = "SUCCESS"
-            if "final_summary" in _log_data_global:
-                _log_data_global["final_summary"] += "Script completed successfully."
-            else:
-                _log_data_global["final_summary"] = "Script completed successfully."
+            _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed successfully."
     elif not _log_data_global.get("final_summary"):
         _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
 
-    if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS"]:
+    if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS", "HALTED_BY_SCRIPT_LOGIC"]:
         next_steps_text = _get_next_steps_text(project_root)
-        if _log_data_global.get("final_summary"):
-            _log_data_global["final_summary"] += next_steps_text
-        else:
-            _log_data_global["final_summary"] = f"Script Status: {_log_data_global['overall_status']}.{next_steps_text}"
+        _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "\n\n" + next_steps_text
+
 
     try:
         with open(log_file_path, "w", encoding="utf-8") as f:
@@ -617,16 +472,18 @@ def _ensure_uv_installed():
         _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.")
         return False
 
-def _ensure_tool_available(tool_name, major_action_results, website=None):
+def _ensure_tool_available(tool_name: str, major_action_results: list, website: str = None):
     """
     Ensures a CLI tool is installed via `uv tool install` for use with `uvx`.
-    Optionally provide a website for user guidance. Handles all error logging and halting internally.
+    Optionally provide a website for user guidance. Handles all error logging internally.
     Updates major_action_results for each tool.
     """
     action_name = f"ensure_tool_{tool_name}"
-    package_to_install = tool_name
+    package_to_install = tool_name # Often the package name is the same as the tool name
     _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install}`) is available for `uvx`.")
     try:
+        # Using uvx to check if tool is already available is not straightforward,
+        # uv tool install is idempotent and safer to just run.
         _run_command(["uv", "tool", "install", package_to_install], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True)
         _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
         major_action_results.append((f"{tool_name}_cli_tool", "SUCCESS"))
@@ -640,7 +497,6 @@ def _ensure_tool_available(tool_name, major_action_results, website=None):
         )
         major_action_results.append((f"{tool_name}_cli_tool", "FAILED"))
         return False
-    return False
 
 # --- Project and Dependency Handling ---
 
@@ -681,14 +537,14 @@ def _ensure_project_initialized(project_root: Path):
         main_py_exists_after_init = main_py_path.exists()
         if main_py_exists_after_init and not main_py_existed_before_init: # `uv init` created main.py
             if project_had_py_files_before_init: # And there were other .py files
-                _log_action(f"{action_name}_remove_main_py", "INFO", f"`uv init` created '{main_py_path.name}', but other .py files existed. Removing '{main_py_path.name}'.\nINFO: `uv init` created '{main_py_path.name}'. Removing it as other Python files already exist in the project.")
+                _log_action(f"{action_name}_remove_main_py", "INFO", f"`uv init` created '{main_py_path.name}', but other .py files existed. Removing '{main_py_path.name}'.")
                 try:
                     main_py_path.unlink()
                     _log_action(f"{action_name}_remove_main_py", "SUCCESS", f"Successfully removed '{main_py_path.name}' created by `uv init`.")
                 except OSError as e:
-                    _log_action(f"{action_name}_remove_main_py", "ERROR", f"Failed to remove '{main_py_path.name}': {e}\nERROR: Failed to remove '{main_py_path.name}': {e}")
+                    _log_action(f"{action_name}_remove_main_py", "ERROR", f"Failed to remove '{main_py_path.name}': {e}.")
             else: # Project was empty of .py files, so main.py from uv init is fine
-                _log_action(f"{action_name}_keep_main_py", "INFO", f"`uv init` created '{main_py_path.name}' in an otherwise empty Python project. It will be kept.\nINFO: `uv init` created '{main_py_path.name}'. Keeping it as standard for a new project.")
+                _log_action(f"{action_name}_keep_main_py", "INFO", f"`uv init` created '{main_py_path.name}' in an otherwise empty Python project. It will be kept as standard for a new project.")
         return True
 
     except Exception: # Error logged by _run_command
@@ -753,11 +609,11 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str):
                     f.write("\n# Added/Ensured by pyuvstarter.py\n")
                     for entry in entries_to_add_with_comments:
                         f.write(f"{entry}\n")
-                    _log_action(action_name, "SUCCESS", f"Appended essential missing entries to existing '{GITIGNORE_NAME}'.\nAppended essential entries to '{GITIGNORE_NAME}'.", details={"appended": entries_to_add_with_comments})
+                    _log_action(action_name, "SUCCESS", f"Appended essential missing entries to existing '{GITIGNORE_NAME}'.", details={"appended": entries_to_add_with_comments})
                 else:
                     _log_action(action_name, "INFO", f"Existing '{GITIGNORE_NAME}' seems to cover essential exclusions for venv and log file.")
         except Exception as e:
-            _log_action(action_name, "WARN", f"Could not read/update existing '{GITIGNORE_NAME}'. Manual check advised. Exception: {e}\nCould not check/update existing '{GITIGNORE_NAME}': {e}. Please verify it manually includes at least '{VENV_NAME}/' and '{JSON_LOG_FILE_NAME}'.", details={"exception": str(e)})
+            _log_action(action_name, "WARN", f"Could not read/update existing '{GITIGNORE_NAME}'. Manual check advised. Exception: {e}.", details={"exception": str(e)})
     else:
         _log_action(action_name, "INFO", f"'{GITIGNORE_NAME}' not found. Creating a default one.")
         try:
@@ -771,6 +627,11 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str):
 
 
 def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
+    """
+    Parses pyproject.toml to get a set of base package names declared under
+    [project.dependencies] and [project.optional-dependencies].
+    Returns a set of lowercase base package names.
+    """
     action_name = "get_declared_dependencies_from_pyproject"
     dependencies = set()
     if not pyproject_path.exists():
@@ -790,9 +651,8 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
             tomllib_module = importlib.import_module("toml")
             tomllib_source = "toml (third-party package)"
         except ImportError:
-            msg = "Cannot parse `pyproject.toml` to read existing dependencies: `tomllib` (Python 3.11+) or `toml` package not available in the environment running this script."
-            _log_action(action_name, "WARN", msg + " Dependency checking against `pyproject.toml` will be skipped before `uv add` (this is okay as `uv add` is idempotent).")
-            _log_action(action_name, "INFO", "Script best run with Python 3.11+ or with 'toml' installed in its execution environment.")
+            msg = "Cannot parse `pyproject.toml` to read existing dependencies: `tomllib` (Python 3.11+) or `toml` package not available in the environment running this script. Dependency checking against `pyproject.toml` might be incomplete."
+            _log_action(action_name, "WARN", msg + " Script best run with Python 3.11+ or with 'toml' installed in its execution environment.")
             return dependencies
 
     _log_action(action_name, "INFO", f"Attempting to parse '{pyproject_path.name}' for existing dependencies using {tomllib_source}.")
@@ -822,7 +682,11 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
         _log_action(action_name, "ERROR", msg, details={"exception": str(e)})
         return dependencies
 
-def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[str]:
+def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str, str]]:
+    """
+    Reads a requirements.txt file and extracts package specifiers.
+    Returns a set of (base_package_name, full_specifier) tuples.
+    """
     action_name = "read_legacy_requirements_txt_content"
     packages_specs = set()
     if not requirements_path.exists():
@@ -834,64 +698,25 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[str]:
         with open(requirements_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith("#") or line.startswith("-e"):
+                if not line or line.startswith("#") or line.startswith("-e"): # Skip comments and editable installs
                     continue
-                if line:
-                    packages_specs.add(line)
-        _log_action(action_name, "SUCCESS", f"Read {len(packages_specs)} package specifiers from '{requirements_path.name}'.")
+                # Extract base package name from specifier for comparison
+                base_pkg_name = line.split("[")[0].split("=")[0].split(">")[0].split("<")[0].split("!")[0].split("~")[0].strip().lower()
+                if base_pkg_name:
+                    packages_specs.add((base_pkg_name, line))
+        _log_action(action_name, "SUCCESS", f"Read {len(packages_specs)} package specifier(s) from '{requirements_path.name}'.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration. Exception: {e}. Skipping migration.", details={"exception": str(e)})
     return packages_specs
 
-def _migrate_req_txt_to_pyproject(requirements_path: Path, venv_python_executable: Path, declared_deps_before_migration: set):
-    action_name = "migrate_legacy_requirements_txt_to_pyproject"
-    packages_from_req_txt_specs = _get_packages_from_legacy_req_txt(requirements_path)
-    if not packages_from_req_txt_specs:
-        _log_action(action_name, "INFO", "No packages from legacy requirements.txt to migrate.")
-        return
-
-    _log_action(action_name, "INFO", f"Attempting to migrate {len(packages_from_req_txt_specs)} specifier(s) from '{requirements_path.name}' to `pyproject.toml` if not already declared.")
-    migrated_count = 0
-    failed_migrations = []
-    packages_actually_added_log = []
-    for pkg_specifier in sorted(list(packages_from_req_txt_specs)):
-        base_pkg_name = pkg_specifier.split("[")[0].split("=")[0].split(">")[0].split("<")[0].split("!")[0].split("~")[0].strip().lower()
-        if base_pkg_name in declared_deps_before_migration:
-            _log_action(f"{action_name}_skip_add", "INFO", f"Package '{base_pkg_name}' (from specifier '{pkg_specifier}') appears already declared. Skipping redundant `uv add` during migration.")
-            continue
-        try:
-            _run_command(["uv", "add", pkg_specifier, "--python", str(venv_python_executable)], f"{action_name}_uv_add_'{base_pkg_name.replace('.', '_')}'")
-            migrated_count += 1
-            packages_actually_added_log.append(pkg_specifier)
-        except Exception:
-            _log_action(action_name, "ERROR", f"Failed to `uv add \"{pkg_specifier}\"` from '{requirements_path.name}'. Check `uv add` output above.")
-            failed_migrations.append(pkg_specifier)
-
-    summary_msg = f"Migration from '{requirements_path.name}': {migrated_count} package specifier(s) processed for addition to `pyproject.toml`."
-    summary_details = {"total_from_req_txt": len(packages_from_req_txt_specs), "attempted_uv_add_count": migrated_count, "added_specifiers": packages_actually_added_log}
-    if failed_migrations:
-        summary_msg += f" {len(failed_migrations)} package specifier(s) failed to be added via `uv add`."
-        summary_details["failed_migrations"] = failed_migrations
-        _log_action(action_name, "WARN", summary_msg, details=summary_details)
-    else:
-        status = "SUCCESS" if migrated_count > 0 or not packages_from_req_txt_specs else "INFO"
-        _log_action(action_name, status, summary_msg, details=summary_details)
-
-    if packages_from_req_txt_specs:
-        advise_msg = (f"Dependencies from '{requirements_path.name}' have been processed. "
-                      f"The original '{requirements_path.name}' HAS NOT been modified by this script. "
-                      f"It's recommended to use `{PYPROJECT_TOML_NAME}` as the primary source of dependencies. "
-                      f"You may want to manually archive or delete '{requirements_path.name}', or replace it "
-                      f"with one generated from `pyproject.toml` (e.g., using `uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}`) "
-                      f"if it's still needed for other tools or workflows.")
-        _log_action(f"{action_name}_advise_user_req_txt", "INFO", f"IMPORTANT_ADVICE: {advise_msg}")
-        print(f"IMPORTANT_ADVICE: {advise_msg}")
-
-
-def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> set[str]:
+def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> set[tuple[str, str]]:
+    """
+    Runs `pipreqs` via `uvx` to discover imported packages in the project.
+    Returns a set of (base_package_name, full_specifier) tuples.
+    """
     action_name = "pipreqs_discover_imports"
     _log_action(action_name, "INFO", f"Scanning project imports with `pipreqs` (via `uvx`), ignoring '{venv_name_to_ignore}'.")
-    packages = set()
+    packages_specs = set() # Changed to store tuples (base_name, specifier)
     pipreqs_args = ["uvx", "pipreqs", "--print", "--ignore", venv_name_to_ignore, str(project_root)]
     try:
         stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", suppress_console_output_on_success=True)
@@ -901,23 +726,246 @@ def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> 
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                package_name = line.split("==")[0].split(">=")[0].split("<=")[0].split("!=")[0].split("~=")[0].strip()
-                if package_name:
-                    packages.add(package_name.lower())
+                # The line from pipreqs --print is already a specifier like 'package==1.2.3'
+                # or 'package'
+                package_name_base = line.split("==")[0].split(">=")[0].split("<=")[0].split("!=")[0].split("~=")[0].strip().lower()
+                if package_name_base:
+                    packages_specs.add((package_name_base, line))
                     parsed_count += 1
 
         if parsed_count > 0:
-            _log_action(action_name, "SUCCESS", f"Discovered {len(packages)} unique potential package name(s) via `pipreqs`: {', '.join(sorted(list(packages)))}.")
+            _log_action(action_name, "SUCCESS", f"Discovered {len(packages_specs)} unique potential package specifier(s) via `pipreqs`.")
         elif not stdout.strip():
              _log_action(action_name, "INFO", "`pipreqs` (via `uvx`) produced no output. No import-based dependencies found or an issue running it (check command log).")
         else:
              _log_action(action_name, "INFO", "`pipreqs` (via `uvx`) ran but no parseable package names were found in its output.")
-        return packages
+        return packages_specs
     except subprocess.CalledProcessError:
         _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Cannot automatically discover dependencies. See command execution log for details.\n       Hints: This might be due to syntax errors in your Python files that `pipreqs` cannot parse, or `uvx` failing to run `pipreqs`.\n       Consider running manually for debug: {' '.join(pipreqs_args)} --debug")
     except Exception as e:
         _log_action(action_name, "ERROR", f"An unexpected error occurred while running/processing `pipreqs`: {e}", details={"exception": str(e)})
-    return packages
+    return set() # Return empty set on error
+
+def _run_ruff_unused_import_check(project_root: Path, major_action_results: list):
+    """
+    Runs ruff via uvx to detect unused imports (F401) and logs warnings if found.
+    """
+    action_name = "ruff_unused_import_check"
+    _log_action(action_name, "INFO", "Running ruff to check for unused imports (F401).")
+
+    # _ensure_tool_available for ruff should have been called before this.
+    # We implicitly rely on ruff being available via uvx.
+    # If `uvx ruff` itself fails (e.g. tool not found or installed incorrectly), _run_command will log it.
+
+    try:
+        # Use --exit-zero to ensure command doesn't raise error if issues found, just returns 0
+        # Use --isolated so ruff doesn't pick up a project config, we want just F401
+        result_stdout, _ = _run_command([
+            "uvx", "ruff", "check", str(project_root), "--select", "F401", "--format", "json", "--exit-zero"
+        ], f"{action_name}_exec", suppress_console_output_on_success=True)
+
+        unused = []
+        if result_stdout:
+            try:
+                issues = json.loads(result_stdout)
+                for issue in issues:
+                    if issue.get("code") == "F401":
+                        unused.append((issue.get("filename"), issue.get("location", {}).get("row"), issue.get("message")))
+            except json.JSONDecodeError as e:
+                _log_action(action_name, "ERROR", "Failed to parse ruff output (invalid JSON).", details={"exception": str(e), "ruff_raw_output": result_stdout})
+                major_action_results.append((action_name, "FAILED_PARSE_OUTPUT"))
+                return
+            except Exception as e:
+                _log_action(action_name, "ERROR", "Failed to process ruff output for unused imports.", details={"exception": str(e)})
+                major_action_results.append((action_name, "FAILED_PROCESS_OUTPUT"))
+                return
+
+        if unused:
+            msg = ("Ruff detected unused imports (F401). These may lead to unnecessary dependencies or code cruft:\n" +
+                   "\n".join([f"  - {Path(f).relative_to(project_root)}:{lineno}: {desc}" for f, lineno, desc in unused]) +
+                   "\nConsider removing these unused imports for a cleaner project and more accurate dependency analysis. "
+                   "You can typically auto-fix them by running `uvx ruff check . --fix`.")
+            _log_action(action_name, "WARN", msg, details={"unused_imports_count": len(unused), "unused_imports_details": unused})
+            major_action_results.append((action_name, "COMPLETED_WITH_WARNINGS"))
+        else:
+            _log_action(action_name, "SUCCESS", "No unused imports (F401) detected by ruff. Great job!")
+            major_action_results.append((action_name, "SUCCESS"))
+
+    except subprocess.CalledProcessError as e:
+        _log_action(action_name, "ERROR", "uvx ruff command failed.", details={"exception": str(e)})
+        major_action_results.append((action_name, "FAILED_CMD_ERROR"))
+    except Exception as e:
+        _log_action(action_name, "ERROR", "An unexpected error occurred while running/processing ruff.", details={"exception": str(e)})
+        major_action_results.append((action_name, "FAILED_UNEXPECTED_ERROR"))
+
+def _manage_project_dependencies(
+    project_root: Path,
+    venv_python_executable: Path,
+    pyproject_file_path: Path,
+    migration_mode: str,
+    dry_run: bool,
+    declared_deps_before_management: set[str], # set of base package names from pyproject.toml
+    project_imported_packages: set[tuple[str, str]], # set of (base_name, spec) from pipreqs
+):
+    """
+    Manages project dependencies by migrating from requirements.txt, adding imports,
+    and syncing with pyproject.toml based on the configured migration_mode.
+    This function centralizes all dependency management logic.
+    """
+    action_name = "manage_project_dependencies"
+    _log_action(action_name, "INFO", f"Starting dependency management with mode: '{migration_mode}', dry-run: {dry_run}.")
+
+    req_path = project_root / LEGACY_REQUIREMENTS_TXT
+    req_pkgs_from_file = _get_packages_from_legacy_req_txt(req_path) # set of (base_name, spec)
+
+    # Convert imported_packages to a set of base names for quick lookups
+    imported_pkgs_base_names = {base for base, _ in project_imported_packages}
+
+    # Data structures to build up the plan
+    packages_to_add_candidate: set[tuple[str, str]] = set() # (base_name, full_specifier)
+    packages_to_skip_due_to_mode: set[tuple[str, str]] = set() # (base_name, full_specifier) -- for reasons like 'not imported'
+    packages_already_in_pyproject: set[tuple[str, str]] = set() # (base_name, full_specifier)
+
+    # Helper to check if a package (base_name) is already declared in pyproject.toml
+    # and adds it to the packages_already_in_pyproject set for detailed logging
+    def _check_and_mark_declared(base_name: str, full_spec: str) -> bool:
+        if base_name in declared_deps_before_management:
+            packages_already_in_pyproject.add((base_name, full_spec))
+            return True
+        return False
+
+    # --- Determine packages to add based on migration mode ---
+
+    if migration_mode == "skip-requirements":
+        _log_action(action_name, "INFO", f"Migration mode set to '{migration_mode}'. Ignoring '{LEGACY_REQUIREMENTS_TXT}'.")
+        for base, spec in project_imported_packages:
+            if not _check_and_mark_declared(base, spec):
+                packages_to_add_candidate.add((base, spec))
+
+    elif migration_mode in ("auto", "only-imported"):
+        _log_action(action_name, "INFO", f"Migration mode set to '{migration_mode}'. Will migrate requirements.txt entries only if imported, and add all other imported packages.")
+
+        # 1. Process packages from requirements.txt: prioritize those that are imported
+        for base, spec in req_pkgs_from_file:
+            if _check_and_mark_declared(base, spec):
+                continue # Already declared in pyproject, no need to process further for addition
+
+            if base in imported_pkgs_base_names:
+                packages_to_add_candidate.add((base, spec))
+            else:
+                packages_to_skip_due_to_mode.add((base, spec)) # Mark as unused
+
+        # 2. Process packages from project imports: add any that are not already declared or slated for addition
+        # This covers imports not found in requirements.txt
+        for base, spec in project_imported_packages:
+            if not _check_and_mark_declared(base, spec) and (base, spec) not in packages_to_add_candidate:
+                packages_to_add_candidate.add((base, spec))
+
+    elif migration_mode == "all-requirements":
+        _log_action(action_name, "INFO", f"Migration mode set to '{migration_mode}'. Will add all dependencies from '{LEGACY_REQUIREMENTS_TXT}' and then all imported packages.")
+
+        # 1. Process packages from requirements.txt first
+        for base, spec in req_pkgs_from_file:
+            if not _check_and_mark_declared(base, spec):
+                packages_to_add_candidate.add((base, spec))
+
+        # 2. Process packages from project imports. Add any that are not already declared in pyproject.toml
+        # AND not already added from requirements.txt in this run.
+        currently_added_base_names = {base for base, _ in packages_to_add_candidate}
+        for base, spec in project_imported_packages:
+            if not _check_and_mark_declared(base, spec) and base not in currently_added_base_names:
+                packages_to_add_candidate.add((base, spec))
+
+    else:
+        _log_action(action_name, "ERROR", f"Invalid dependency migration mode: {migration_mode}. No dependencies will be added/managed.")
+        return
+
+    # Final sorted list for consistent logging and action
+    final_packages_to_add: list[tuple[str, str]] = sorted(list(packages_to_add_candidate), key=lambda x: x[0])
+    all_skipped_info_for_log: list[tuple[str, str, str]] = [] # (base_name, spec, reason)
+
+    # Collect all skipped packages with their reasons
+    for base, spec in packages_already_in_pyproject:
+        all_skipped_info_for_log.append((base, spec, "already in pyproject.toml"))
+    for base, spec in packages_to_skip_due_to_mode:
+        all_skipped_info_for_log.append((base, spec, "not imported (unused from requirements.txt)"))
+    all_skipped_info_for_log = sorted(all_skipped_info_for_log, key=lambda x: x[0])
+
+    # --- Dry run output ---
+    if dry_run:
+        msg = (
+            "\n--- DRY RUN: Dependency Management Summary ---\n"
+            f"Mode: {migration_mode}\n"
+            f"Would add: {[spec for base, spec in final_packages_to_add] if final_packages_to_add else 'None'}\n"
+            f"Would skip: {[f'{spec} ({reason})' for base, spec, reason in all_skipped_info_for_log] if all_skipped_info_for_log else 'None'}\n"
+            "This was a dry run. No changes were made.\nTo perform the dependency management, re-run without the --dry-run flag."
+        )
+        _log_action(action_name + "_dry_run", "INFO", msg)
+        return
+
+    # --- Actually add dependencies ---
+    successfully_added_specs = []
+    failed_to_add_specs = []
+
+    if final_packages_to_add:
+        _log_action(action_name, "INFO", f"Attempting to add {len(final_packages_to_add)} new package(s) to '{PYPROJECT_TOML_NAME}' using `uv add`...")
+        for base, spec in final_packages_to_add:
+            try:
+                _run_command(["uv", "add", spec, "--python", str(venv_python_executable)], f"uv_add_{base.replace('-', '_').replace('.', '_')}")
+                successfully_added_specs.append(spec)
+                _log_action(action_name + "_add_single", "SUCCESS", f"Added '{spec}' to '{PYPROJECT_TOML_NAME}'.")
+            except Exception:
+                failed_to_add_specs.append(spec)
+                _log_action(action_name + "_add_single", "ERROR", f"Failed to add '{spec}' via `uv add`. Review logs and `uv` output above.", details={"package": spec})
+    else:
+        _log_action(action_name, "INFO", "No new dependencies identified for addition based on mode and existing declarations.")
+
+    # --- Final Summary and Advice ---
+    summary_lines = [
+        "\n--- Dependency Management Final Summary ---",
+        f"Mode: {migration_mode}",
+        f"Total packages from requirements.txt scanned: {len(req_pkgs_from_file)}",
+        f"Total packages from imports (pipreqs) discovered: {len(project_imported_packages)}",
+        f"Total packages declared in pyproject.toml initially: {len(declared_deps_before_management)}",
+        f"Packages Added to {PYPROJECT_TOML_NAME}: {successfully_added_specs if successfully_added_specs else 'None'}",
+        f"Packages Skipped: {[f'{spec} ({reason})' for base, spec, reason in all_skipped_info_for_log] if all_skipped_info_for_log else 'None'}",
+        f"Packages Failed to Add: {failed_to_add_specs if failed_to_add_specs else 'None'}",
+    ]
+    summary_table = "\n".join(summary_lines)
+    _log_action(action_name + "_final_summary", "INFO", summary_table)
+
+    # Actionable advice
+    if failed_to_add_specs:
+        advice = (
+            f"Some dependencies could not be added to '{PYPROJECT_TOML_NAME}'.\n"
+            f"Please review the errors above and try adding them manually, e.g.:\n  uv add <package>\n"
+            f"You may also need to check for typos or unsupported specifiers.\n"
+        )
+        _log_action(action_name + "_advice_failed", "WARN", advice, details={"failed": failed_to_add_specs})
+
+    # Always give advice on requirements.txt if it exists
+    if req_path.exists():
+        if successfully_added_specs or failed_to_add_specs:
+            advice = (
+                f"The original '{LEGACY_REQUIREMENTS_TXT}' was NOT modified by this script.\n"
+                f"To keep your project modern and reproducible, '{PYPROJECT_TOML_NAME}' is now the primary source of truth.\n"
+                f"If you need '{LEGACY_REQUIREMENTS_TXT}' for other tools (e.g., legacy CI/CD), regenerate it with:\n"
+                f"  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
+            )
+            _log_action(action_name + "_advice_req_txt", "INFO", advice)
+        elif not final_packages_to_add and all_skipped_info_for_log: # reqs.txt exists, but nothing new was added
+            advice = (
+                f"No new dependencies were added from '{LEGACY_REQUIREMENTS_TXT}' as they were either already declared or not applicable to the '{migration_mode}' mode.\n"
+                f"Consider archiving or deleting '{LEGACY_REQUIREMENTS_TXT}' to avoid confusion.\n"
+                f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}' for legacy tools, run:\n"
+                f"  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
+            )
+            _log_action(action_name + "_advice_nothing_added_from_req", "INFO", advice)
+    else:
+        _log_action(action_name, "INFO", f"No '{LEGACY_REQUIREMENTS_TXT}' found in the project root. No migration from legacy requirements was attempted.")
+
+    _log_action(action_name, "SUCCESS", f"Dependency management completed for mode: '{migration_mode}'.")
+
 
 def _configure_vscode_settings(project_root: Path, venv_python_executable: Path):
     """
@@ -954,15 +1002,18 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path)
     # So we prepend a comment line if not present
     comment_line = "// This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
     try:
-        with open(settings_file_path, 'r', encoding='utf-8') as f:
-            first_line = f.readline()
+        current_first_line = ""
+        if settings_file_path.exists():
+            with open(settings_file_path, 'r', encoding='utf-8') as f:
+                current_first_line = f.readline()
     except Exception:
-        first_line = ""
+        current_first_line = ""
+
     with open(settings_file_path, 'w', encoding='utf-8') as f:
-        if not first_line.strip().startswith("// This interpreter path is managed by pyuvstarter"):
+        if not current_first_line.strip().startswith("// This interpreter path is managed by pyuvstarter"):
             f.write(comment_line + "\n")
         json.dump(settings_data, f, indent=4)
-    msg = f"VS Code 'python.defaultInterpreterPath' set.{' (Backed up old file)' if backup_made else ''}\nVS Code 'python.defaultInterpreterPath' set in '{settings_file_path.name}'\n      Path: {interpreter_path}\n      (Managed by pyuvstarter and uv)"
+    msg = f"VS Code 'python.defaultInterpreterPath' set.{' (Backed up old file)' if backup_made else ''}\n      Path: {interpreter_path}\n      (Managed by pyuvstarter and uv)"
     _log_action(action_name, "SUCCESS", msg, details={"interpreter_path": interpreter_path})
 
 def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path):
@@ -977,92 +1028,61 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path)
     launch_path = vscode_dir / LAUNCH_FILE_NAME
     vscode_dir.mkdir(exist_ok=True)
     # Use ${file} so the user can run any Python file they have open in the editor
-    default_config = {
-        "version": "0.2.0",
-        "configurations": [
-            {
-                "name": "Python: Run Current File (uv venv)",
-                "type": "python",
-                "request": "launch",
-                "program": "${file}",
-                "console": "integratedTerminal",
-                "python": str(venv_python_executable),
-                "justMyCode": True,
-                "internalConsoleOptions": "neverOpen",
-                # "env": {},  # Removed to let VS Code inherit the environment, including venv activation
-                "cwd": "${workspaceFolder}",
-                "args": [],
-                "description": "Runs the currently open Python file using the uv-managed virtual environment."
-            }
-        ]
+    default_config_entry = {
+        "name": "Python: Run Current File (uv venv)",
+        "type": "python",
+        "request": "launch",
+        "program": "${file}",
+        "console": "integratedTerminal",
+        "python": str(venv_python_executable),
+        "justMyCode": True,
+        "internalConsoleOptions": "neverOpen",
+        # "env": {},  # Removed to let VS Code inherit the environment, including venv activation
+        "cwd": "${workspaceFolder}",
+        "args": [],
+        "description": "Runs the currently open Python file using the uv-managed virtual environment."
     }
+    default_file_content = {
+        "version": "0.2.0",
+        "configurations": [default_config_entry]
+    }
+
     try:
         if launch_path.exists():
             try:
                 with open(launch_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 configs = data.get("configurations", [])
-                # Check if a config for ${file} and the venv python already exists
+
+                # Check if a config with the desired name and Python path already exists
                 already_present = any(
-                    c.get("type") == "python" and c.get("program") == "${file}" and c.get("python") == str(venv_python_executable.resolve())
+                    c.get("type") == "python" and c.get("name") == default_config_entry["name"] and c.get("python") == str(venv_python_executable.resolve())
                     for c in configs
                 )
+
                 if not already_present:
-                    configs.append(default_config["configurations"][0])
+                    configs.append(default_config_entry)
                     data["configurations"] = configs
                     with open(launch_path, "w", encoding="utf-8") as f:
                         json.dump(data, f, indent=4)
                     _log_action(action_name, "SUCCESS", "Added launch config for current file to existing launch.json.")
                 else:
-                    _log_action(action_name, "INFO", "Launch config for current file and venv python already present in launch.json.")
+                    _log_action(action_name, "INFO", "Launch config for current file and uv venv already present in launch.json.")
             except json.JSONDecodeError:
                 backup_path = launch_path.with_suffix(f".bak_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
                 shutil.copy2(launch_path, backup_path)
                 _log_action(action_name, "WARN", f"Existing '{launch_path.name}' is not valid JSON. Backed up before overwrite.", details={"backup": str(backup_path)})
                 with open(launch_path, "w", encoding="utf-8") as f:
-                    json.dump(default_config, f, indent=4)
+                    json.dump(default_file_content, f, indent=4)
                 _log_action(action_name, "SUCCESS", "Created new launch.json for current file. (Backed up old file)")
             except Exception as e:
                 _log_action(action_name, "ERROR", f"Could not update existing launch.json: {e}")
         else:
             with open(launch_path, "w", encoding="utf-8") as f:
-                json.dump(default_config, f, indent=4)
+                json.dump(default_file_content, f, indent=4)
             _log_action(action_name, "SUCCESS", "Created new launch.json for current file.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"Failed to create or update launch.json: {e}")
-
-def detect_unused_imports(project_root: Path):
-    """
-    Runs ruff to detect unused imports (F401) in the project.
-    Returns a list of (file, lineno, description) for each unused import, or None if ruff is not available.
-    """
-    action_name = "detect_unused_imports_ruff"
-    if not _command_exists("ruff"):
-        _log_action(action_name, "WARN", "ruff is not installed. Skipping unused import detection.")
-        return None
-    try:
-        result = subprocess.run([
-            "ruff", str(project_root), "--select", "F401", "--format", "json"
-        ], capture_output=True, text=True, check=True)
-        output = result.stdout.strip()
-        unused = []
-        if output:
-            try:
-                issues = json.loads(output)
-                for issue in issues:
-                    if issue.get("code") == "F401":
-                        unused.append((issue.get("filename"), issue.get("location", {}).get("row"), issue.get("message")))
-            except Exception as e:
-                _log_action(action_name, "ERROR", "Failed to parse ruff output for unused imports.", details={"exception": str(e)})
-                return None
-        _log_action(action_name, "SUCCESS", f"Ruff unused import detection complete. Found {len(unused)} unused imports.")
-        return unused
-    except subprocess.CalledProcessError as e:
-        _log_action(action_name, "ERROR", "ruff command failed.", details={"exception": str(e)})
-        return None
-    except Exception as e:
-        _log_action(action_name, "ERROR", "Unexpected error running ruff.", details={"exception": str(e)})
-        return None
 
 # --- Main Orchestration Function ---
 def main():
@@ -1076,115 +1096,112 @@ def main():
     _init_log(project_root)
 
     pyproject_file_path = project_root / PYPROJECT_TOML_NAME
-    legacy_req_path = project_root / LEGACY_REQUIREMENTS_TXT
 
     _log_action("script_start", "INFO", f"--- Starting Automated Python Project Setup ({_log_data_global['script_name']}) in: {project_root} ---\n--- Using Virtual Environment Name: '{VENV_NAME}' ---\n--- Primary Dependency File: '{PYPROJECT_TOML_NAME}' ---\n--- JSON Log will be saved to: '{log_file_path.name}' ---")
 
     venv_python_executable = None
     settings_json_status = "NOT_ATTEMPTED"
     launch_json_status = "NOT_ATTEMPTED"
-    major_action_results = []
+    major_action_results = [] # To populate the final summary table
 
     try:
+        # 1. Ensure uv is installed
         if not _ensure_uv_installed():
             _log_action("ensure_uv_installed", "ERROR", "Halting: `uv` could not be installed or verified. Check log and console output for details.")
             raise SystemExit("Halting: `uv` could not be installed or verified. Check log and console output for details.")
         major_action_results.append(("uv_installed", "SUCCESS"))
 
+        # 2. Ensure pyproject.toml exists and remove main.py if conditional
         if not _ensure_project_initialized(project_root):
             _log_action("ensure_project_initialized", "ERROR", f"Halting: Project could not be initialized with '{PYPROJECT_TOML_NAME}'. Check log and console output.")
             raise SystemExit(f"Halting: Project could not be initialized with '{PYPROJECT_TOML_NAME}'. Check log and console output.")
         major_action_results.append(("project_initialized", "SUCCESS"))
 
+        # 3. Ensure .gitignore exists
         _ensure_gitignore_exists(project_root, VENV_NAME)
         major_action_results.append(("gitignore", "SUCCESS"))
 
+        # 4. Create/verify virtual environment
         action_venv = "create_or_verify_venv"
         _log_action(action_venv, "INFO", f"Creating/ensuring virtual environment '{VENV_NAME}'.")
-        _run_command(["uv", "venv", VENV_NAME], f"{action_venv}_uv_venv")
+        # Only run uv venv if not dry run
+        if not args.dry_run:
+            _run_command(["uv", "venv", VENV_NAME], f"{action_venv}_uv_venv")
+        else:
+            _log_action(action_venv, "INFO", "Skipping `uv venv` in dry-run mode.")
+
         venv_path = project_root / VENV_NAME
         venv_python_executable = venv_path / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
-        _log_action(action_venv, "INFO", f"Virtual environment '{VENV_NAME}' created/verified. venv_path:'{venv_path}' Python executable: '{venv_python_executable}'. Project venv Python resolved to absolute path: '{venv_python_executable.resolve()}' venv path: '{venv_path}'.")
 
-        if not venv_python_executable.exists():
+        if not args.dry_run and not venv_python_executable.exists():
             msg = f"Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command."
             _log_action(action_venv, "ERROR", msg)
             raise SystemExit(f"CRITICAL ERROR: {msg}\n       This indicates a problem with `uv venv` or an unexpected environment structure.")
-        _log_action(action_venv, "SUCCESS", f"Virtual environment '{VENV_NAME}' ready. Interpreter: '{venv_python_executable}'.")
+        elif args.dry_run:
+            _log_action(action_venv, "INFO", f"In dry-run mode: assuming virtual environment '{VENV_NAME}' would be ready and Python executable at '{venv_python_executable}'.")
+        else:
+            _log_action(action_venv, "SUCCESS", f"Virtual environment '{VENV_NAME}' ready. Interpreter: '{venv_python_executable}'.")
         major_action_results.append(("venv_ready", "SUCCESS"))
 
-        declared_deps_before_migration = _get_declared_dependencies(pyproject_file_path)
+        # --- Ensure tools for dependency discovery and linting are available via uv tool install ---
+        # These are needed before we can run pipreqs or ruff.
+        _ensure_tool_available("pipreqs", major_action_results, website="https://github.com/bndr/pipreqs")
+        _ensure_tool_available("ruff", major_action_results, website="https://docs.astral.sh/ruff/")
 
-        # --- New: Modular requirements.txt migration with CLI modes/dry-run ---
-        if legacy_req_path.exists():
-            migrate_requirements_modular(
-                project_root=project_root,
-                venv_python_executable=venv_python_executable,
-                pyproject_file_path=pyproject_file_path,
-                migration_mode=args.dependency_migration,
-                dry_run=args.dry_run,
-                declared_deps_before_migration=declared_deps_before_migration
-            )
-            major_action_results.append(("requirements_migration", "SUCCESS"))
+        # --- Pre-flight: Ruff unused import detection ---
+        # This should happen before pipreqs import discovery for a cleaner analysis.
+        # Only run if not dry run.
+        if not args.dry_run:
+            _run_ruff_unused_import_check(project_root, major_action_results)
         else:
-            _log_action("migrate_legacy_requirements_txt_to_pyproject", "INFO", f"No '{LEGACY_REQUIREMENTS_TXT}' found, skipping migration step.")
-            major_action_results.append(("requirements_migration", "SKIPPED"))
+            _log_action("ruff_unused_import_check", "INFO", "Skipping ruff unused import check in dry-run mode.")
+            major_action_results.append(("ruff_unused_import_check", "SKIPPED_DRY_RUN"))
 
-        # --- Legacy: Sync environment ---
-        action_sync = "uv_sync_dependencies"
-        _log_action(action_sync, "INFO", "Syncing environment with `pyproject.toml` and `uv.lock` using `uv sync`.")
-        _run_command(["uv", "sync", "--python", str(venv_python_executable)], f"{action_sync}_exec")
-        _log_action(action_sync, "SUCCESS", "Environment synced with `pyproject.toml` and `uv.lock`.")
-        major_action_results.append(("uv_sync", "SUCCESS"))
+        # --- Get current declared dependencies (from pyproject.toml) ---
+        # This is used for comparison in _manage_project_dependencies.
+        declared_deps_before_management = _get_declared_dependencies(pyproject_file_path)
 
-        # --- Legacy: pipreqs discovery and add ---
-        action_pipreqs_phase = "pipreqs_discovery_and_add_phase"
-        _log_action(action_pipreqs_phase, "INFO", "Starting dependency discovery with `pipreqs` to add to `pyproject.toml`.")
-
-        if _ensure_tool_available("pipreqs", major_action_results, website="https://github.com/bndr/pipreqs"):
-            discovered_by_pipreqs = _get_packages_from_pipreqs(project_root, VENV_NAME)
-            if discovered_by_pipreqs:
-                current_declared_deps = _get_declared_dependencies(pyproject_file_path)
-                genuinely_new_packages_to_add = discovered_by_pipreqs - current_declared_deps
-                if genuinely_new_packages_to_add:
-                    pkgs_added_count = 0
-                    _log_action(action_pipreqs_phase, "INFO", f"`pipreqs` discovered {len(genuinely_new_packages_to_add)} potential new package(s) not yet in `pyproject.toml` dependencies: {[pkg for pkg in sorted(list(genuinely_new_packages_to_add))]}")
-                    _log_action(action_pipreqs_phase, "INFO", f"Automatically adding these {len(genuinely_new_packages_to_add)} package(s) to `pyproject.toml` using `uv add`...")
-                    for pkg_to_add in sorted(list(genuinely_new_packages_to_add)):
-                        try:
-                            _run_command(["uv", "add", pkg_to_add, "--python", str(venv_python_executable)], f"uv_add_{pkg_to_add.replace('-', '_').replace('.', '_')}")
-                            pkgs_added_count +=1
-                        except Exception:
-                            _log_action(action_pipreqs_phase, "ERROR", f"Failed to `uv add {pkg_to_add}`. Check log and `uv add` output above.")
-                    msg = f"Attempted to `uv add` {pkgs_added_count}/{len(genuinely_new_packages_to_add)} newly discovered packages to `pyproject.toml`."
-                    status = "SUCCESS" if pkgs_added_count == len(genuinely_new_packages_to_add) else "WARN"
-                    _log_action(action_pipreqs_phase, status, msg, details={"total_discovered_new": len(genuinely_new_packages_to_add), "successfully_added_count": pkgs_added_count})
-                    if status == "WARN":
-                        _log_action(action_pipreqs_phase, "WARN", "Some newly discovered packages could not be added via `uv add`. Review logs and `uv` output.")
-                elif discovered_by_pipreqs:
-                    _log_action(action_pipreqs_phase, "INFO", "All `pipreqs` discovered dependencies seem already declared in `pyproject.toml`.")
+        # --- Discover ALL imports from project Python files via pipreqs ---
+        # This is a global discovery, independent of requirements.txt.
+        # Only run if not dry run.
+        project_imported_packages = set()
+        if not args.dry_run:
+            project_imported_packages = _get_packages_from_pipreqs(project_root, VENV_NAME)
         else:
-            _log_action(action_pipreqs_phase, "ERROR", "`pipreqs` tool setup failed. Skipping automatic import discovery.")
+            _log_action("pipreqs_discovery", "INFO", "Skipping pipreqs import discovery in dry-run mode.")
         major_action_results.append(("pipreqs_discovery", "SUCCESS"))
 
-        # --- New: Ruff unused import detection ---
-        if _ensure_tool_available("ruff", major_action_results, website="https://docs.astral.sh/ruff/"):
-            unused_imports = detect_unused_imports(project_root)
-            if unused_imports is not None:
-                if unused_imports:
-                    msg = ("Ruff detected unused imports (F401):\n" +
-                        "\n".join([f"  {file}:{lineno} {desc}" for file, lineno, desc in unused_imports]) +
-                        "\nConsider removing these unused imports for a cleaner project.")
-                    _log_action("ruff_unused_imports", "WARN", msg, details={"unused_imports": unused_imports})
-                else:
-                    msg = "No unused imports detected by ruff (F401)."
-                    _log_action("ruff_unused_imports", "INFO", msg)
-            else:
-                msg = "Ruff could not be run for unused import detection."
-                _log_action("ruff_unused_imports", "WARN", msg)
-            major_action_results.append(("ruff_unused_imports", "SUCCESS"))
+        # --- Centralized Dependency Management ---
+        # This function now handles migration from requirements.txt, adding imports,
+        # and checking against existing pyproject.toml entries based on the mode.
+        _manage_project_dependencies(
+            project_root=project_root,
+            venv_python_executable=venv_python_executable,
+            pyproject_file_path=pyproject_file_path,
+            migration_mode=args.dependency_migration,
+            dry_run=args.dry_run,
+            declared_deps_before_management=declared_deps_before_management,
+            project_imported_packages=project_imported_packages
+        )
+        major_action_results.append(("dependency_management", "SUCCESS"))
+
+        # --- Final Sync environment (after all adds) ---
+        action_sync = "uv_sync_dependencies"
+        _log_action(action_sync, "INFO", "Performing final sync of environment with `pyproject.toml` and `uv.lock` using `uv sync`.")
+        # Only run sync if not dry run
+        if not args.dry_run:
+            _run_command(["uv", "sync", "--python", str(venv_python_executable)], f"{action_sync}_exec")
+            _log_action(action_sync, "SUCCESS", "Environment synced with `pyproject.toml` and `uv.lock`.")
+        else:
+            _log_action(action_sync, "INFO", "Skipping `uv sync` in dry-run mode. Would have synced dependencies.")
+        major_action_results.append(("uv_final_sync", "SUCCESS"))
+
 
         # --- VS Code config ---
+        # These are always attempted, even in dry-run, but _configure_vscode_settings
+        # and _ensure_vscode_launch_json will not write if they assume a dry run.
+        # However, for this script, we actually let them run in dry-run as their output
+        # to console/log for dry-run is valuable.
         _configure_vscode_settings(project_root, venv_python_executable)
         settings_json_status = "SUCCESS"
         _ensure_vscode_launch_json(project_root, venv_python_executable)
@@ -1194,7 +1211,6 @@ def main():
         _log_action("script_end", "SUCCESS", "Automated project setup script completed successfully.")
 
         # --- File summary table ---
-        # Print and log explicit summary and next steps
         explicit_summary = _get_explicit_summary_text(project_root, VENV_NAME, pyproject_file_path, log_file_path)
         _log_action("explicit_summary", "INFO", explicit_summary)
 
@@ -1210,9 +1226,8 @@ def main():
         summary_table = "\n".join(summary_lines)
         _log_action("final_summary_table", "INFO", summary_table)
 
-        # --- Next steps ---
-        next_steps = _get_next_steps_text(project_root)
-        _log_action("explicit_next_steps", "INFO", next_steps)
+        # --- Next steps --- (already added to final_summary in _save_log)
+        # We don't print them again here, as _save_log adds them.
 
         # If any errors or warnings, print/log a final warning
         errors_or_warnings = any(
@@ -1220,7 +1235,7 @@ def main():
             for a in _log_data_global.get("actions", [])
         )
         if errors_or_warnings:
-            warn_msg = f"\n⚠️  Some warnings/errors occurred. See '{log_file_path.name}' for details."
+            warn_msg = f"\n⚠️  Some warnings/errors occurred during setup. See '{log_file_path.name}' for details."
             _log_action("final_warning", "WARN", warn_msg)
 
     except SystemExit as e:
@@ -1229,7 +1244,7 @@ def main():
         launch_json_status = "FAILED"
         if _log_data_global.get("overall_status") == "IN_PROGRESS":
             _log_data_global["overall_status"] = "HALTED_BY_SCRIPT_LOGIC"
-        _log_data_global["final_summary"] = _log_data_global.get("final_summary", msg)
+        _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + msg
         _log_action("script_halted", "ERROR", f"\nSCRIPT HALTED: {e}")
     except subprocess.CalledProcessError as e:
         failed_cmd_str = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
@@ -1240,7 +1255,7 @@ def main():
         _log_data_global["overall_status"] = "CRITICAL_COMMAND_FAILED"
         _log_action("critical_command_failed", "ERROR", f"\nCRITICAL ERROR: {msg}, halting script.\n  Details of the failed command should be visible in the output above and in the JSON log.")
         cmd_str_lower = failed_cmd_str.lower()
-        if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_lower or "uv sync" in cmd_str_lower:
+        if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_str or "uv sync" in cmd_str_lower:
             _log_action("install_sync_hint", "WARN", "INSTALLATION/SYNC HINT: A package operation with `uv` failed.\n  - Review `uv`'s error output (logged as FAIL_STDERR/FAIL_STDOUT for the command) for specific package names or reasons.\n  - Ensure the package name is correct and exists on PyPI (https://pypi.org) or your configured index.\n  - Some packages require system-level (non-Python) libraries to be installed first. Check the package's documentation.\n  - You might need to manually edit '{PYPROJECT_TOML_NAME}' and then run `uv sync --python {venv_python_executable}`.")
         elif "pipreqs" in cmd_str_lower:
             _log_action("pipreqs_hint", "WARN", "PIPReQS HINT: The 'pipreqs' command (run via 'uvx') failed.\n  - This could be due to syntax errors in your Python files that `pipreqs` cannot parse, an internal `pipreqs` issue, or `uvx` failing to execute `pipreqs`.\n  - Try running manually for debug: uvx pipreqs \"{project_root}\" --ignore \"{VENV_NAME}\" --debug")
@@ -1277,7 +1292,7 @@ def main():
         sys.exit(1)
     finally:
         # Update summary in log with VS Code config status
-        if "start_time_utc" in _log_data_global:
+        if "start_time_utc" in _log_data_global: # Only save if _init_log was called successfully
             _log_data_global["vscode_settings_json_status"] = settings_json_status
             _log_data_global["vscode_launch_json_status"] = launch_json_status
             _save_log(log_file_path, project_root)
