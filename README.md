@@ -60,9 +60,8 @@ Once this `pyuvstarter` project is available in a public Git repository (e.g., o
 
 1.  **Ensure `uv` is installed on your system.** If not, `pyuvstarter` (when run for the first time on another project) can help install it, or you can install `uv` manually from [astral.sh](https://astral.sh/uv).
 2.  **Install `pyuvstarter` using `uv tool install`:**
-    Replace `<your-git-repo-url>` with the actual URL of the `pyuvstarter` repository.
     ```bash
-    uv tool install git+https://your-git-repo-url/pyuvstarter.git
+    uv tool install git+https://github.com/ahundt/pyuvstarter.git
     ```
     For this to work seamlessly and make `pyuvstarter` directly callable, the `pyproject.toml` file within the `pyuvstarter` project should define an entry point for the script, like:
     ```toml
@@ -70,7 +69,6 @@ Once this `pyuvstarter` project is available in a public Git repository (e.g., o
     [project.scripts]
     pyuvstarter = "pyuvstarter:main"
     ```
-    (This assumes your `pyuvstarter.py` script has a `main()` function that `pyuvstarter:main` can point to. If your script is named something else, adjust accordingly e.g., `your_script_name:main_function_in_script`).
 3.  **Ensure `uv`'s tool binaries directory is in your PATH:**
     `uv tool install` places executables in a directory managed by `uv` (often `~/.local/bin` on Linux/macOS or a similar user-specific path). `uv` usually provides instructions to add this to your PATH if it's not already there. You can also run:
     ```bash
