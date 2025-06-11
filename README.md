@@ -9,9 +9,9 @@ This script supercharges your Python project initialization by leveraging [`uv`]
 * **Speed & Efficiency:** Launch new projects or update existing ones in seconds with `uv`'s blazing-fast environment creation and package operations.
 * **Modern Standards:** Automatically sets up your project with `pyproject.toml` and `uv.lock` for reproducible and reliable dependency management, aligning with current Python best practices.
 * **Smart Automation for New & Existing Projects with steps to avoid breaking them:**
-    * Ensures `uv` and necessary tools like `pipreqs` are available, installing them if needed.
     * For existing projects, it can migrate dependencies from legacy `requirements.txt` files into your `pyproject.toml`.
-    * Scans your code for imports using `pipreqs` and automatically adds discovered dependencies to `pyproject.toml` via `uv add`.
+    * Scans your code for imports using [`pipreqs`](https://github.com/bndr/pipreqs) and automatically adds discovered dependencies to `pyproject.toml` via `uv add`.
+    * Identifies unused imports using [`ruff`](https://docs.astral.sh/ruff/) to help you keep your dependency list clean and efficient.
     * Sets up a `.gitignore` file with sensible defaults.
     * Configures VS Code to use the new project environment.
 * **Reproducibility & Auditing:** Generates a detailed JSON log (`pyuvstarter_setup_log.json`) of every action, making troubleshooting and understanding the setup process transparent.
@@ -28,12 +28,13 @@ In short, `pyuvstarter` handles the boilerplate, so you can focus on coding, whe
     * Creates a virtual environment (default: `.venv`) using `uv venv`.
     * Manages dependencies through `pyproject.toml` using `uv add`.
     * Synchronizes the environment with `pyproject.toml` and `uv.lock` using `uv sync`.
-    * Installs necessary CLI tools (like `pipreqs`) using `uv tool install`.
+    * Installs necessary CLI tools (like `pipreqs` and `ruff`) using `uv tool install`.
 * **Dependency Management:**
     * Treats `pyproject.toml` as the primary source of truth for dependencies.
     * Migrates dependencies from an existing `requirements.txt` file (if present) into `pyproject.toml` using `uv add`. The original `requirements.txt` is left untouched, and the user is advised on its management.
-    * Uses `pipreqs` (via `uvx`) to scan project source code for imported packages.
+    * Uses [`pipreqs`](https://github.com/bndr/pipreqs) (via `uvx`) to scan project source code for imported packages.
     * Automatically adds newly discovered, undeclared dependencies to `pyproject.toml` using `uv add`.
+    *  [`ruff`](https://docs.astral.sh/ruff/) provides pre-flight unused import detection** (F401), warning users about potentially unneeded dependencies.
 * **IDE & Version Control:**
     * Configures VS Code's Python interpreter path in `.vscode/settings.json` and `.vscode/launch.json`.
     * Ensures a `.gitignore` file exists with common Python, virtual environment, and OS-specific exclusions, also ignoring the script's own JSON log file.
@@ -124,6 +125,16 @@ You can run `pyuvstarter` with the following options:
 - `pyuvstarter --version`
   Print the installed version of `pyuvstarter` and exit.
 
+- `--dependency-migration {auto,all-requirements,only-imported,skip-requirements}`
+  Strategy for handling `requirements.txt`.
+    * `'auto'` (default): Intelligently migrates `requirements.txt` entries only if they are actively imported, and adds all other imported packages. Warns about unused `requirements.txt` entries.
+    * `'all-requirements'`: Migrates every single entry from `requirements.txt` as-is, and then adds any additional discovered imported packages.
+    * `'only-imported'`: Only migrates `requirements.txt` entries that are actively imported, and adds all other imported packages.
+    * `'skip-requirements'`: Ignores `requirements.txt` entirely and relies solely on discovering dependencies from `import` statements.
+
+- `--dry-run`
+  Preview all actions without making any changes to the project's files or environment.
+
 **Examples:**
 
 ```bash
@@ -135,6 +146,12 @@ pyuvstarter /path/to/your/project
 
 # Show version
 pyuvstarter --version
+
+# Migrate all requirements.txt entries, even if unused
+pyuvstarter --dependency-migration all-requirements
+
+# Perform a dry-run to see what would happen
+pyuvstarter --dry-run
 ```
 
 ## Expected Outcome After `pyuvstarter` Runs
@@ -165,7 +182,7 @@ pyuvstarter --version
 
 ## Troubleshooting
 
-* If `uv` or `pipreqs` installation (done by `pyuvstarter`) fails, the script will provide error messages and hints.
+* If `uv` or `pipreqs`/`ruff` installation (done by `pyuvstarter`) fails, the script will provide error messages and hints.
 * If `pipreqs` misidentifies dependencies, manually edit `pyproject.toml` and use `uv add <correct-package>` or `uv remove <incorrect-package>`, then `uv sync`.
 * Always check `pyuvstarter_setup_log.json` for detailed error messages.
 
