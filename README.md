@@ -82,7 +82,7 @@ After these steps, you should be able to run `pyuvstarter` from any directory.
 
 ```bash
 # 1. Clone the repository (if you haven't already)
-git clone https://github.com/yourusername/pyuvstarter.git
+git clone https://github.com/ahundt/pyuvstarter.git
 cd pyuvstarter
 
 # 2. Install pyuvstarter as a uv tool
