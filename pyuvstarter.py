@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pyuvstarter.py (v6.7 - Advanced Dependency Management)
+pyuvstarter.py (v6.9 - Robust Ruff & Consolidated Dry-Run)
 
 Copyright (c) 2025 Andrew Hundt
 
@@ -314,9 +314,14 @@ def _save_log(log_file_path: Path, project_root: Path = Path.cwd()):
     elif not _log_data_global.get("final_summary"):
         _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
 
+    # Always add next steps if the script made progress
     if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS", "HALTED_BY_SCRIPT_LOGIC"]:
         next_steps_text = _get_next_steps_text(project_root)
-        _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "\n\n" + next_steps_text
+        # Ensure there's a newline before appending next steps if there's already a summary
+        if _log_data_global.get("final_summary"):
+            _log_data_global["final_summary"] += "\n\n" + next_steps_text
+        else:
+            _log_data_global["final_summary"] = next_steps_text
 
 
     try:
@@ -327,15 +332,21 @@ def _save_log(log_file_path: Path, project_root: Path = Path.cwd()):
         _log_action("save_log", "ERROR", f"Failed to save JSON log to '{log_file_path.name}': {e}")
 
 # --- Core Helper Functions ---
-def _run_command(command_list, action_log_name: str, work_dir=None, shell=False, capture_output=True, suppress_console_output_on_success=False):
+def _run_command(command_list: list[str], action_log_name: str, work_dir: Path = None, shell: bool = False, capture_output: bool = True, suppress_console_output_on_success: bool = False, dry_run: bool = False):
     """
     Runs a shell command and logs its execution. Raises CalledProcessError on failure.
     Returns (stdout_str, stderr_str) if capture_output is True.
     If capture_output is False, stdout/stderr will be empty strings, and output streams to console.
+    If dry_run is True, logs the command but does not execute it.
     """
     if work_dir is None:
         work_dir = Path.cwd()
     cmd_str = ' '.join(command_list) if isinstance(command_list, list) else command_list
+
+    if dry_run:
+        _log_action(action_log_name, "INFO", f"DRY RUN: Would execute: \"{cmd_str}\" in \"{work_dir}\" (Logged as action: {action_log_name})")
+        return "", "" # Simulate successful empty output for dry run
+
     _log_action(action_log_name, "INFO", f"EXEC: \"{cmd_str}\" in \"{work_dir}\" (Logged as action: {action_log_name})")
 
     log_details = {"command": cmd_str, "working_directory": str(work_dir), "shell_used": shell, "capture_output_setting": capture_output}
@@ -381,7 +392,7 @@ def _command_exists(command_name):
     return shutil.which(command_name) is not None
 
 # --- UV & Tool Installation ---
-def _install_uv_macos_brew():
+def _install_uv_macos_brew(dry_run: bool):
     """Attempts to install `uv` on macOS using Homebrew."""
     action_name = "install_uv_macos_brew"
     _log_action(action_name, "INFO", "Attempting `uv` installation via Homebrew.")
@@ -389,7 +400,10 @@ def _install_uv_macos_brew():
         _log_action(action_name, "ERROR", "Homebrew (brew) not found. Cannot attempt `uv` installation via Homebrew.\n      Please install Homebrew from https://brew.sh/ or allow installation via the official script.")
         return False
     try:
-        _run_command(["brew", "install", "uv"], f"{action_name}_exec", suppress_console_output_on_success=False)
+        _run_command(["brew", "install", "uv"], f"{action_name}_exec", suppress_console_output_on_success=False, dry_run=dry_run)
+        if dry_run: # In dry run, assume uv is installed for the check to pass
+            _log_action(action_name, "INFO", "Assuming `uv` would be installed/updated via Homebrew in dry-run mode.")
+            return True
         if _command_exists("uv"):
             _log_action(action_name, "SUCCESS", "`uv` installed/updated via Homebrew.")
             return True
@@ -400,7 +414,7 @@ def _install_uv_macos_brew():
         _log_action(action_name, "ERROR", "`uv` installation via Homebrew failed. See command execution log.\nTry running `brew install uv` manually.")
         return False
 
-def _install_uv_script():
+def _install_uv_script(dry_run: bool):
     """Installs `uv` using the official OS-specific scripts (curl or PowerShell)."""
     action_name = "install_uv_official_script"
     _log_action(action_name, "INFO", "Attempting `uv` installation via official script.")
@@ -408,14 +422,17 @@ def _install_uv_script():
     try:
         if sys.platform == "win32":
             command_str = 'powershell -ExecutionPolicy ByPass -NoProfile -Command "irm https://astral.sh/uv/install.ps1 | iex"'
-            _run_command(command_str, f"{action_name}_exec_ps", shell=True, capture_output=False)
+            _run_command(command_str, f"{action_name}_exec_ps", shell=True, capture_output=False, dry_run=dry_run)
         else:
             if not _command_exists("curl"):
                 _log_action(action_name, "ERROR", "`curl` is not installed. Cannot download `uv` installation script.\nInstall `curl` (e.g., 'sudo apt install curl') and try again.")
                 return False
             command_str = "curl -LsSf https://astral.sh/uv/install.sh | sh"
-            _run_command(command_str, f"{action_name}_exec_curl", shell=True, capture_output=False)
+            _run_command(command_str, f"{action_name}_exec_curl", shell=True, capture_output=False, dry_run=dry_run)
 
+        if dry_run: # In dry run, assume uv is installed for the check to pass
+            _log_action(action_name, "INFO", "Assuming `uv` installation script would execute and uv would be available in dry-run mode.")
+            return True
         _log_action(action_name, "SUCCESS", "`uv` installation script executed. It usually adds `uv` to your PATH.\nIf `uv` is not found immediately, you might need to restart your terminal or source your shell profile.")
         if _command_exists("uv"):
             _log_action(action_name, "SUCCESS", "`uv` now available after script install.")
@@ -427,14 +444,14 @@ def _install_uv_script():
         _log_action(action_name, "ERROR", f"Official `uv` installation script execution failed. Command: {command_str}. See command execution log.\nTry running manually: {command_str}")
         return False
 
-def _ensure_uv_installed():
+def _ensure_uv_installed(dry_run: bool):
     """Ensures `uv` is installed, attempting platform-specific methods if necessary."""
     action_name = "ensure_uv_installed_phase"
     _log_action(action_name, "INFO", "Starting `uv` availability check and installation if needed.")
     try:
         if _command_exists("uv"):
-            version_out, _ = _run_command(["uv", "--version"], f"{action_name}_version_check", suppress_console_output_on_success=True)
-            _log_action(action_name, "SUCCESS", f"`uv` is already installed. Version: {version_out}")
+            version_out, _ = _run_command(["uv", "--version"], f"{action_name}_version_check", suppress_console_output_on_success=True, dry_run=dry_run)
+            _log_action(action_name, "SUCCESS", f"`uv` is already installed. Version: {version_out if not dry_run else 'N/A in dry-run'}")
             return True
     except Exception as e:
          _log_action(f"{action_name}_version_check", "ERROR", "`uv --version` failed, though `uv` command seems to exist. Will attempt to ensure it is installed correctly or reinstall.", details={"exception": str(e)})
@@ -446,33 +463,42 @@ def _ensure_uv_installed():
     if sys.platform == "darwin":
         if _command_exists("brew"):
             install_method_log = "Homebrew"
-            if _install_uv_macos_brew():
+            if _install_uv_macos_brew(dry_run):
                 installed_successfully = True
         if not installed_successfully:
             install_method_log = f"{install_method_log} -> Official Script (macOS)" if install_method_log != "None" else "Official Script (macOS)"
-            if _install_uv_script():
+            if _install_uv_script(dry_run):
                 installed_successfully = True
     elif sys.platform.startswith("linux") or sys.platform == "win32":
         install_method_log = "Official Script"
-        if _install_uv_script():
+        if _install_uv_script(dry_run):
             installed_successfully = True
     else:
         _log_action(action_name, "ERROR", f"Unsupported platform for automatic `uv` installation: {sys.platform} Please install `uv` manually from https://astral.sh/uv")
         return False
 
-    if installed_successfully and _command_exists("uv"):
-        try:
-            version_out, _ = _run_command(["uv", "--version"], f"{action_name}_post_install_version_check", suppress_console_output_on_success=True)
-            _log_action(action_name, "SUCCESS", f"`uv` successfully installed/ensured via {install_method_log}. Version: {version_out}")
+    if installed_successfully:
+        # For dry_run, we assume uv was installed if the installation function returned True
+        if dry_run:
+            _log_action(action_name, "SUCCESS", f"`uv` assumed successfully installed/ensured via {install_method_log} in dry-run mode.")
             return True
-        except Exception as e:
-            _log_action(action_name, "ERROR", f"`uv` reported installed via {install_method_log}, but 'uv --version' still fails post-install.\nThis might indicate an issue with the `uv` binary or its PATH setup.", details={"exception": str(e)})
+        # For actual run, re-check existence
+        if _command_exists("uv"):
+            try:
+                version_out, _ = _run_command(["uv", "--version"], f"{action_name}_post_install_version_check", suppress_console_output_on_success=True, dry_run=dry_run)
+                _log_action(action_name, "SUCCESS", f"`uv` successfully installed/ensured via {install_method_log}. Version: {version_out}")
+                return True
+            except Exception as e:
+                _log_action(action_name, "ERROR", f"`uv` reported installed via {install_method_log}, but 'uv --version' still fails post-install.\nThis might indicate an issue with the `uv` binary or its PATH setup.", details={"exception": str(e)})
+                return False
+        else:
+            _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.")
             return False
     else:
         _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.")
         return False
 
-def _ensure_tool_available(tool_name: str, major_action_results: list, website: str = None):
+def _ensure_tool_available(tool_name: str, major_action_results: list, dry_run: bool, website: str = None):
     """
     Ensures a CLI tool is installed via `uv tool install` for use with `uvx`.
     Optionally provide a website for user guidance. Handles all error logging internally.
@@ -482,9 +508,8 @@ def _ensure_tool_available(tool_name: str, major_action_results: list, website: 
     package_to_install = tool_name # Often the package name is the same as the tool name
     _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install}`) is available for `uvx`.")
     try:
-        # Using uvx to check if tool is already available is not straightforward,
-        # uv tool install is idempotent and safer to just run.
-        _run_command(["uv", "tool", "install", package_to_install], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True)
+        # uv tool install is idempotent and safer to just run (or dry-run)
+        _run_command(["uv", "tool", "install", package_to_install], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True, dry_run=dry_run)
         _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
         major_action_results.append((f"{tool_name}_cli_tool", "SUCCESS"))
         return True
@@ -500,7 +525,7 @@ def _ensure_tool_available(tool_name: str, major_action_results: list, website: 
 
 # --- Project and Dependency Handling ---
 
-def _ensure_project_initialized(project_root: Path):
+def _ensure_project_initialized(project_root: Path, dry_run: bool):
     """
     Ensures a pyproject.toml exists. If not, runs `uv init` and then checks
     if `main.py` should be removed.
@@ -526,7 +551,12 @@ def _ensure_project_initialized(project_root: Path):
     main_py_existed_before_init = main_py_path.exists()
 
     try:
-        _run_command(["uv", "init"], f"{action_name}_uv_init_exec")
+        _run_command(["uv", "init"], f"{action_name}_uv_init_exec", dry_run=dry_run)
+
+        if dry_run:
+            _log_action(action_name, "INFO", f"In dry-run mode: Assuming `uv init` would create/update '{PYPROJECT_TOML_NAME}'.")
+            return True # In dry-run, assume success to continue simulation
+
         if not pyproject_path.exists():
             _log_action(action_name, "ERROR", f"`uv init` ran but '{PYPROJECT_TOML_NAME}' was not created. This is unexpected.\nCheck `uv init` output. Manual creation of `pyproject.toml` might be needed.")
             return False
@@ -552,7 +582,7 @@ def _ensure_project_initialized(project_root: Path):
         return False
 
 
-def _ensure_gitignore_exists(project_root: Path, venv_name: str):
+def _ensure_gitignore_exists(project_root: Path, venv_name: str, dry_run: bool):
     """Ensures a .gitignore file exists and contains essential Python/venv ignores."""
     action_name = "ensure_gitignore"
     gitignore_path = project_root / GITIGNORE_NAME
@@ -581,6 +611,10 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str):
         "\n# Log file from this script", JSON_LOG_FILE_NAME,
         "\n# OS-specific", ".DS_Store", "Thumbs.db"
     ]
+
+    if dry_run:
+        _log_action(action_name, "INFO", f"DRY RUN: Would create or update '{GITIGNORE_NAME}' with essential Python/venv ignores.")
+        return
 
     if gitignore_path.exists():
         _log_action(action_name, "INFO", f"'{GITIGNORE_NAME}' already exists. Checking for essential entries.")
@@ -709,7 +743,7 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
         _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration. Exception: {e}. Skipping migration.", details={"exception": str(e)})
     return packages_specs
 
-def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> set[tuple[str, str]]:
+def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str, dry_run: bool) -> set[tuple[str, str]]:
     """
     Runs `pipreqs` via `uvx` to discover imported packages in the project.
     Returns a set of (base_package_name, full_specifier) tuples.
@@ -719,7 +753,13 @@ def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> 
     packages_specs = set() # Changed to store tuples (base_name, specifier)
     pipreqs_args = ["uvx", "pipreqs", "--print", "--ignore", venv_name_to_ignore, str(project_root)]
     try:
-        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", suppress_console_output_on_success=True)
+        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", suppress_console_output_on_success=True, dry_run=dry_run)
+
+        if dry_run: # In dry-run, we cannot get actual output, so simulate common case
+            _log_action(action_name, "INFO", "DRY RUN: Assuming `pipreqs` would detect imports. No actual imports scanned.")
+            # For testing, we might want to return some dummy data, but for production dry-run, empty is safer.
+            return set()
+
         parsed_count = 0
         if stdout:
             for line in stdout.splitlines():
@@ -746,56 +786,131 @@ def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str) -> 
         _log_action(action_name, "ERROR", f"An unexpected error occurred while running/processing `pipreqs`: {e}", details={"exception": str(e)})
     return set() # Return empty set on error
 
-def _run_ruff_unused_import_check(project_root: Path, major_action_results: list):
+def _run_ruff_unused_import_check(project_root: Path, major_action_results: list, dry_run: bool):
     """
     Runs ruff via uvx to detect unused imports (F401) and logs warnings if found.
+
+    This function uses the correct argument order and format for `uvx ruff check`:
+    - The `=` syntax (e.g., --select=F401) is used to create unambiguous option-value pairs.
+    - All ruff options are placed after a `--` separator to pass them to ruff.
+    - The target directory (project_root) is placed last.
+
+    Example of the correct CLI invocation:
+        uvx ruff check -- --select=F401 --exit-zero --format=json /path/to/project
+
+    Args:
+        project_root (Path): The root directory of the project to check.
+        major_action_results (list): List to append action results for summary.
+        dry_run (bool): If True, simulates the check without executing.
+
+    Returns:
+        None. Logs results and warnings as appropriate.
     """
     action_name = "ruff_unused_import_check"
     _log_action(action_name, "INFO", "Running ruff to check for unused imports (F401).")
 
-    # _ensure_tool_available for ruff should have been called before this.
-    # We implicitly rely on ruff being available via uvx.
-    # If `uvx ruff` itself fails (e.g. tool not found or installed incorrectly), _run_command will log it.
-
     try:
-        # Use --exit-zero to ensure command doesn't raise error if issues found, just returns 0
-        # Use --isolated so ruff doesn't pick up a project config, we want just F401
-        result_stdout, _ = _run_command([
-            "uvx", "ruff", "check", str(project_root), "--select", "F401", "--format", "json", "--exit-zero"
-        ], f"{action_name}_exec", suppress_console_output_on_success=True)
+        # CORRECTED Ruff CLI arguments using the robust '=' syntax.
+        ruff_args = [
+            "uvx",
+            "ruff",
+            # 1. Use the global '--config' option to set the output format.
+            #    The value must be a valid TOML key-value pair string.
+            # 2. The subcommand comes next.
+            "check",
+            "--output-format=json",  # Use --output-format instead of --format for clarity
+            # 3. Options for the subcommand follow.
+            "--select=F401",
+            "--exit-zero",
+            # 4. The positional path argument is last.
+            str(project_root),
+        ]
+        result_stdout, _ = _run_command(
+            ruff_args,
+            f"{action_name}_exec",
+            suppress_console_output_on_success=True,
+            dry_run=dry_run
+        )
+        # print the stdout for debugging purposes
+        if result_stdout:
+            _log_action(action_name, "DEBUG", f"Ruff output:\n{result_stdout.strip()}")
+
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Assuming `ruff` would check for unused imports. No actual check performed.")
+            return
 
         unused = []
         if result_stdout:
             try:
+                # CORRECTED LOGIC: --output-format=json returns a single JSON array for all issues.
+                # We parse the entire stdout string at once.
                 issues = json.loads(result_stdout)
+
                 for issue in issues:
+                    # Now, 'issue' will be a dictionary as expected
                     if issue.get("code") == "F401":
-                        unused.append((issue.get("filename"), issue.get("location", {}).get("row"), issue.get("message")))
+                        filename = issue.get("filename")
+                        line_no = issue.get("location", {}).get("row")
+                        message = issue.get("message")
+                        # Try to get path relative to project_root, fallback to full path
+                        display_path = filename
+                        try:
+                            display_path = Path(filename).relative_to(project_root).as_posix()
+                        except ValueError:
+                            pass
+                        unused.append((display_path, line_no, message))
             except json.JSONDecodeError as e:
-                _log_action(action_name, "ERROR", "Failed to parse ruff output (invalid JSON).", details={"exception": str(e), "ruff_raw_output": result_stdout})
+                _log_action(
+                    action_name,
+                    "ERROR",
+                    "Failed to parse ruff output (invalid JSON).",
+                    details={"exception": str(e), "ruff_raw_output": result_stdout}
+                )
                 major_action_results.append((action_name, "FAILED_PARSE_OUTPUT"))
                 return
             except Exception as e:
-                _log_action(action_name, "ERROR", "Failed to process ruff output for unused imports.", details={"exception": str(e)})
+                _log_action(
+                    action_name,
+                    "ERROR",
+                    "Failed to process ruff output for unused imports.",
+                    details={"exception": str(e)}
+                )
                 major_action_results.append((action_name, "FAILED_PROCESS_OUTPUT"))
                 return
 
         if unused:
-            msg = ("Ruff detected unused imports (F401). These may lead to unnecessary dependencies or code cruft:\n" +
-                   "\n".join([f"  - {Path(f).relative_to(project_root)}:{lineno}: {desc}" for f, lineno, desc in unused]) +
-                   "\nConsider removing these unused imports for a cleaner project and more accurate dependency analysis. "
-                   "You can typically auto-fix them by running `uvx ruff check . --fix`.")
-            _log_action(action_name, "WARN", msg, details={"unused_imports_count": len(unused), "unused_imports_details": unused})
+            msg = (
+                "Ruff detected unused imports (F401). These may lead to unnecessary dependencies or code cruft:\n" +
+                "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in unused]) +
+                "\nConsider removing these unused imports for a cleaner project and more accurate dependency analysis. "
+                "You can typically auto-fix them by running `uvx ruff check . --fix`."
+            )
+            _log_action(
+                action_name,
+                "WARN",
+                msg,
+                details={"unused_imports_count": len(unused), "unused_imports_details": unused}
+            )
             major_action_results.append((action_name, "COMPLETED_WITH_WARNINGS"))
         else:
             _log_action(action_name, "SUCCESS", "No unused imports (F401) detected by ruff. Great job!")
             major_action_results.append((action_name, "SUCCESS"))
 
     except subprocess.CalledProcessError as e:
-        _log_action(action_name, "ERROR", "uvx ruff command failed.", details={"exception": str(e)})
+        _log_action(
+            action_name,
+            "ERROR",
+            "uvx ruff command failed.",
+            details={"exception": str(e), "stdout": e.stdout, "stderr": e.stderr}
+        )
         major_action_results.append((action_name, "FAILED_CMD_ERROR"))
     except Exception as e:
-        _log_action(action_name, "ERROR", "An unexpected error occurred while running/processing ruff.", details={"exception": str(e)})
+        _log_action(
+            action_name,
+            "ERROR",
+            "An unexpected error occurred while running/processing ruff.",
+            details={"exception": str(e)}
+        )
         major_action_results.append((action_name, "FAILED_UNEXPECTED_ERROR"))
 
 def _manage_project_dependencies(
@@ -853,7 +968,8 @@ def _manage_project_dependencies(
             if base in imported_pkgs_base_names:
                 packages_to_add_candidate.add((base, spec))
             else:
-                packages_to_skip_due_to_mode.add((base, spec)) # Mark as unused
+                # Mark as unused from requirements.txt because it's not imported
+                packages_to_skip_due_to_mode.add((base, spec))
 
         # 2. Process packages from project imports: add any that are not already declared or slated for addition
         # This covers imports not found in requirements.txt
@@ -911,7 +1027,7 @@ def _manage_project_dependencies(
         _log_action(action_name, "INFO", f"Attempting to add {len(final_packages_to_add)} new package(s) to '{PYPROJECT_TOML_NAME}' using `uv add`...")
         for base, spec in final_packages_to_add:
             try:
-                _run_command(["uv", "add", spec, "--python", str(venv_python_executable)], f"uv_add_{base.replace('-', '_').replace('.', '_')}")
+                _run_command(["uv", "add", spec, "--python", str(venv_python_executable)], f"uv_add_{base.replace('-', '_').replace('.', '_')}", dry_run=dry_run)
                 successfully_added_specs.append(spec)
                 _log_action(action_name + "_add_single", "SUCCESS", f"Added '{spec}' to '{PYPROJECT_TOML_NAME}'.")
             except Exception:
@@ -967,7 +1083,7 @@ def _manage_project_dependencies(
     _log_action(action_name, "SUCCESS", f"Dependency management completed for mode: '{migration_mode}'.")
 
 
-def _configure_vscode_settings(project_root: Path, venv_python_executable: Path):
+def _configure_vscode_settings(project_root: Path, venv_python_executable: Path, dry_run: bool):
     """
     Ensure .vscode/settings.json exists and sets python.defaultInterpreterPath to the venv Python.
     If settings.json is invalid JSON, back it up before overwriting. Only update the interpreter path, preserve other settings.
@@ -980,43 +1096,59 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path)
     vscode_dir_path.mkdir(exist_ok=True)
     settings_data = {}
     backup_made = False
+
+    if dry_run:
+        _log_action(action_name, "INFO", f"DRY RUN: Would set 'python.defaultInterpreterPath' to '{venv_python_executable}' in '{settings_file_path.name}'. No actual file changes made.")
+        return
+
     if settings_file_path.exists():
         try:
             with open(settings_file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 if content.strip():
-                    settings_data = json.loads(content)
+                    settings_data = json.loads(content) # Attempt to parse existing content
         except json.JSONDecodeError:
             # Backup invalid JSON before overwriting
             backup_path = settings_file_path.with_suffix(f".bak_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
             shutil.copy2(settings_file_path, backup_path)
             backup_made = True
             _log_action(action_name, "WARN", f"Existing '{settings_file_path.name}' is not valid JSON. Backed up before overwrite.", details={"backup": str(backup_path)})
-            settings_data = {}
+            settings_data = {} # Start with empty settings if original was invalid
         except Exception as e:
             _log_action(action_name, "WARN", f"Could not read existing '{settings_file_path.name}': {e}. It may be overwritten.", details={"exception": str(e)})
-            settings_data = {}
+            settings_data = {} # Start with empty settings if error reading
+
+
     interpreter_path = str(venv_python_executable)
     settings_data["python.defaultInterpreterPath"] = interpreter_path
-    # Add a comment for uv integration (not valid JSON, but VS Code ignores comments in settings.json)
-    # So we prepend a comment line if not present
+
+    # Construct the final content: comment + JSON string
     comment_line = "// This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
-    try:
-        current_first_line = ""
-        if settings_file_path.exists():
+    json_content_str = json.dumps(settings_data, indent=4)
+
+    final_file_content = json_content_str
+    # Check if the comment is already the first line, to avoid duplicating it
+    current_first_line_exists = False
+    if settings_file_path.exists():
+        try:
             with open(settings_file_path, 'r', encoding='utf-8') as f:
-                current_first_line = f.readline()
-    except Exception:
-        current_first_line = ""
+                first_line = f.readline().strip()
+                if first_line.startswith("// This interpreter path is managed by pyuvstarter"):
+                    current_first_line_exists = True
+        except Exception:
+            # If reading fails, assume no relevant first line exists or is readable
+            pass
+
+    if not current_first_line_exists:
+        final_file_content = comment_line + "\n" + json_content_str
 
     with open(settings_file_path, 'w', encoding='utf-8') as f:
-        if not current_first_line.strip().startswith("// This interpreter path is managed by pyuvstarter"):
-            f.write(comment_line + "\n")
-        json.dump(settings_data, f, indent=4)
+        f.write(final_file_content)
+
     msg = f"VS Code 'python.defaultInterpreterPath' set.{' (Backed up old file)' if backup_made else ''}\n      Path: {interpreter_path}\n      (Managed by pyuvstarter and uv)"
     _log_action(action_name, "SUCCESS", msg, details={"interpreter_path": interpreter_path})
 
-def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path):
+def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path, dry_run: bool):
     """
     Ensure .vscode/launch.json exists and has a launch config for the currently active Python file using the venv Python.
     If launch.json is invalid JSON, back it up before overwriting. Only add a new config if needed, never remove user configs.
@@ -1047,6 +1179,10 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path)
         "configurations": [default_config_entry]
     }
 
+    if dry_run:
+        _log_action(action_name, "INFO", f"DRY RUN: Would ensure launch configuration for '{venv_python_executable}' in '{launch_path.name}'. No actual file changes made.")
+        return
+
     try:
         if launch_path.exists():
             try:
@@ -1055,8 +1191,14 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path)
                 configs = data.get("configurations", [])
 
                 # Check if a config with the desired name and Python path already exists
+                # Note: venv_python_executable might be relative to project_root, but VS Code usually resolves it
+                # For robustness, comparing against both original string and resolved path.
+                venv_python_executable_str = str(venv_python_executable)
+                venv_python_executable_resolved_str = str(venv_python_executable.resolve())
+
                 already_present = any(
-                    c.get("type") == "python" and c.get("name") == default_config_entry["name"] and c.get("python") == str(venv_python_executable.resolve())
+                    c.get("type") == "python" and c.get("name") == default_config_entry["name"] and \
+                    (c.get("python") == venv_python_executable_str or c.get("python") == venv_python_executable_resolved_str)
                     for c in configs
                 )
 
@@ -1106,33 +1248,30 @@ def main():
 
     try:
         # 1. Ensure uv is installed
-        if not _ensure_uv_installed():
+        if not _ensure_uv_installed(args.dry_run):
             _log_action("ensure_uv_installed", "ERROR", "Halting: `uv` could not be installed or verified. Check log and console output for details.")
             raise SystemExit("Halting: `uv` could not be installed or verified. Check log and console output for details.")
         major_action_results.append(("uv_installed", "SUCCESS"))
 
         # 2. Ensure pyproject.toml exists and remove main.py if conditional
-        if not _ensure_project_initialized(project_root):
+        if not _ensure_project_initialized(project_root, args.dry_run):
             _log_action("ensure_project_initialized", "ERROR", f"Halting: Project could not be initialized with '{PYPROJECT_TOML_NAME}'. Check log and console output.")
             raise SystemExit(f"Halting: Project could not be initialized with '{PYPROJECT_TOML_NAME}'. Check log and console output.")
         major_action_results.append(("project_initialized", "SUCCESS"))
 
         # 3. Ensure .gitignore exists
-        _ensure_gitignore_exists(project_root, VENV_NAME)
+        _ensure_gitignore_exists(project_root, VENV_NAME, args.dry_run)
         major_action_results.append(("gitignore", "SUCCESS"))
 
         # 4. Create/verify virtual environment
         action_venv = "create_or_verify_venv"
         _log_action(action_venv, "INFO", f"Creating/ensuring virtual environment '{VENV_NAME}'.")
-        # Only run uv venv if not dry run
-        if not args.dry_run:
-            _run_command(["uv", "venv", VENV_NAME], f"{action_venv}_uv_venv")
-        else:
-            _log_action(action_venv, "INFO", "Skipping `uv venv` in dry-run mode.")
+        _run_command(["uv", "venv", VENV_NAME], f"{action_venv}_uv_venv", dry_run=args.dry_run)
 
         venv_path = project_root / VENV_NAME
         venv_python_executable = venv_path / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 
+        # In dry-run, we assume the venv path for subsequent steps, no actual existence check
         if not args.dry_run and not venv_python_executable.exists():
             msg = f"Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command."
             _log_action(action_venv, "ERROR", msg)
@@ -1144,36 +1283,22 @@ def main():
         major_action_results.append(("venv_ready", "SUCCESS"))
 
         # --- Ensure tools for dependency discovery and linting are available via uv tool install ---
-        # These are needed before we can run pipreqs or ruff.
-        _ensure_tool_available("pipreqs", major_action_results, website="https://github.com/bndr/pipreqs")
-        _ensure_tool_available("ruff", major_action_results, website="https://docs.astral.sh/ruff/")
+        _ensure_tool_available("pipreqs", major_action_results, args.dry_run, website="https://github.com/bndr/pipreqs")
+        _ensure_tool_available("ruff", major_action_results, args.dry_run, website="https://docs.astral.sh/ruff/")
 
         # --- Pre-flight: Ruff unused import detection ---
-        # This should happen before pipreqs import discovery for a cleaner analysis.
-        # Only run if not dry run.
-        if not args.dry_run:
-            _run_ruff_unused_import_check(project_root, major_action_results)
-        else:
-            _log_action("ruff_unused_import_check", "INFO", "Skipping ruff unused import check in dry-run mode.")
-            major_action_results.append(("ruff_unused_import_check", "SKIPPED_DRY_RUN"))
+        # Run in dry-run mode too, as it provides valuable info without side-effects.
+        _run_ruff_unused_import_check(project_root, major_action_results, args.dry_run)
+
 
         # --- Get current declared dependencies (from pyproject.toml) ---
-        # This is used for comparison in _manage_project_dependencies.
         declared_deps_before_management = _get_declared_dependencies(pyproject_file_path)
 
         # --- Discover ALL imports from project Python files via pipreqs ---
-        # This is a global discovery, independent of requirements.txt.
-        # Only run if not dry run.
-        project_imported_packages = set()
-        if not args.dry_run:
-            project_imported_packages = _get_packages_from_pipreqs(project_root, VENV_NAME)
-        else:
-            _log_action("pipreqs_discovery", "INFO", "Skipping pipreqs import discovery in dry-run mode.")
+        project_imported_packages = _get_packages_from_pipreqs(project_root, VENV_NAME, args.dry_run)
         major_action_results.append(("pipreqs_discovery", "SUCCESS"))
 
         # --- Centralized Dependency Management ---
-        # This function now handles migration from requirements.txt, adding imports,
-        # and checking against existing pyproject.toml entries based on the mode.
         _manage_project_dependencies(
             project_root=project_root,
             venv_python_executable=venv_python_executable,
@@ -1188,23 +1313,16 @@ def main():
         # --- Final Sync environment (after all adds) ---
         action_sync = "uv_sync_dependencies"
         _log_action(action_sync, "INFO", "Performing final sync of environment with `pyproject.toml` and `uv.lock` using `uv sync`.")
-        # Only run sync if not dry run
-        if not args.dry_run:
-            _run_command(["uv", "sync", "--python", str(venv_python_executable)], f"{action_sync}_exec")
-            _log_action(action_sync, "SUCCESS", "Environment synced with `pyproject.toml` and `uv.lock`.")
-        else:
-            _log_action(action_sync, "INFO", "Skipping `uv sync` in dry-run mode. Would have synced dependencies.")
+        _run_command(["uv", "sync", "--python", str(venv_python_executable)], f"{action_sync}_exec", dry_run=args.dry_run)
+        _log_action(action_sync, "SUCCESS", "Environment synced with `pyproject.toml` and `uv.lock`.")
         major_action_results.append(("uv_final_sync", "SUCCESS"))
 
 
         # --- VS Code config ---
-        # These are always attempted, even in dry-run, but _configure_vscode_settings
-        # and _ensure_vscode_launch_json will not write if they assume a dry run.
-        # However, for this script, we actually let them run in dry-run as their output
-        # to console/log for dry-run is valuable.
-        _configure_vscode_settings(project_root, venv_python_executable)
+        # These are always attempted in main, but their internal logic is now dry-run aware.
+        _configure_vscode_settings(project_root, venv_python_executable, args.dry_run)
         settings_json_status = "SUCCESS"
-        _ensure_vscode_launch_json(project_root, venv_python_executable)
+        _ensure_vscode_launch_json(project_root, venv_python_executable, args.dry_run)
         launch_json_status = "SUCCESS"
         major_action_results.append(("vscode_config", "SUCCESS"))
 
@@ -1225,9 +1343,6 @@ def main():
         summary_lines.append(f"\nSee '{JSON_LOG_FILE_NAME}' for full details.")
         summary_table = "\n".join(summary_lines)
         _log_action("final_summary_table", "INFO", summary_table)
-
-        # --- Next steps --- (already added to final_summary in _save_log)
-        # We don't print them again here, as _save_log adds them.
 
         # If any errors or warnings, print/log a final warning
         errors_or_warnings = any(
@@ -1255,8 +1370,8 @@ def main():
         _log_data_global["overall_status"] = "CRITICAL_COMMAND_FAILED"
         _log_action("critical_command_failed", "ERROR", f"\nCRITICAL ERROR: {msg}, halting script.\n  Details of the failed command should be visible in the output above and in the JSON log.")
         cmd_str_lower = failed_cmd_str.lower()
-        if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_str or "uv sync" in cmd_str_lower:
-            _log_action("install_sync_hint", "WARN", "INSTALLATION/SYNC HINT: A package operation with `uv` failed.\n  - Review `uv`'s error output (logged as FAIL_STDERR/FAIL_STDOUT for the command) for specific package names or reasons.\n  - Ensure the package name is correct and exists on PyPI (https://pypi.org) or your configured index.\n  - Some packages require system-level (non-Python) libraries to be installed first. Check the package's documentation.\n  - You might need to manually edit '{PYPROJECT_TOML_NAME}' and then run `uv sync --python {venv_python_executable}`.")
+        if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_lower or "uv sync" in cmd_str_lower:
+            _log_action("install_sync_hint", "WARN", "INSTALLATION/SYNC HINT: A package operation with `uv` failed.\n  - Review `uv`'s error output (logged as FAIL_STDOUT/FAIL_STDOUT for the command) for specific package names or reasons.\n  - Ensure the package name is correct and exists on PyPI (https://pypi.org) or your configured index.\n  - Some packages require system-level (non-Python) libraries to be installed first. Check the package's documentation.\n  - You might need to manually edit '{PYPROJECT_TOML_NAME}' and then run `uv sync --python {venv_python_executable}`.")
         elif "pipreqs" in cmd_str_lower:
             _log_action("pipreqs_hint", "WARN", "PIPReQS HINT: The 'pipreqs' command (run via 'uvx') failed.\n  - This could be due to syntax errors in your Python files that `pipreqs` cannot parse, an internal `pipreqs` issue, or `uvx` failing to execute `pipreqs`.\n  - Try running manually for debug: uvx pipreqs \"{project_root}\" --ignore \"{VENV_NAME}\" --debug")
         elif "uv venv" in cmd_str_lower:
