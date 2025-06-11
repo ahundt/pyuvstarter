@@ -65,6 +65,10 @@ Outcome:
 - A 'pyuvstarter_setup_log.json' file will detail the script's execution, actions, errors, and next steps.
 - The script will print recommended next steps to the console and include them in the JSON log if the script completes without critical failure.
 - If a critical error occurs, the script will halt and print/log clear, actionable guidance.
+- After pyuvstarter runs you should source the virtual environment in your terminal:
+    - `source .venv/bin/activate` (Linux/macOS)
+    - `.venv\\Scripts\\activate` (Windows PowerShell)
+- Finally, commit to version control:
 
 Committing to Git:
 - After running, you should typically commit:
