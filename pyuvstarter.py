@@ -10,6 +10,7 @@ Purpose:
     - Configures Visual Studio Code for the project.
     - Prepares the project for version control with a robust `.gitignore`.
     - Manages legacy `requirements.txt` dependencies and discovers new ones with robust configuration options.
+    - **Detects dependencies in both Python scripts (`.py`) and Jupyter Notebooks (`.ipynb`).**
     - Ensures required CLI tools (e.g., pipreqs, ruff) are available via `uv tool install`.
     - Detects unused imports to advise on a cleaner dependency graph.
     - Logs all actions, errors, and next steps to a detailed JSON log.
@@ -22,19 +23,22 @@ Key Actions:
 4. Creates a virtual environment (default: '.venv') using `uv venv`.
 5. Ensures necessary CLI tools (`pipreqs`, `ruff`) are installed via `uv tool install`.
 6. Performs a pre-flight check for unused imports using `ruff` and warns the user.
-7. Discovers packages imported in project Python files using `pipreqs`.
+7. Discovers packages imported in project source code:
+   - **For `.py` files:** Uses `pipreqs` to find imports.
+   - **For `.ipynb` files:** Uses a primary strategy of converting notebooks to Python scripts and analyzing with `pipreqs`. If that fails (e.g., `jupyter` not found), it uses a robust fallback strategy of parsing notebook JSON with `ast` (for imports) and `regex` (for `!pip install` commands).
 8. Intelligently manages dependencies:
    - Reads existing dependencies from `pyproject.toml`.
-   - Processes `requirements.txt` (if present) based on the `--dependency-migration` mode:
+   - Processes `requirements.txt` (if present) and all discovered dependencies based on the `--dependency-migration` mode:
      - `auto` (default): Migrates `requirements.txt` entries only if they are actively imported, and adds all other imported packages. Warns about unused `requirements.txt` entries.
      - `all-requirements`: Migrates all entries from `requirements.txt` and then adds any additional discovered imported packages.
      - `only-imported`: Explicitly migrates only `requirements.txt` entries that are actively imported, and adds all other imported packages.
      - `skip-requirements`: Ignores `requirements.txt` and only considers packages discovered from imports.
    - Adds newly identified dependencies to `pyproject.toml` using `uv add`.
-9. Installs/syncs all declared dependencies from `pyproject.toml` and `uv.lock` using `uv sync`.
-10. Configures VS Code's 'python.defaultInterpreterPath' and adds a generic launch configuration in '.vscode/settings.json' and 'launch.json'.
-11. Logs all major actions, command executions, statuses, errors, and user guidance to 'pyuvstarter_setup_log.json' and prints them to the console.
-12. Halts with clear, actionable error messages if a critical step fails (e.g., missing tool, venv creation failure).
+9. **Ensures Notebook Execution Support:** If notebooks are found, it detects the required execution system (e.g., Jupyter) and installs necessary support packages like `ipykernel` if they aren't already declared.
+10. Installs/syncs all declared dependencies from `pyproject.toml` and `uv.lock` using `uv sync`.
+11. Configures VS Code's 'python.defaultInterpreterPath' and adds a generic launch configuration in '.vscode/settings.json' and 'launch.json'.
+12. Logs all major actions, command executions, statuses, errors, and user guidance to 'pyuvstarter_setup_log.json' and prints them to the console.
+13. Halts with clear, actionable error messages if a critical step fails (e.g., missing tool, venv creation failure).
 
 How to Use:
 1. Prerequisites:
@@ -60,7 +64,7 @@ Outcome:
 - A `.gitignore` file will be present.
 - A '.venv' directory will contain the Python virtual environment.
 - A `uv.lock` file will ensure reproducible dependency resolution.
-- Dependencies (migrated, declared, and discovered) will be installed.
+- Dependencies (migrated, declared, and discovered from scripts and notebooks) will be installed.
 - '.vscode/settings.json' and 'launch.json' will be configured for the venv interpreter.
 - A 'pyuvstarter_setup_log.json' file will detail the script's execution, actions, errors, and next steps.
 - The script will print recommended next steps to the console and include them in the JSON log if the script completes without critical failure.
@@ -110,6 +114,7 @@ import platform
 import argparse
 import re
 import ast
+import tempfile
 
 from pathlib import Path
 
@@ -122,18 +127,19 @@ VSCODE_DIR_NAME = ".vscode"
 SETTINGS_FILE_NAME = "settings.json"
 LAUNCH_FILE_NAME = "launch.json"
 JSON_LOG_FILE_NAME = "pyuvstarter_setup_log.json"
-# Map notebook system names to required execution dependencies
+# Map notebook system names to required execution dependencies (e.g. `ipykernel` for jupyter)
+# This is an orthogonal concern to code dependencies like pandas.
 _NOTEBOOK_SYSTEM_DEPENDENCIES = {
     "jupyter": ["jupyter", "ipykernel"],
     "polars-notebook": ["polars-notebook"],
     "quarto": ["quarto"],
-    # Add more systems here as needed
+    # Add more systems here as needed (e.g., 'voila': ['voila'])
 }
 
 # --- Argument Parsing ---
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Automate Python project setup with uv, VS Code config, and dependency management."
+        description="Automate Python project setup with uv, VS Code config, and dependency management for scripts and notebooks."
     )
     parser.add_argument(
         "project_dir",
@@ -538,381 +544,225 @@ def _ensure_tool_available(tool_name: str, major_action_results: list, dry_run: 
 
 
 ######################################################################
-# NOTEBOOK DEPENDENCY DETECTION AND INSTALLATION (IMPROVED)
+# NOTEBOOK DEPENDENCY DETECTION (CONSOLIDATED)
 #
-# These functions are placed after core helpers (e.g., _run_command, _command_exists)
-# and before orchestration (main, etc.) for clarity and modularity.
+# This section contains the new, consolidated logic for discovering
+# dependencies from all source files, including Jupyter Notebooks.
 ######################################################################
-# ===============================
-# NOTEBOOK PROCESSING ORCHESTRATION (DRY, Robust, User-Proof)
-# ===============================
-
-def process_notebooks(project_root: Path, dry_run: bool) -> dict:
-    """
-    Orchestrates all notebook-related processing:
-    - Finds notebooks (once)
-    - Extracts dependencies
-    - Ensures execution support
-    Returns a structured summary of actions and results for logging and reporting.
-    """
-    actions_log = []
-    errors_log = []
-    notebook_paths = _find_all_notebooks(project_root)
-    actions_log.append(f"Found {len(notebook_paths)} notebook(s).")
-    dep_result = ensure_uv_add_notebook_deps(project_root, dry_run, notebook_paths=notebook_paths)
-    actions_log.extend(dep_result.get("actions", []))
-    errors_log.extend(dep_result.get("errors", []))
-    exec_result = _ensure_notebook_execution_support(project_root, dry_run, notebook_paths=notebook_paths)
-    actions_log.extend(exec_result.get("actions", []))
-    errors_log.extend(exec_result.get("errors", []))
-    return {
-        "notebooks_found": notebook_paths,
-        "dependency_result": dep_result,
-        "execution_support_result": exec_result,
-        "actions": actions_log,
-        "errors": errors_log,
-    }
 
 def _get_dynamic_ignore_set():
     """
     Dynamically generate a set of standard library and built-in names to ignore for dependency detection.
-    Uses sys.stdlib_module_names (Python 3.10+), stdlib-list (if available), and __builtins__.
-    This helps avoid adding standard library modules or built-ins as dependencies when parsing notebooks.
+    This is critical for not treating 'sys' or 'os' as a PyPI dependency.
+    It uses sys.stdlib_module_names (Python 3.10+) or falls back to the `stdlib-list` package if available.
     """
     stdlib_modules = set()
-    # Try sys.stdlib_module_names (Python 3.10+)
+    # Best case: Python 3.10+ has this built-in.
     if hasattr(sys, "stdlib_module_names"):
-        # Use built-in Python set if available
         stdlib_modules = set(sys.stdlib_module_names)
     else:
+        # Fallback for older Python: try to use an optional, pre-installed helper package.
         try:
-            # Try to use stdlib-list if installed (optional)
             from stdlib_list import stdlib_list
             import sys as _sys
+            # Get stdlib for the version of python running the script
             stdlib_modules = set(stdlib_list(f"{_sys.version_info.major}.{_sys.version_info.minor}"))
         except ImportError:
-            # Fallback: no stdlib-list, just use builtins
+            # If neither is available, the set will be smaller, which is a minor degradation.
+            # We still filter builtins, which is better than nothing.
+            _log_action("get_stdlib", "WARN", "Could not determine Python's standard library list. 'stdlib-list' package not found and not on Python 3.10+. Standard library modules might be incorrectly identified as dependencies.")
             stdlib_modules = set()
+    # Also include built-in names.
     builtin_names = set(dir(__builtins__))
-    # Lowercase all for comparison
-    return {n.lower() for n in stdlib_modules | builtin_names}
+    # The final set is the union of both, lowercased for case-insensitive comparison.
+    return {name.lower() for name in stdlib_modules | builtin_names}
 
+# Initialize the ignore set once at script startup for efficiency.
 _DYNAMIC_IGNORE_SET = _get_dynamic_ignore_set()
-
 
 def _canonicalize_pkg_name(name: str) -> str:
     """
-    Canonicalize package names for comparison and deduplication.
-    This function maps common aliases or import names to their canonical PyPI package names.
-    Extend this mapping as needed for common aliases (e.g., 'sklearn' -> 'scikit-learn').
+    Canonicalize package import names to their PyPI package names for consistency.
+    This is crucial because `import` names often differ from installable package names.
+    (e.g., you `import sklearn` but `uv add scikit-learn`).
+    Extend this mapping as more common aliases are encountered.
     """
-    mapping = {"sklearn": "scikit-learn", "PIL": "pillow"}
+    mapping = {
+        "sklearn": "scikit-learn",
+        "pil": "pillow",
+        # 'yaml': 'pyyaml', # Another common example
+    }
     return mapping.get(name.lower(), name.lower())
 
-
 def _find_all_notebooks(project_root: Path) -> list[Path]:
-    """
-    Recursively find all .ipynb files in the project.
-    Returns a list of Paths to all Jupyter notebooks found under the project root.
-    """
-    return list(project_root.rglob("*.ipynb"))
-
+    """Recursively finds all .ipynb files in the project, ignoring the venv directory."""
+    return [p for p in project_root.rglob("*.ipynb") if VENV_NAME not in p.parts]
 
 def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, dry_run: bool) -> list[Path]:
     """
-    Converts notebooks to .py scripts using nbconvert.
-    Returns a list of .py file Paths in temp_dir.
-    Checks for tool availability before running.
-    This enables downstream tools (like pipreqs) to analyze notebook code as if it were a script.
+    Converts a list of notebooks to .py scripts in a temporary directory using `jupyter nbconvert`.
+    This is part of the primary, tool-based dependency discovery strategy.
+    Returns a list of paths to the newly created .py files.
     """
     py_files = []
+    # This tool-based method can only run if `jupyter` is available.
     if not _command_exists("jupyter"):
-        # If jupyter is not available, skip conversion
-        _log_action("nbconvert_tool_missing", "WARN", "'jupyter' not found in PATH. Skipping notebook conversion.")
-        return py_files
-    for nb in notebook_paths:
-        py_path = temp_dir / (nb.stem + ".py")
+        _log_action("nbconvert_check", "WARN", "'jupyter' command not found. Cannot convert notebooks to scripts for tool-based dependency analysis. Will use fallback manual parsing.")
+        return [] # Return empty list to signal failure to the caller.
+
+    for nb_path in notebook_paths:
+        # Create a corresponding python file path in the temp directory.
+        py_path = temp_dir / (nb_path.stem + ".py")
         if dry_run:
-            # In dry-run mode, just log and pretend the file would be created
-            _log_action("nbconvert_dry_run", "INFO", f"DRY RUN: Would convert {nb} to {py_path}")
-            py_files.append(py_path)
+            _log_action("nbconvert_dry_run", "INFO", f"DRY RUN: Would convert {nb_path.name} to a temporary script for analysis.")
+            py_files.append(py_path) # In dry run, pretend it was created.
             continue
         try:
-            # Use nbconvert to convert notebook to script
+            # Execute the conversion.
             _run_command([
-                "jupyter", "nbconvert", "--to", "script", str(nb), "--output", str(py_path)
-            ], "nbconvert", dry_run=False)
-            py_files.append(py_path)
+                "jupyter", "nbconvert", "--to", "script", str(nb_path),
+                "--output", py_path.stem, # nbconvert adds the extension
+                "--output-dir", str(temp_dir)
+            ], f"nbconvert_{nb_path.stem}", suppress_console_output_on_success=True)
+            if py_path.exists():
+                py_files.append(py_path)
         except Exception as e:
-            _log_action("nbconvert_error", "WARN", f"Failed to convert {nb}: {e}")
+            # If a single notebook fails to convert, log it and continue with others.
+            _log_action("nbconvert_error", "WARN", f"Failed to convert notebook '{nb_path.name}': {e}. It will be skipped by tool-based analysis.")
     return py_files
 
-
-def _get_imports_with_pipreqs(py_files: list[Path], temp_dir: Path, dry_run: bool) -> set[str]:
+def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
     """
-    Runs pipreqs on temp_dir to extract imported packages from the converted notebook scripts.
-    Returns a set of canonicalized package names.
-    Checks for tool availability before running.
-    This is the primary tool-driven method for extracting dependencies from notebook code.
+    Fallback dependency discovery: Parses a notebook file's JSON directly.
+    It uses the Abstract Syntax Tree (AST) for reliable `import` parsing and
+    regular expressions for finding shell/magic install commands (e.g., `!pip install`).
+    Returns a set of (canonical_base_name, full_specifier) tuples.
     """
-    if not _command_exists("uvx") or not _command_exists("pipreqs"):
-        # If pipreqs or uvx is not available, skip extraction
-        _log_action("pipreqs_tool_missing", "WARN", "'uvx' or 'pipreqs' not found in PATH. Skipping pipreqs import extraction.")
-        return set()
-    if dry_run:
-        # In dry-run mode, just log and return empty set
-        _log_action("pipreqs_dry_run", "INFO", "DRY RUN: Would run pipreqs on converted notebook scripts.")
-        return set()
-    try:
-        stdout, _ = _run_command(
-            ["uvx", "pipreqs", "--print", "--force", "--ignore", "", str(temp_dir)],
-            "pipreqs", dry_run=False
-        )
-        pkgs = set()
-        for line in stdout.splitlines():
-            # Each line is a package name or specifier; canonicalize and add
-            if not line or line.startswith("#"):
-                continue
-            pkg = line.split("==")[0].strip().lower()
-            pkg = _canonicalize_pkg_name(pkg)
-            pkgs.add(pkg)
-        return pkgs
-    except Exception as e:
-        _log_action("pipreqs_error", "WARN", f"pipreqs failed: {e}")
-        return set()
+    action_name = f"notebook_fallback_parse_{nb_path.stem}"
+    _log_action(action_name, "INFO", f"Using fallback parser for '{nb_path.name}'.")
+    discovered_packages = set()
 
-
-def _parse_notebook_for_deps(nb_path: Path) -> set[str]:
-    """
-    Fallback: Parse notebook for install lines and imports using AST and regex.
-    Returns a set of canonicalized package names.
-    Uses dynamic ignore set for filtering.
-    This is used if tool-driven extraction fails, ensuring robust detection of notebook dependencies.
-    - Parses all code cells for import statements using AST.
-    - Also scans for lines like '!pip install ...' or '%pip install ...' to catch explicit install commands.
-    - Filters out standard library and built-in names using the dynamic ignore set.
-    """
-    with open(nb_path, "r", encoding="utf-8") as f:
-        nb = json.load(f)
-    # Gather all code from code cells
-    code_cells = [
-        "".join(cell.get("source", []))
-        for cell in nb.get("cells", [])
-        if cell.get("cell_type") == "code"
-    ]
-    code = "\n".join(code_cells)
-    pkgs = set()
-    # --- AST for imports ---
-    try:
-        tree = ast.parse(code)
-        for node in ast.walk(tree):
-            # Handle both 'import x' and 'from x import y' statements
-            if isinstance(node, ast.Import):
-                for n in node.names:
-                    pkg = n.name.split('.')[0].lower()
-                    pkg = _canonicalize_pkg_name(pkg)
-                    pkgs.add(pkg)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    pkg = node.module.split('.')[0].lower()
-                    pkg = _canonicalize_pkg_name(pkg)
-                    pkgs.add(pkg)
-    except Exception as e:
-        _log_action("notebook_ast_parse", "WARN", f"AST parse failed: {e}")
-    # --- Regex for magic install lines ---
-    # Patterns to match various install magics and shell commands
-    install_patterns = [
-        # !pip install ... or %pip install ...
-        r"^[!%]pip3?\s+install\s+(.+)",
-        # !python -m pip install ...
-        r"^[!%]python\s+-m\s+pip\s+install\s+(.+)",
-        # !uv pip install ...
-        r"^[!%]uv\s+pip\s+install\s+(.+)",
-        # !uv add ...
-        r"^[!%]uv\s+add\s+(.+)",
-        # !conda install ... or !mamba install ...
-        r"^[!%](conda|mamba)\s+install\s+(.+)",
-        # !poetry add ...
-        r"^[!%]poetry\s+add\s+(.+)",
-        # %pip install ... (cell magic)
-        r"^%pip\s+install\s+(.+)",
-        # %conda install ...
-        r"^%conda\s+install\s+(.+)",
-    ]
-    # Compile regexes for performance
-    install_regexes = [re.compile(p, re.IGNORECASE) for p in install_patterns]
-    for cell_code in code_cells:
-        for line in cell_code.splitlines():
-            # Remove inline comments and strip whitespace
-            line = line.split('#', 1)[0].strip()
-            if not line:
-                continue
-            matched = False
-            for regex in install_regexes:
-                m = regex.match(line)
-                if m:
-                    # The last group always contains the args string
-                    args = m.groups()[-1]
-                    # Split args, but preserve extras in square brackets and version specifiers
-                    for part in re.split(r"\s+", args):
-                        if not part or part.startswith('-'):
-                            # Skip flags/options (e.g., --upgrade, -U)
-                            continue
-                        # Only accept valid package-like tokens (skip shell pipes, etc.)
-                        if re.match(r"^[\w\-\.]+(\[.*\])?([=<>!~]=?.*)?$", part):
-                            pkg = part.split('=')[0].split('[')[0].lower()
-                            pkg = _canonicalize_pkg_name(pkg)
-                            pkgs.add(pkg)
-                        else:
-                            # Log a warning for ambiguous or unsupported tokens
-                            _log_action("notebook_magic_parse_warn", "WARN", f"Ambiguous or unsupported install token in line: '{line}' (token: '{part}')")
-                    matched = True
-                    break
-            if not matched:
-                # If the line starts with ! or % and contains install/add, but didn't match above, log as ambiguous
-                if (line.startswith('!') or line.startswith('%')) and any(cmd in line for cmd in ["install", "add"]):
-                    _log_action("notebook_magic_parse_warn", "WARN", f"Unrecognized or unsupported install magic: '{line}'")
-    # Remove any names that are standard library or built-ins
-    pkgs = {p for p in pkgs if p not in _DYNAMIC_IGNORE_SET}
-    return pkgs
-
-
-def ensure_uv_add_notebook_deps(project_root: Path, dry_run: bool = False, notebook_paths: list[Path] = None) -> dict:
-    """
-    Detects and installs notebook dependencies using tool-driven and fallback methods.
-    Only adds dependencies not already in pyproject.toml.
-    Returns a dict with dependencies added, already present, actions, and errors.
-    """
-    import tempfile
-    actions_log = []
-    errors_log = []
-    pyproject_path = project_root / "pyproject.toml"
-    declared = _get_declared_dependencies(pyproject_path)
-    all_pkgs = set()
-    if notebook_paths is None:
-        notebook_paths = _find_all_notebooks(project_root)
-    if not notebook_paths:
-        msg = "No notebooks found. Skipping notebook dependency detection."
-        _log_action("notebook_dep_detect", "INFO", msg)
-        actions_log.append(msg)
-        return {"dependencies_added": [], "already_present": [], "actions": actions_log, "errors": errors_log}
-    try:
-        with tempfile.TemporaryDirectory() as temp_dir_str:
-            temp_dir = Path(temp_dir_str)
-            py_files = _convert_notebooks_to_py(notebook_paths, temp_dir, dry_run)
-            pkgs = _get_imports_with_pipreqs(py_files, temp_dir, dry_run)
-            all_pkgs.update(pkgs)
-    except Exception as e:
-        msg = f"Tool-driven notebook parsing failed: {e}. Falling back to manual parsing."
-        _log_action("notebook_tool_fallback", "WARN", msg)
-        actions_log.append(msg)
-        errors_log.append(msg)
-        for nb in notebook_paths:
-            pkgs = _parse_notebook_for_deps(nb)
-            all_pkgs.update(pkgs)
-    to_add = {p for p in all_pkgs if p not in declared}
-    already_present = [p for p in all_pkgs if p in declared]
-    if to_add:
-        cmd = ["uv", "add"] + list(to_add)
-        if dry_run:
-            msg = f"DRY RUN: Would add notebook dependencies: {sorted(list(to_add))}"
-            _log_action("notebook_dep_add_dry_run", "INFO", msg)
-            actions_log.append(msg)
-        else:
-            _run_command(cmd, "uv_add_notebook_deps", work_dir=project_root, dry_run=False)
-            msg = f"Added notebook dependencies: {sorted(list(to_add))}"
-            _log_action("notebook_dep_install", "SUCCESS", msg)
-            actions_log.append(msg)
-        return {"dependencies_added": sorted(list(to_add)), "already_present": already_present, "actions": actions_log, "errors": errors_log}
-    else:
-        msg = "No new notebook dependencies to add."
-        _log_action("notebook_dep_install", "INFO", msg)
-        actions_log.append(msg)
-        return {"dependencies_added": [], "already_present": already_present, "actions": actions_log, "errors": errors_log}
-
-
-# --- Notebook System Detection and Execution Dependency Management (Jupyter notebooks and alternatives) ---
-
-def _detect_notebook_systems(nb_path: Path) -> set[str]:
-    """
-    Detects which notebook execution systems are referenced in a notebook.
-    Returns a set of system names (e.g., 'jupyter', 'polars-notebook', 'quarto').
-    - Looks at metadata and code cell content for clues.
-    - Easy to extend for new systems.
-    """
-    import json
-    systems = set()
     try:
         with open(nb_path, "r", encoding="utf-8") as f:
-            nb = json.load(f)
-        meta = nb.get("metadata", {})
-        # Jupyter: kernelspec or language_info in metadata
-        if "kernelspec" in meta or "language_info" in meta:
-            systems.add("jupyter")
-        if "quarto" in meta:
-            systems.add("quarto")
-        # Scan code cells for magics/imports
-        for cell in nb.get("cells", []):
-            if cell.get("cell_type") == "code":
-                for line in cell.get("source", []):
-                    line_lower = line.strip().lower()
-                    if line_lower.startswith("%polars") or "import polars_notebook" in line_lower:
-                        systems.add("polars-notebook")
-                    if line_lower.startswith("%quarto") or "quarto" in line_lower:
-                        systems.add("quarto")
-                    if line_lower.startswith("%") or line_lower.startswith("!"):
-                        if any(x in line_lower for x in ["matplotlib", "pip", "conda", "sql", "ipykernel", "jupyter"]):
-                            systems.add("jupyter")
-    except Exception as e:
-        _log_action("notebook_system_detect", "WARN", f"Failed to parse notebook {nb_path}: {e}")
-    return systems
+            nb_content = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        _log_action(action_name, "ERROR", f"Could not read or parse notebook file '{nb_path.name}': {e}.")
+        return set()
 
+    # Gather all source code from every code cell into a single block.
+    all_code_source = "\n".join(
+        "".join(cell.get("source", []))
+        for cell in nb_content.get("cells", [])
+        if cell.get("cell_type") == "code"
+    )
 
-def _ensure_notebook_execution_support(project_root: Path, dry_run: bool, notebook_paths: list[Path] = None) -> dict:
+    # 1. AST-based parsing for `import` and `from ... import` statements. This is very reliable.
+    try:
+        tree = ast.parse(all_code_source)
+        for node in ast.walk(tree):
+            module_name = None
+            if isinstance(node, ast.Import):
+                module_name = node.names[0].name
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                module_name = node.module
+
+            if module_name:
+                # Get the top-level package (e.g., 'pandas' from 'pandas.DataFrame').
+                base_pkg = module_name.split('.')[0].lower()
+                # Filter out standard library modules.
+                if base_pkg not in _DYNAMIC_IGNORE_SET:
+                    # Canonicalize the name (e.g., sklearn -> scikit-learn).
+                    canonical_name = _canonicalize_pkg_name(base_pkg)
+                    # For imports, the specifier is just the package name itself.
+                    discovered_packages.add((canonical_name, canonical_name))
+    except SyntaxError as e:
+        _log_action(action_name, "WARN", f"Could not parse Python code in '{nb_path.name}' due to a syntax error. Import detection may be incomplete. Error: {e}")
+
+    # 2. Regex-based parsing for shell commands like `!pip install` or magics like `%pip install`.
+    # This is a best-effort approach to catch dependencies not declared via imports.
+    install_patterns = [
+        r"^[!%](?:pip3?|uv\s+pip)\s+install\s+(.+)",
+        r"^[!%]uv\s+add\s+(.+)",
+    ]
+    install_regexes = [re.compile(p, re.IGNORECASE) for p in install_patterns]
+
+    for line in all_code_source.splitlines():
+        line = line.split('#', 1)[0].strip() # Remove comments and whitespace.
+        if not line:
+            continue
+
+        for regex in install_regexes:
+            match = regex.match(line)
+            if match:
+                args_str = match.groups()[-1]
+                # Split by space to get individual packages/flags.
+                for part in re.split(r"\s+", args_str):
+                    if not part: continue
+                    # Skip flags like -U, --user, etc.
+                    if part.startswith('-'):
+                        if part in ('-r', '--requirement'):
+                            _log_action(action_name, "WARN", f"Unsupported '-r' flag found in install command and ignored: '{line}'")
+                        continue
+                    # A basic filter for valid-looking package names/specifiers.
+                    if re.match(r"^[\w\-\.]+(?:\[.*\])?(?:[=<>!~]=?.*)?$", part):
+                        base_pkg = part.split('[')[0].split('=')[0].split('>')[0].split('<')[0].split('~')[0].split('!')[0].strip().lower()
+                        if base_pkg not in _DYNAMIC_IGNORE_SET:
+                            canonical_name = _canonicalize_pkg_name(base_pkg)
+                            # Add the full specifier as found (e.g., 'pandas==1.2.3').
+                            discovered_packages.add((canonical_name, part))
+                break # Move to the next line after finding a match.
+
+    return discovered_packages
+
+def _discover_all_code_dependencies(project_root: Path, venv_name: str, dry_run: bool) -> set[tuple[str, str]]:
     """
-    Ensures only the required notebook execution dependencies are present, based on detected notebook systems.
-    Returns a dict with systems detected, dependencies added, already present, actions, and errors.
+    Facade function to discover all code dependencies from `.py` and `.ipynb` files.
+    This is the new, consolidated entry point for all dependency discovery.
+
+    Returns:
+        A set of (canonical_base_name, full_specifier) tuples.
     """
-    actions_log = []
-    errors_log = []
-    if notebook_paths is None:
-        notebook_paths = _find_all_notebooks(project_root)
+    action_name = "discover_all_code_dependencies"
+    _log_action(action_name, "INFO", "Starting discovery of code dependencies from all sources (.py, .ipynb).")
+    all_discovered_deps = set()
+
+    # Discover dependencies from standard Python scripts first.
+    script_deps = _get_packages_from_pipreqs(project_root, venv_name, dry_run, source_type="Python scripts")
+    all_discovered_deps.update(script_deps)
+
+    # Now, handle notebooks.
+    notebook_paths = _find_all_notebooks(project_root)
     if not notebook_paths:
-        msg = "No notebooks found. Skipping notebook execution dependency check."
-        _log_action("notebook_kernel_support", "INFO", msg)
-        actions_log.append(msg)
-        return {"systems_detected": set(), "dependencies_added": [], "already_present": [], "actions": actions_log, "errors": errors_log}
-    systems_needed = set()
-    for nb in notebook_paths:
-        systems_needed.update(_detect_notebook_systems(nb))
-    if not systems_needed:
-        msg = "No notebook execution system detected in notebooks."
-        _log_action("notebook_kernel_support", "INFO", msg)
-        actions_log.append(msg)
-        return {"systems_detected": set(), "dependencies_added": [], "already_present": [], "actions": actions_log, "errors": errors_log}
-    _log_action("notebook_system_detect", "INFO", f"Detected notebook systems: {sorted(systems_needed)}")
-    actions_log.append(f"Detected notebook systems: {sorted(systems_needed)}")
-    pyproject_path = project_root / PYPROJECT_TOML_NAME
-    declared = _get_declared_dependencies(pyproject_path)
-    needed = []
-    already_present = []
-    for system_name in systems_needed:
-        for pkg in _NOTEBOOK_SYSTEM_DEPENDENCIES.get(system_name, []):
-            if pkg not in declared:
-                needed.append(pkg)
-            else:
-                already_present.append(pkg)
-    if needed:
-        msg = f"Adding notebook execution dependencies: {needed}"
-        _log_action("notebook_kernel_support", "INFO", msg)
-        actions_log.append(msg)
-        if not dry_run:
-            _run_command(["uv", "add"] + needed, "uv_add_notebook_kernel_support", work_dir=project_root)
-    else:
-        msg = "All required notebook execution dependencies already present."
-        _log_action("notebook_kernel_support", "INFO", msg)
-        actions_log.append(msg)
-    return {"systems_detected": systems_needed, "dependencies_added": needed, "already_present": already_present, "actions": actions_log, "errors": errors_log}
+        _log_action(action_name, "INFO", "No Jupyter notebooks (.ipynb) found in project.")
+        return all_discovered_deps
+
+    _log_action(action_name, "INFO", f"Found {len(notebook_paths)} notebook(s). Analyzing for dependencies.")
+
+    # Primary strategy: convert to .py and use pipreqs.
+    notebook_deps_found_via_tools = set()
+    with tempfile.TemporaryDirectory(prefix="pyuvstarter_") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        # Attempt to convert all notebooks.
+        converted_py_files = _convert_notebooks_to_py(notebook_paths, temp_dir, dry_run)
+
+        if converted_py_files:
+            # If conversion was successful, run pipreqs on the temporary directory.
+            # We ignore venv_name here as it's not relevant for a clean temp dir.
+            notebook_deps_found_via_tools = _get_packages_from_pipreqs(temp_dir, "", dry_run, source_type="converted notebooks")
+            all_discovered_deps.update(notebook_deps_found_via_tools)
+
+    # Fallback strategy: If tool-based analysis failed for some/all notebooks, parse them manually.
+    # This logic ensures we try to parse any notebook that wasn't successfully processed by the toolchain.
+    # A simple check: if the number of deps is zero despite having notebooks, it's likely the toolchain failed.
+    # A more robust check would track which notebooks failed conversion, but this is a good heuristic.
+    if notebook_paths and not notebook_deps_found_via_tools:
+        _log_action(action_name, "INFO", "Tool-based notebook analysis yielded no dependencies, or failed. Engaging fallback manual parser.")
+        for nb_path in notebook_paths:
+            fallback_deps = _parse_notebook_manually(nb_path)
+            all_discovered_deps.update(fallback_deps)
+
+    _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique potential dependencies in total.")
+    return all_discovered_deps
 
 # --- Project and Dependency Handling ---
 
@@ -983,7 +833,8 @@ def _ensure_gitignore_exists(project_root: Path, venv_name: str, dry_run: bool):
         "Python Virtual Environments": [f"{venv_name}/", "venv/", "ENV/", "env/", "*/.venv/", "*/venv/"],
         "Python Cache & Compiled Files": ["__pycache__/", "*.py[cod]", "*$py.class"],
         "Log file from this script": [JSON_LOG_FILE_NAME],
-        "OS-specific": [".DS_Store", "Thumbs.db"]
+        "OS-specific": [".DS_Store", "Thumbs.db"],
+        "Jupyter Notebook": [".ipynb_checkpoints"],
     }
     comprehensive_ignores = [
         "# Python Virtual Environments", f"{venv_name}/", "venv/", "ENV/", "env/", "*/.venv/", "*/venv/",
@@ -1134,48 +985,50 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
         _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration. Exception: {e}. Skipping migration.", details={"exception": str(e)})
     return packages_specs
 
-def _get_packages_from_pipreqs(project_root: Path, venv_name_to_ignore: str, dry_run: bool) -> set[tuple[str, str]]:
+def _get_packages_from_pipreqs(path_to_scan: Path, venv_name_to_ignore: str, dry_run: bool, source_type: str) -> set[tuple[str, str]]:
     """
-    Runs `pipreqs` via `uvx` to discover imported packages in the project.
-    Returns a set of (base_package_name, full_specifier) tuples.
+    Reusable utility to run `pipreqs` via `uvx` on a specific path.
+    This is used for both the main project and for converted notebooks in a temp dir.
+
+    Returns a set of (canonical_base_name, full_specifier) tuples.
     """
-    action_name = "pipreqs_discover_imports"
-    _log_action(action_name, "INFO", f"Scanning project imports with `pipreqs` (via `uvx`), ignoring '{venv_name_to_ignore}'.")
-    packages_specs = set() # Changed to store tuples (base_name, specifier)
-    pipreqs_args = ["uvx", "pipreqs", "--print", "--ignore", venv_name_to_ignore, str(project_root)]
+    action_name = f"pipreqs_discover_imports_in_{source_type.replace(' ', '_')}"
+    _log_action(action_name, "INFO", f"Scanning {source_type} for imports with `pipreqs` (via `uvx`) in '{path_to_scan}'.")
+    packages_specs = set()
+    # If a venv name is provided, ignore it. For temp dirs, this will be empty.
+    pipreqs_args = ["uvx", "pipreqs", "--print", str(path_to_scan)]
+    if venv_name_to_ignore:
+        pipreqs_args.extend(["--ignore", venv_name_to_ignore])
+
     try:
         stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", suppress_console_output_on_success=True, dry_run=dry_run)
 
-        if dry_run: # In dry-run, we cannot get actual output, so simulate common case
-            _log_action(action_name, "INFO", "DRY RUN: Assuming `pipreqs` would detect imports. No actual imports scanned.")
-            # For testing, we might want to return some dummy data, but for production dry-run, empty is safer.
+        if dry_run:
+            _log_action(action_name, "INFO", f"DRY RUN: Assuming `pipreqs` would scan {source_type}. No actual imports found.")
             return set()
 
         parsed_count = 0
         if stdout:
             for line in stdout.splitlines():
                 line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                # The line from pipreqs --print is already a specifier like 'package==1.2.3'
-                # or 'package'
-                package_name_base = line.split("==")[0].split(">=")[0].split("<=")[0].split("!=")[0].split("~=")[0].strip().lower()
-                if package_name_base:
-                    packages_specs.add((package_name_base, line))
-                    parsed_count += 1
+                if not line or line.startswith("#"): continue
+
+                # pipreqs --print gives specifiers like 'package==1.2.3'
+                base_name = line.split("==")[0].strip().lower()
+                canonical_name = _canonicalize_pkg_name(base_name)
+                packages_specs.add((canonical_name, line))
+                parsed_count += 1
 
         if parsed_count > 0:
-            _log_action(action_name, "SUCCESS", f"Discovered {len(packages_specs)} unique potential package specifier(s) via `pipreqs`.")
-        elif not stdout.strip():
-             _log_action(action_name, "INFO", "`pipreqs` (via `uvx`) produced no output. No import-based dependencies found or an issue running it (check command log).")
+            _log_action(action_name, "SUCCESS", f"Discovered {len(packages_specs)} unique package specifier(s) in {source_type}.")
         else:
-             _log_action(action_name, "INFO", "`pipreqs` (via `uvx`) ran but no parseable package names were found in its output.")
+             _log_action(action_name, "INFO", f"`pipreqs` found no import-based dependencies in {source_type}.")
         return packages_specs
     except subprocess.CalledProcessError:
-        _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Cannot automatically discover dependencies. See command execution log for details.\n       Hints: This might be due to syntax errors in your Python files that `pipreqs` cannot parse, or `uvx` failing to run `pipreqs`.\n       Consider running manually for debug: {' '.join(pipreqs_args)} --debug")
+        _log_action(action_name, "ERROR", f"`uvx pipreqs` command failed for {source_type}. Cannot automatically discover dependencies. Check command logs.")
     except Exception as e:
-        _log_action(action_name, "ERROR", f"An unexpected error occurred while running/processing `pipreqs`: {e}", details={"exception": str(e)})
-    return set() # Return empty set on error
+        _log_action(action_name, "ERROR", f"An unexpected error occurred while running `pipreqs` for {source_type}: {e}", details={"exception": str(e)})
+    return set()
 
 def _run_ruff_unused_import_check(project_root: Path, major_action_results: list, dry_run: bool):
     """
@@ -1311,7 +1164,7 @@ def _manage_project_dependencies(
     migration_mode: str,
     dry_run: bool,
     declared_deps_before_management: set[str], # set of base package names from pyproject.toml
-    project_imported_packages: set[tuple[str, str]], # set of (base_name, spec) from pipreqs
+    project_imported_packages: set[tuple[str, str]], # set of (base_name, spec) from all sources
 ):
     """
     Manages project dependencies by migrating from requirements.txt, adding imports,
@@ -1415,15 +1268,16 @@ def _manage_project_dependencies(
     failed_to_add_specs = []
 
     if final_packages_to_add:
-        _log_action(action_name, "INFO", f"Attempting to add {len(final_packages_to_add)} new package(s) to '{PYPROJECT_TOML_NAME}' using `uv add`...")
-        for base, spec in final_packages_to_add:
-            try:
-                _run_command(["uv", "add", spec, "--python", str(venv_python_executable)], f"uv_add_{base.replace('-', '_').replace('.', '_')}", dry_run=dry_run)
-                successfully_added_specs.append(spec)
-                _log_action(action_name + "_add_single", "SUCCESS", f"Added '{spec}' to '{PYPROJECT_TOML_NAME}'.")
-            except Exception:
-                failed_to_add_specs.append(spec)
-                _log_action(action_name + "_add_single", "ERROR", f"Failed to add '{spec}' via `uv add`. Review logs and `uv` output above.", details={"package": spec})
+        packages_to_add_specs_only = [spec for _, spec in final_packages_to_add]
+        _log_action(action_name, "INFO", f"Attempting to add {len(packages_to_add_specs_only)} new package(s) to '{PYPROJECT_TOML_NAME}' using a single `uv add` command...")
+        try:
+            # Use a single `uv add` command for efficiency.
+            _run_command(["uv", "add"] + packages_to_add_specs_only, "uv_add_discovered_deps", work_dir=project_root)
+            successfully_added_specs.extend(packages_to_add_specs_only)
+            _log_action(action_name + "_add_bulk", "SUCCESS", f"Successfully added packages to '{PYPROJECT_TOML_NAME}'.")
+        except Exception:
+            failed_to_add_specs.extend(packages_to_add_specs_only)
+            _log_action(action_name + "_add_bulk", "ERROR", "Failed to add one or more packages via `uv add`. Review logs and `uv` output above.", details={"packages": packages_to_add_specs_only})
     else:
         _log_action(action_name, "INFO", "No new dependencies identified for addition based on mode and existing declarations.")
 
@@ -1432,7 +1286,7 @@ def _manage_project_dependencies(
         "\n--- Dependency Management Final Summary ---",
         f"Mode: {migration_mode}",
         f"Total packages from requirements.txt scanned: {len(req_pkgs_from_file)}",
-        f"Total packages from imports (pipreqs) discovered: {len(project_imported_packages)}",
+        f"Total packages from code (scripts/notebooks) discovered: {len(project_imported_packages)}",
         f"Total packages declared in pyproject.toml initially: {len(declared_deps_before_management)}",
         f"Packages Added to {PYPROJECT_TOML_NAME}: {successfully_added_specs if successfully_added_specs else 'None'}",
         f"Packages Skipped: {[f'{spec} ({reason})' for base, spec, reason in all_skipped_info_for_log] if all_skipped_info_for_log else 'None'}",
@@ -1617,6 +1471,83 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
     except Exception as e:
         _log_action(action_name, "ERROR", f"Failed to create or update launch.json: {e}")
 
+def _detect_notebook_systems(nb_path: Path) -> set[str]:
+    """
+    Detects which notebook execution systems are referenced in a notebook.
+    This looks at metadata and code cell content for clues about the runtime.
+    Returns a set of system names (e.g., 'jupyter', 'quarto').
+    """
+    systems = set()
+    try:
+        with open(nb_path, "r", encoding="utf-8") as f:
+            nb = json.load(f)
+        # Check metadata which is a strong indicator.
+        meta = nb.get("metadata", {})
+        if "kernelspec" in meta or "language_info" in meta:
+            systems.add("jupyter")
+        if "quarto" in meta:
+            systems.add("quarto")
+
+        # Scan code cells for magics or imports that imply a system.
+        for cell in nb.get("cells", []):
+            if cell.get("cell_type") == "code":
+                for line in cell.get("source", []):
+                    line_lower = line.strip().lower()
+                    if "import polars_notebook" in line_lower:
+                        systems.add("polars-notebook")
+                    # Any common magic command often implies a jupyter-like environment.
+                    if line_lower.startswith("%") and any(x in line_lower for x in ["matplotlib", "pip", "sql"]):
+                        systems.add("jupyter")
+    except Exception as e:
+        _log_action("notebook_system_detect", "WARN", f"Failed to parse notebook '{nb_path.name}' for system detection: {e}")
+    return systems
+
+def _ensure_notebook_execution_support(project_root: Path, dry_run: bool):
+    """
+    Ensures dependencies for running notebooks (like `ipykernel`) are installed.
+    This is separate from code dependencies (like `pandas`). It detects the
+    notebook "system" (e.g., Jupyter) and adds its required packages.
+    """
+    action_name = "ensure_notebook_execution_support"
+    notebook_paths = _find_all_notebooks(project_root)
+    if not notebook_paths:
+        # No notebooks, nothing to do.
+        return
+
+    _log_action(action_name, "INFO", "Checking for notebook execution support dependencies (e.g., ipykernel).")
+
+    # Detect all unique systems required by all notebooks in the project.
+    systems_needed = set()
+    for nb_path in notebook_paths:
+        systems_needed.update(_detect_notebook_systems(nb_path))
+
+    if not systems_needed:
+        _log_action(action_name, "INFO", "No specific notebook execution system (like Jupyter) was detected. Skipping support package installation.")
+        return
+
+    _log_action(action_name, "INFO", f"Detected required notebook systems: {sorted(list(systems_needed))}.")
+
+    # Get dependencies already declared in pyproject.toml.
+    pyproject_path = project_root / PYPROJECT_TOML_NAME
+    declared_deps = _get_declared_dependencies(pyproject_path)
+
+    # Determine which required support packages are missing.
+    packages_to_add = set()
+    for system in systems_needed:
+        for pkg in _NOTEBOOK_SYSTEM_DEPENDENCIES.get(system, []):
+            if pkg.lower() not in declared_deps:
+                packages_to_add.add(pkg)
+
+    if packages_to_add:
+        _log_action(action_name, "SUCCESS", f"Identified missing notebook execution support packages to add: {sorted(list(packages_to_add))}")
+        try:
+            # Use a single `uv add` command for efficiency.
+            _run_command(["uv", "add"] + sorted(list(packages_to_add)), f"{action_name}_uv_add", work_dir=project_root, dry_run=dry_run)
+        except Exception:
+            _log_action(action_name, "ERROR", f"Failed to add notebook support packages. Please add them manually: uv add {' '.join(packages_to_add)}")
+    else:
+        _log_action(action_name, "INFO", "All required notebook execution support packages are already declared in pyproject.toml.")
+
 ######################################################################
 # MAIN ORCHESTRATION FUNCTION
 ######################################################################
@@ -1640,9 +1571,6 @@ def main():
     major_action_results = [] # To populate the final summary table
 
     try:
-        # --- Notebook dependency detection and installation ---
-        # After venv is created, before final sync
-        # (insert after venv_python_executable is set)
         # 1. Ensure uv is installed
         if not _ensure_uv_installed(args.dry_run):
             _log_action("ensure_uv_installed", "ERROR", "Halting: `uv` could not be installed or verified. Check log and console output for details.")
@@ -1678,29 +1606,20 @@ def main():
             _log_action(action_venv, "SUCCESS", f"Virtual environment '{VENV_NAME}' ready. Interpreter: '{venv_python_executable}'.")
         major_action_results.append(("venv_ready", "SUCCESS"))
 
-
-        # --- Notebook processing orchestration (robust, DRY, user-proof) ---
-        notebook_summary = process_notebooks(project_root, args.dry_run)
-        notebook_paths = notebook_summary["notebooks_found"]
-        has_notebooks = bool(notebook_paths)
-
-        # --- Ensure tools for dependency discovery and linting are available via uv tool install ---
+        # 5. Ensure tools for dependency discovery and linting are available via uv tool install
         _ensure_tool_available("pipreqs", major_action_results, args.dry_run, website="https://github.com/bndr/pipreqs")
         _ensure_tool_available("ruff", major_action_results, args.dry_run, website="https://docs.astral.sh/ruff/")
 
-        # --- Pre-flight: Ruff unused import detection ---
+        # 6. Pre-flight: Ruff unused import detection
         # Run in dry-run mode too, as it provides valuable info without side-effects.
         _run_ruff_unused_import_check(project_root, major_action_results, args.dry_run)
 
-
-        # --- Get current declared dependencies (from pyproject.toml) ---
+        # 7. Consolidated Dependency Discovery from all sources
         declared_deps_before_management = _get_declared_dependencies(pyproject_file_path)
+        all_discovered_packages = _discover_all_code_dependencies(project_root, VENV_NAME, args.dry_run)
+        major_action_results.append(("code_dep_discovery", "SUCCESS"))
 
-        # --- Discover ALL imports from project Python files via pipreqs ---
-        project_imported_packages = _get_packages_from_pipreqs(project_root, VENV_NAME, args.dry_run)
-        major_action_results.append(("pipreqs_discovery", "SUCCESS"))
-
-        # --- Centralized Dependency Management ---
+        # 8. Centralized Dependency Management (using all discovered packages)
         _manage_project_dependencies(
             project_root=project_root,
             venv_python_executable=venv_python_executable,
@@ -1708,20 +1627,23 @@ def main():
             migration_mode=args.dependency_migration,
             dry_run=args.dry_run,
             declared_deps_before_management=declared_deps_before_management,
-            project_imported_packages=project_imported_packages
+            project_imported_packages=all_discovered_packages
         )
         major_action_results.append(("dependency_management", "SUCCESS"))
 
-        # --- Final Sync environment (after all adds) ---
+        # 9. Notebook Execution Support (Orthogonal Concern)
+        # This runs after dependency management to ensure support packages are also added.
+        _ensure_notebook_execution_support(project_root, args.dry_run)
+        major_action_results.append(("notebook_exec_support", "SUCCESS"))
+
+        # 10. Final Sync environment (after all potential `uv add` calls)
         action_sync = "uv_sync_dependencies"
         _log_action(action_sync, "INFO", "Performing final sync of environment with `pyproject.toml` and `uv.lock` using `uv sync`.")
         _run_command(["uv", "sync", "--python", str(venv_python_executable)], f"{action_sync}_exec", dry_run=args.dry_run)
         _log_action(action_sync, "SUCCESS", "Environment synced with `pyproject.toml` and `uv.lock`.")
         major_action_results.append(("uv_final_sync", "SUCCESS"))
 
-
-        # --- VS Code config ---
-        # These are always attempted in main, but their internal logic is now dry-run aware.
+        # 11. VS Code config
         _configure_vscode_settings(project_root, venv_python_executable, args.dry_run)
         settings_json_status = "SUCCESS"
         _ensure_vscode_launch_json(project_root, venv_python_executable, args.dry_run)
@@ -1730,18 +1652,8 @@ def main():
 
         _log_action("script_end", "SUCCESS", "Automated project setup script completed successfully.")
 
-
         # --- File summary table ---
         explicit_summary = _get_explicit_summary_text(project_root, VENV_NAME, pyproject_file_path, log_file_path)
-        if has_notebooks:
-            dep_result = notebook_summary["dependency_result"]
-            exec_result = notebook_summary["execution_support_result"]
-            if dep_result["dependencies_added"]:
-                explicit_summary += f"\nNotebook dependencies added: {dep_result['dependencies_added']}"
-            if exec_result["systems_detected"]:
-                explicit_summary += f"\nNotebook execution systems detected: {sorted(exec_result['systems_detected'])}"
-            else:
-                explicit_summary += "\nNo notebook execution system detected in notebooks."
         _log_action("explicit_summary", "INFO", explicit_summary)
 
         # --- Project summary table ---
