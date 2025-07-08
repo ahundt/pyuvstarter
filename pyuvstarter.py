@@ -659,24 +659,33 @@ def _find_all_notebooks(project_root: Path) -> list[Path]:
     """Recursively finds all .ipynb files in the project, ignoring the venv directory."""
     return [p for p in project_root.rglob("*.ipynb") if VENV_NAME not in p.parts]
 
-def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, dry_run: bool) -> list[Path]:
+def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, dry_run: bool) -> dict[Path, Path]:
     """
-    Converts a list of notebooks to .py scripts in a temporary directory using `jupyter nbconvert`.
-    This is part of the primary, tool-based dependency discovery strategy.
-    Returns a list of paths to the newly created .py files.
+    Converts notebooks to .py scripts, returning a map of original to converted paths for precise failure tracking.
+
+    This function's return type is critical for the deterministic fallback logic. By returning a dictionary,
+    it allows the calling function to know exactly which notebooks were processed successfully.
+
+    Args:
+        notebook_paths: A list of Path objects for the notebooks to convert.
+        temp_dir: The temporary directory to store the converted Python scripts.
+        dry_run: If True, simulates the action without running commands.
+
+    Returns:
+        A dictionary mapping the original notebook Path to its successful temporary script Path.
     """
-    py_files = []
+    successful_conversions: dict[Path, Path] = {}
     # This tool-based method can only run if `jupyter` is available.
     if not _command_exists("jupyter"):
         _log_action("nbconvert_check", "WARN", "'jupyter' command not found. Cannot convert notebooks to scripts for tool-based dependency analysis. Will use fallback manual parsing.")
-        return [] # Return empty list to signal failure to the caller.
+        return successful_conversions
 
     for nb_path in notebook_paths:
         # Create a corresponding python file path in the temp directory.
         py_path = temp_dir / (nb_path.stem + ".py")
         if dry_run:
             _log_action("nbconvert_dry_run", "INFO", f"DRY RUN: Would convert {nb_path.name} to a temporary script for analysis.")
-            py_files.append(py_path) # In dry run, pretend it was created.
+            successful_conversions[nb_path] = py_path
             continue
         try:
             # Execute the conversion.
@@ -686,11 +695,14 @@ def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, dry_run
                 "--output-dir", str(temp_dir)
             ], f"nbconvert_{nb_path.stem}", suppress_console_output_on_success=True)
             if py_path.exists():
-                py_files.append(py_path)
-        except Exception as e:
+                successful_conversions[nb_path] = py_path
+        except subprocess.CalledProcessError as e:
             # If a single notebook fails to convert, log it and continue with others.
-            _log_action("nbconvert_error", "WARN", f"Failed to convert notebook '{nb_path.name}': {e}. It will be skipped by tool-based analysis.")
-    return py_files
+            _log_action("nbconvert_error", "WARN", f"Failed to convert notebook '{nb_path.name}'. It may be corrupt or have invalid syntax. It will be parsed manually as a fallback.", details={"notebook": str(nb_path), "exception": str(e)})
+        except Exception as e:
+            # Catch any other unexpected errors during conversion
+            _log_action("nbconvert_error", "WARN", f"Unexpected error converting notebook '{nb_path.name}': {e}. It will be parsed manually as a fallback.", details={"notebook": str(nb_path), "exception": str(e)})
+    return successful_conversions
 
 def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
     """
@@ -706,8 +718,17 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
     try:
         with open(nb_path, "r", encoding="utf-8") as f:
             nb_content = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError) as e:
-        _log_action(action_name, "ERROR", f"Could not read or parse notebook file '{nb_path.name}': {e}.")
+    except FileNotFoundError:
+        _log_action(action_name, "ERROR", f"Notebook file not found at path '{nb_path}'. Skipping dependency discovery.")
+        return set()
+    except IOError as e:
+        _log_action(action_name, "ERROR", f"Could not read notebook file '{nb_path.name}' due to an I/O error. Check file permissions.", details={"exception": str(e)})
+        return set()
+    except json.JSONDecodeError as e:
+        _log_action(action_name, "ERROR", f"Notebook file '{nb_path.name}' is not valid JSON. It may be corrupted.", details={"exception": str(e)})
+        return set()
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Unexpected error reading notebook '{nb_path.name}': {e}", details={"exception": str(e)})
         return set()
 
     # Gather all source code from every code cell into a single block.
@@ -757,27 +778,46 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
             # Use shlex.split() for proper handling of quoted arguments (v7.3 improvement)
             try:
                 tokens = shlex.split(args_str)
+                # Use the helper function for clean separation of concerns
+                discovered_packages.update(_parse_install_tokens(tokens))
             except ValueError as e:
                 _log_action(action_name, "WARN", f"Could not shlex-parse arguments in line: '{line}'. Error: {e}.")
                 continue
 
-            for part in tokens:
-                if not part:
-                    continue
-                # Skip flags like -U, --user, etc.
-                if part.startswith('-'):
-                    if part in ('-r', '--requirement'):
-                        _log_action(action_name, "WARN", f"Unsupported '-r' flag found in install command and ignored: '{line}'")
-                    continue
-                # A basic filter for valid-looking package names/specifiers.
-                if re.match(r"^[\w\-\.]+(?:\[.*\])?(?:[=<>!~]=?.*)?$", part):
-                    base_pkg = part.split('[')[0].split('=')[0].split('>')[0].split('<')[0].split('~')[0].split('!')[0].strip().lower()
-                    if base_pkg not in _DYNAMIC_IGNORE_SET:
-                        canonical_name = _canonicalize_pkg_name(base_pkg)
-                        # Add the full specifier as found (e.g., 'pandas==1.2.3').
-                        discovered_packages.add((canonical_name, part))
-
     return discovered_packages
+
+def _parse_install_tokens(tokens: list[str]) -> set[tuple[str, str]]:
+    """
+    Parses a list of tokens from a package installation command.
+
+    This helper function separates the concern of parsing tokens from finding the
+    install command line itself. It is designed to be robust and handle various
+    package specification formats.
+
+    Args:
+        tokens: A list of strings, typically from shlex.split().
+
+    Returns:
+        A set of (canonical_base_name, full_specifier) tuples found in the tokens.
+    """
+    discovered: set[tuple[str, str]] = set()
+    for part in tokens:
+        if not part:
+            continue
+        # Skip flags like -U, --user, etc.
+        if part.startswith('-'):
+            if part in ('-r', '--requirement'):
+                # Log a warning but don't halt processing
+                _log_action("parse_install_tokens", "WARN", f"Unsupported '-r' flag found in install command and ignored: '{part}'")
+            continue
+        # A basic filter for valid-looking package names/specifiers.
+        if re.match(r"^[\w\-\.]+(?:\[.*\])?(?:[=<>!~]=?.*)?$", part):
+            base_pkg = part.split('[')[0].split('=')[0].split('>')[0].split('<')[0].split('~')[0].split('!')[0].strip().lower()
+            if base_pkg not in _DYNAMIC_IGNORE_SET:
+                canonical_name = _canonicalize_pkg_name(base_pkg)
+                # Add the full specifier as found (e.g., 'pandas==1.2.3').
+                discovered.add((canonical_name, part))
+    return discovered
 
 def _discover_all_code_dependencies(project_root: Path, venv_name: str, dry_run: bool) -> set[tuple[str, str]]:
     """
@@ -788,45 +828,55 @@ def _discover_all_code_dependencies(project_root: Path, venv_name: str, dry_run:
         A set of (canonical_base_name, full_specifier) tuples.
     """
     action_name = "discover_all_code_dependencies"
-    _log_action(action_name, "INFO", "Starting discovery of code dependencies from all sources (.py, .ipynb).")
+    _log_action(action_name, "INFO", "Starting comprehensive dependency discovery from all sources (.py, .ipynb).")
     all_discovered_deps = set()
 
     # Discover dependencies from standard Python scripts first.
+    _log_action(action_name, "INFO", "Phase 1: Analyzing Python scripts (.py files) for imports...")
     script_deps = _get_packages_from_pipreqs(project_root, venv_name, dry_run, source_type="Python scripts")
     all_discovered_deps.update(script_deps)
+    _log_action(action_name, "INFO", f"Found {len(script_deps)} dependencies from Python scripts.")
 
     # Now, handle notebooks.
     notebook_paths = _find_all_notebooks(project_root)
     if not notebook_paths:
         _log_action(action_name, "INFO", "No Jupyter notebooks (.ipynb) found in project.")
+        _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique dependencies from Python scripts.")
         return all_discovered_deps
 
-    _log_action(action_name, "INFO", f"Found {len(notebook_paths)} notebook(s). Analyzing for dependencies.")
+    _log_action(action_name, "INFO", f"Phase 2: Analyzing {len(notebook_paths)} Jupyter notebook(s) for dependencies...")
 
     # Primary strategy: convert to .py and use pipreqs.
     notebook_deps_found_via_tools = set()
     with tempfile.TemporaryDirectory(prefix="pyuvstarter_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        # Attempt to convert all notebooks.
-        converted_py_files = _convert_notebooks_to_py(notebook_paths, temp_dir, dry_run)
+        # Attempt to convert all notebooks and track precisely which ones succeed.
+        _log_action(action_name, "INFO", "Attempting tool-based analysis (jupyter nbconvert + pipreqs)...")
+        conversion_map = _convert_notebooks_to_py(notebook_paths, temp_dir, dry_run)
 
-        if converted_py_files:
-            # If conversion was successful, run pipreqs on the temporary directory.
+        if conversion_map:
+            # If conversion was successful for some notebooks, run pipreqs on the temporary directory.
             # We ignore venv_name here as it's not relevant for a clean temp dir.
             notebook_deps_found_via_tools = _get_packages_from_pipreqs(temp_dir, "", dry_run, source_type="converted notebooks")
             all_discovered_deps.update(notebook_deps_found_via_tools)
 
-    # Fallback strategy: If tool-based analysis failed for some/all notebooks, parse them manually.
-    # This logic ensures we try to parse any notebook that wasn't successfully processed by the toolchain.
-    # A simple check: if the number of deps is zero despite having notebooks, it's likely the toolchain failed.
-    # A more robust check would track which notebooks failed conversion, but this is a good heuristic.
-    if notebook_paths and not notebook_deps_found_via_tools:
-        _log_action(action_name, "INFO", "Tool-based notebook analysis yielded no dependencies, or failed. Engaging fallback manual parser.")
-        for nb_path in notebook_paths:
+            _log_action(action_name, "SUCCESS", f"Tool-based analysis: {len(conversion_map)} notebook(s) processed, {len(notebook_deps_found_via_tools)} dependencies found.")
+
+    # Fallback strategy: Deterministic fallback for the exact set of failed notebooks
+    # Calculate which notebooks failed conversion by taking the difference
+    successfully_processed_notebooks = set(conversion_map.keys()) if conversion_map else set()
+    notebooks_to_manually_parse = set(notebook_paths) - successfully_processed_notebooks
+
+    if notebooks_to_manually_parse:
+        _log_action(action_name, "INFO", f"Fallback analysis: Processing {len(notebooks_to_manually_parse)} notebook(s) that couldn't be converted...")
+        fallback_deps_count = 0
+        for nb_path in notebooks_to_manually_parse:
             fallback_deps = _parse_notebook_manually(nb_path)
             all_discovered_deps.update(fallback_deps)
+            fallback_deps_count += len(fallback_deps)
+        _log_action(action_name, "SUCCESS", f"Fallback analysis: {len(notebooks_to_manually_parse)} notebook(s) processed, {fallback_deps_count} additional dependencies found.")
 
-    _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique potential dependencies in total.")
+    _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique dependencies from all sources (scripts + notebooks).")
     return all_discovered_deps
 
 # --- Project and Dependency Handling ---
@@ -1552,20 +1602,49 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
 
 def _detect_notebook_systems(nb_path: Path) -> set[str]:
     """
-    Detects which notebook execution systems are referenced in a notebook.
-    This looks at metadata and code cell content for clues about the runtime.
-    Returns a set of system names (e.g., 'jupyter', 'quarto').
+    Detects which notebook execution systems are referenced in a notebook's metadata.
+
+    This enhanced version inspects multiple keys within the notebook's JSON structure
+    to provide more accurate runtime detection. It is designed to be easily extensible.
+
+    Args:
+        nb_path: The Path object for the notebook to inspect.
+
+    Returns:
+        A set of identified system names (e.g., {'jupyter', 'quarto'}).
     """
     systems = set()
     try:
         with open(nb_path, "r", encoding="utf-8") as f:
             nb = json.load(f)
-        # Check metadata which is a strong indicator.
+
+        # The metadata block is the primary source of truth for environment info.
         meta = nb.get("metadata", {})
+        if not meta:
+            return systems # No metadata, nothing to detect.
+
+        # --- Detection Logic for Different Systems ---
+
+        # 1. Jupyter: The presence of 'kernelspec' is the strongest indicator.
+        #    'language_info' is also a common key in Jupyter-generated notebooks.
         if "kernelspec" in meta or "language_info" in meta:
             systems.add("jupyter")
+
+        # 2. Quarto: Quarto notebooks explicitly add a 'quarto' key to the metadata.
         if "quarto" in meta:
             systems.add("quarto")
+            # Quarto often runs on a Jupyter kernel, so we can infer Jupyter support is also needed.
+            systems.add("jupyter")
+
+        # 3. Google Colab: Colab notebooks include a 'colab' dictionary in their metadata.
+        if "colab" in meta:
+            # Colab is a Jupyter-compatible environment, so it requires Jupyter dependencies.
+            systems.add("jupyter")
+
+        # 4. VS Code: VS Code's notebook editor may add its own metadata.
+        if "vscode" in meta:
+             # VS Code also uses Jupyter kernels.
+             systems.add("jupyter")
 
         # Scan code cells for magics or imports that imply a system.
         for cell in nb.get("cells", []):
@@ -1577,21 +1656,26 @@ def _detect_notebook_systems(nb_path: Path) -> set[str]:
                     # Any common magic command often implies a jupyter-like environment.
                     if line_lower.startswith("%") and any(x in line_lower for x in ["matplotlib", "pip", "sql"]):
                         systems.add("jupyter")
-    except Exception as e:
-        _log_action("notebook_system_detect", "WARN", f"Failed to parse notebook '{nb_path.name}' for system detection: {e}")
+
+    except (json.JSONDecodeError, IOError) as e:
+        _log_action("notebook_system_detect", "WARN", f"Could not inspect metadata in '{nb_path.name}' due to a file read or JSON parse error.", details={"exception": str(e)})
+
     return systems
 
-def _ensure_notebook_execution_support(project_root: Path, dry_run: bool):
+def _ensure_notebook_execution_support(project_root: Path, dry_run: bool) -> bool:
     """
     Ensures dependencies for running notebooks (like `ipykernel`) are installed.
     This is separate from code dependencies (like `pandas`). It detects the
     notebook "system" (e.g., Jupyter) and adds its required packages.
+
+    Returns:
+        True if successful or no action needed, False if errors occurred.
     """
     action_name = "ensure_notebook_execution_support"
     notebook_paths = _find_all_notebooks(project_root)
     if not notebook_paths:
         # No notebooks, nothing to do.
-        return
+        return True
 
     _log_action(action_name, "INFO", "Checking for notebook execution support dependencies (e.g., ipykernel).")
 
@@ -1602,7 +1686,7 @@ def _ensure_notebook_execution_support(project_root: Path, dry_run: bool):
 
     if not systems_needed:
         _log_action(action_name, "INFO", "No specific notebook execution system (like Jupyter) was detected. Skipping support package installation.")
-        return
+        return True
 
     _log_action(action_name, "INFO", f"Detected required notebook systems: {sorted(list(systems_needed))}.")
 
@@ -1618,14 +1702,22 @@ def _ensure_notebook_execution_support(project_root: Path, dry_run: bool):
                 packages_to_add.add(pkg)
 
     if packages_to_add:
-        _log_action(action_name, "SUCCESS", f"Identified missing notebook execution support packages to add: {sorted(list(packages_to_add))}")
-        try:
-            # Use a single `uv add` command for efficiency.
-            _run_command(["uv", "add"] + sorted(list(packages_to_add)), f"{action_name}_uv_add", work_dir=project_root, dry_run=dry_run)
-        except Exception:
-            _log_action(action_name, "ERROR", f"Failed to add notebook support packages. Please add them manually: uv add {' '.join(packages_to_add)}")
+        _log_action(action_name, "INFO", f"Adding missing notebook execution packages: {sorted(list(packages_to_add))}")
+        if dry_run:
+            _log_action(action_name, "INFO", f"DRY RUN: Would add notebook execution packages: {sorted(list(packages_to_add))}")
+            return True
+        else:
+            try:
+                # Use a single `uv add` command for efficiency.
+                _run_command(["uv", "add"] + sorted(list(packages_to_add)), f"{action_name}_uv_add", work_dir=project_root)
+                _log_action(action_name, "SUCCESS", f"Successfully added notebook execution packages: {sorted(list(packages_to_add))}")
+                return True
+            except Exception as e:
+                _log_action(action_name, "ERROR", f"Failed to add notebook support packages: {e}\n      ACTION: Please try adding them manually: uv add {' '.join(sorted(list(packages_to_add)))}")
+                return False
     else:
         _log_action(action_name, "INFO", "All required notebook execution support packages are already declared in pyproject.toml.")
+        return True
 
 ######################################################################
 # MAIN ORCHESTRATION FUNCTION
@@ -1732,8 +1824,11 @@ def main():
 
         # 9. Notebook Execution Support (Orthogonal Concern)
         # This runs after dependency management to ensure support packages are also added.
-        _ensure_notebook_execution_support(project_root, args.dry_run)
-        major_action_results.append(("notebook_exec_support", "SUCCESS"))
+        notebook_exec_success = _ensure_notebook_execution_support(project_root, args.dry_run)
+        if notebook_exec_success:
+            major_action_results.append(("notebook_exec_support", "SUCCESS"))
+        else:
+            major_action_results.append(("notebook_exec_support", "FAILED"))
 
         # 10. Final Sync environment (after all potential `uv add` calls)
         action_sync = "uv_sync_dependencies"
