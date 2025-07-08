@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pyuvstarter.py (v6.9 - Robust Ruff & Consolidated Dry-Run)
+pyuvstarter.py (v7.0 - Enhanced Robustness & User Experience)
 
 Copyright (c) 2025 Andrew Hundt
 
@@ -563,7 +563,7 @@ def _get_dynamic_ignore_set():
     else:
         # Fallback for older Python: try to use an optional, pre-installed helper package.
         try:
-            from stdlib_list import stdlib_list
+            from stdlib_list import stdlib_list  # type: ignore
             import sys as _sys
             # Get stdlib for the version of python running the script
             stdlib_modules = set(stdlib_list(f"{_sys.version_info.major}.{_sys.version_info.minor}"))
@@ -585,14 +585,55 @@ def _canonicalize_pkg_name(name: str) -> str:
     Canonicalize package import names to their PyPI package names for consistency.
     This is crucial because `import` names often differ from installable package names.
     (e.g., you `import sklearn` but `uv add scikit-learn`).
-    Extend this mapping as more common aliases are encountered.
+
+    Comprehensive mapping of common import-to-package name discrepancies.
     """
     mapping = {
+        # Machine Learning & Data Science
         "sklearn": "scikit-learn",
+        "cv2": "opencv-python",
+
+        # Image Processing
         "pil": "pillow",
-        # 'yaml': 'pyyaml', # Another common example
+        "PIL": "pillow",
+
+        # Configuration & Serialization
+        "yaml": "pyyaml",
+        "toml": "toml",
+
+        # Web & APIs
+        "requests_oauthlib": "requests-oauthlib",
+        "google.cloud": "google-cloud",
+        "bs4": "beautifulsoup4",
+
+        # Database & ORM
+        "psycopg2": "psycopg2-binary",
+        "MySQLdb": "mysqlclient",
+
+        # Development Tools
+        "dotenv": "python-dotenv",
+        "dateutil": "python-dateutil",
+
+        # GUI & Graphics
+        "tkinter": "",  # Built-in, should be filtered out elsewhere
+
+        # System & OS
+        "win32api": "pywin32",
+        "win32com": "pywin32",
+
+        # Testing & Mocking
+        "mock": "mock",  # Built into unittest in Python 3.3+
+
+        # Async & Concurrency
+        "asyncio": "",  # Built-in
+
+        # Typing
+        "typing_extensions": "typing-extensions",
     }
-    return mapping.get(name.lower(), name.lower())
+
+    canonical = mapping.get(name.lower(), name.lower())
+    # Handle empty string mappings (built-in modules that shouldn't be installed)
+    return canonical if canonical else name.lower()
 
 def _find_all_notebooks(project_root: Path) -> list[Path]:
     """Recursively finds all .ipynb files in the project, ignoring the venv directory."""
@@ -697,7 +738,8 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
                 args_str = match.groups()[-1]
                 # Split by space to get individual packages/flags.
                 for part in re.split(r"\s+", args_str):
-                    if not part: continue
+                    if not part:
+                        continue
                     # Skip flags like -U, --user, etc.
                     if part.startswith('-'):
                         if part in ('-r', '--requirement'):
@@ -1011,7 +1053,8 @@ def _get_packages_from_pipreqs(path_to_scan: Path, venv_name_to_ignore: str, dry
         if stdout:
             for line in stdout.splitlines():
                 line = line.strip()
-                if not line or line.startswith("#"): continue
+                if not line or line.startswith("#"):
+                    continue
 
                 # pipreqs --print gives specifiers like 'package==1.2.3'
                 base_name = line.split("==")[0].strip().lower()
@@ -1563,7 +1606,27 @@ def main():
 
     pyproject_file_path = project_root / PYPROJECT_TOML_NAME
 
-    _log_action("script_start", "INFO", f"--- Starting Automated Python Project Setup ({_log_data_global['script_name']}) in: {project_root} ---\n--- Using Virtual Environment Name: '{VENV_NAME}' ---\n--- Primary Dependency File: '{PYPROJECT_TOML_NAME}' ---\n--- JSON Log will be saved to: '{log_file_path.name}' ---")
+    # Enhanced startup banner with clear information
+    banner_lines = [
+        "🚀 PYUVSTARTER - Modern Python Project Automation",
+        f"Version: {_log_data_global.get('pyuvstarter_version', 'unknown')}",
+        f"Project Directory: {project_root}",
+        f"Virtual Environment: {VENV_NAME}",
+        f"Dependency File: {PYPROJECT_TOML_NAME}",
+        f"Migration Mode: {args.dependency_migration}",
+        f"Dry Run: {'Yes - Preview Only' if args.dry_run else 'No - Making Changes'}",
+        f"Execution Log: {log_file_path.name}",
+        "─" * 60,
+        "This tool will automate your Python project setup using the modern uv ecosystem.",
+        "✓ Discover dependencies from .py files and Jupyter notebooks",
+        "✓ Configure VS Code with proper interpreter and launch configs",
+        "✓ Set up comprehensive .gitignore and project structure",
+        "✓ Perform code quality checks and provide actionable guidance",
+        "─" * 60
+    ]
+
+    startup_banner = "\n".join(banner_lines)
+    _log_action("script_start", "INFO", startup_banner)
 
     venv_python_executable = None
     settings_json_status = "NOT_ATTEMPTED"
@@ -1650,7 +1713,7 @@ def main():
         launch_json_status = "SUCCESS"
         major_action_results.append(("vscode_config", "SUCCESS"))
 
-        _log_action("script_end", "SUCCESS", "Automated project setup script completed successfully.")
+        _log_action("script_end", "SUCCESS", "🎉 Automated project setup script completed successfully!")
 
         # --- File summary table ---
         explicit_summary = _get_explicit_summary_text(project_root, VENV_NAME, pyproject_file_path, log_file_path)
