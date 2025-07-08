@@ -115,6 +115,7 @@ import argparse
 import re
 import ast
 import tempfile
+import shlex
 
 from pathlib import Path
 
@@ -302,19 +303,29 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
 
 
 def _get_next_steps_text(project_root: Path = Path.cwd()) -> str:
-    if sys.platform == "win32":
-        activate_path = project_root / VENV_NAME / "Scripts" / "activate"
-        activate_cmd = f"{activate_path}"
-    else:
-        activate_path = project_root / VENV_NAME / "bin" / "activate"
-        activate_cmd = f"source {activate_path}"
-    return (
-        "Next Steps:\n"
-        "1. If VS Code is open with this project, reload the window (Ctrl+Shift+P > 'Developer: Reload Window').\n"
-        f"2. Activate the environment in your terminal (to undo activation later, run 'deactivate'):\n    {activate_cmd}\n"
-        f"3. Review `{PYPROJECT_TOML_NAME}`, `uv.lock`, and '{GITIGNORE_NAME}', then test your project to ensure all dependencies are correctly captured and functional.\n"
-        f"4. Commit `{PYPROJECT_TOML_NAME}`, `uv.lock`, `{GITIGNORE_NAME}`, and your source files (including this script if desired) to version control."
-    )
+    """
+    Generates context-aware 'Next Steps' guidance text.
+
+    ENHANCED (v7.3): Only includes the activation step if the venv was actually created.
+    This prevents showing invalid commands if venv creation failed.
+    """
+    steps = [
+        "1. If VS Code is open with this project, reload the window (Ctrl+Shift+P > 'Developer: Reload Window')."
+    ]
+
+    # HARDENED: Only include the activation step if the venv was actually created.
+    venv_path = project_root / VENV_NAME
+    if venv_path.exists() and venv_path.is_dir():
+        if sys.platform == "win32":
+            activate_cmd = f"'{venv_path / 'Scripts' / 'activate'}'"
+        else:
+            activate_cmd = f"source '{venv_path / 'bin' / 'activate'}'"
+        steps.append(f"2. Activate the environment in your terminal:\n    {activate_cmd}")
+
+    steps.append(f"3. Review `{PYPROJECT_TOML_NAME}`, `uv.lock`, and `{GITIGNORE_NAME}`.")
+    steps.append(f"4. Commit your project files, including `{PYPROJECT_TOML_NAME}` and `uv.lock`, to version control.")
+
+    return "Next Steps:\n" + "\n".join(steps)
 
 
 def _save_log(log_file_path: Path, project_root: Path = Path.cwd()):
@@ -411,9 +422,9 @@ def _command_exists(command_name):
     return shutil.which(command_name) is not None
 
 # --- UV & Tool Installation ---
-def _install_uv_macos_brew(dry_run: bool):
-    """Attempts to install `uv` on macOS using Homebrew."""
-    action_name = "install_uv_macos_brew"
+def _install_uv_brew(dry_run: bool):
+    """Attempts to install `uv` using Homebrew (available on macOS, Linux, and WSL)."""
+    action_name = "install_uv_brew"
     _log_action(action_name, "INFO", "Attempting `uv` installation via Homebrew.")
     if not _command_exists("brew"):
         _log_action(action_name, "ERROR", "Homebrew (brew) not found. Cannot attempt `uv` installation via Homebrew.\n      Please install Homebrew from https://brew.sh/ or allow installation via the official script.")
@@ -464,57 +475,66 @@ def _install_uv_script(dry_run: bool):
         return False
 
 def _ensure_uv_installed(dry_run: bool):
-    """Ensures `uv` is installed, attempting platform-specific methods if necessary."""
-    action_name = "ensure_uv_installed_phase"
+    """
+    Ensures `uv` is installed using a robust, multi-stage verification process.
+
+    4-Stage Process (from v7.3 battle-tested logic):
+    1. uv --version pre-check
+    2. Platform-aware installation attempt
+    3. _command_exists post-check
+    4. uv --version final verification
+
+    This handles the common gotcha where installers succeed but PATH isn't updated.
+    """
+    action_name = "ensure_uv_installed"
     _log_action(action_name, "INFO", "Starting `uv` availability check and installation if needed.")
-    try:
-        if _command_exists("uv"):
+
+    # Stage 1: Pre-check with version verification
+    if _command_exists("uv"):
+        try:
             version_out, _ = _run_command(["uv", "--version"], f"{action_name}_version_check", suppress_console_output_on_success=True, dry_run=dry_run)
-            _log_action(action_name, "SUCCESS", f"`uv` is already installed. Version: {version_out if not dry_run else 'N/A in dry-run'}")
+            if not dry_run:
+                _log_action(action_name, "SUCCESS", f"`uv` is already installed. Version: {version_out}")
             return True
-    except Exception as e:
-         _log_action(f"{action_name}_version_check", "ERROR", "`uv --version` failed, though `uv` command seems to exist. Will attempt to ensure it is installed correctly or reinstall.", details={"exception": str(e)})
+        except Exception as e:
+            _log_action(f"{action_name}_version_check", "WARN", "`uv --version` failed, though `uv` command seems to exist. Will attempt to reinstall.", details={"exception": str(e)})
 
     _log_action(action_name, "INFO", "`uv` not found or version check failed. Attempting installation.")
 
+    # Stage 2: Platform-aware installation
     installed_successfully = False
-    install_method_log = "None"
-    if sys.platform == "darwin":
-        if _command_exists("brew"):
-            install_method_log = "Homebrew"
-            if _install_uv_macos_brew(dry_run):
-                installed_successfully = True
-        if not installed_successfully:
-            install_method_log = f"{install_method_log} -> Official Script (macOS)" if install_method_log != "None" else "Official Script (macOS)"
-            if _install_uv_script(dry_run):
-                installed_successfully = True
-    elif sys.platform.startswith("linux") or sys.platform == "win32":
-        install_method_log = "Official Script"
+    methods = []
+    # Try Homebrew first if available (works on macOS, Linux, and WSL)
+    if _command_exists("brew"):
+        methods.append("Homebrew")
+        if _install_uv_brew(dry_run):
+            installed_successfully = True
+
+    if not installed_successfully:
+        methods.append("Official Script")
         if _install_uv_script(dry_run):
             installed_successfully = True
-    else:
-        _log_action(action_name, "ERROR", f"Unsupported platform for automatic `uv` installation: {sys.platform} Please install `uv` manually from https://astral.sh/uv")
-        return False
 
     if installed_successfully:
-        # For dry_run, we assume uv was installed if the installation function returned True
         if dry_run:
-            _log_action(action_name, "SUCCESS", f"`uv` assumed successfully installed/ensured via {install_method_log} in dry-run mode.")
+            _log_action(action_name, "SUCCESS", f"DRY RUN: `uv` assumed successfully installed via {' -> '.join(methods)}.")
             return True
-        # For actual run, re-check existence
+
+        # Stage 3: Post-install command existence check
         if _command_exists("uv"):
             try:
-                version_out, _ = _run_command(["uv", "--version"], f"{action_name}_post_install_version_check", suppress_console_output_on_success=True, dry_run=dry_run)
-                _log_action(action_name, "SUCCESS", f"`uv` successfully installed/ensured via {install_method_log}. Version: {version_out}")
+                # Stage 4: Final version verification
+                version_out, _ = _run_command(["uv", "--version"], f"{action_name}_post_install_version_check")
+                _log_action(action_name, "SUCCESS", f"`uv` successfully installed/ensured via {' -> '.join(methods)}. Version: {version_out}")
                 return True
-            except Exception as e:
-                _log_action(action_name, "ERROR", f"`uv` reported installed via {install_method_log}, but 'uv --version' still fails post-install.\nThis might indicate an issue with the `uv` binary or its PATH setup.", details={"exception": str(e)})
+            except Exception:
+                _log_action(action_name, "ERROR", "Installation successful, but 'uv --version' still fails.\n      ACTION: This may indicate a problem with the `uv` binary or PATH. Please restart your terminal.")
                 return False
         else:
-            _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.")
+            _log_action(action_name, "ERROR", f"Installation via {' -> '.join(methods)} seemed to complete, but `uv` command is still not available.\n      ACTION: Please restart your terminal or manually add the installation directory (e.g., ~/.local/bin) to your PATH.")
             return False
     else:
-        _log_action(action_name, "ERROR", f"`uv` installation failed using method(s): {install_method_log}, or command still not available.       Please install `uv` manually from https://astral.sh/uv and ensure it's in your PATH.\n       You may need to restart your terminal or source your shell profile.")
+        _log_action(action_name, "ERROR", f"All automatic `uv` installation attempts failed (methods tried: {' -> '.join(methods)}).\n      ACTION: Please install `uv` manually from https://astral.sh/uv.")
         return False
 
 def _ensure_tool_available(tool_name: str, major_action_results: list, dry_run: bool, website: str = None):
@@ -719,40 +739,43 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
     except SyntaxError as e:
         _log_action(action_name, "WARN", f"Could not parse Python code in '{nb_path.name}' due to a syntax error. Import detection may be incomplete. Error: {e}")
 
-    # 2. Regex-based parsing for shell commands like `!pip install` or magics like `%pip install`.
-    # This is a best-effort approach to catch dependencies not declared via imports.
-    install_patterns = [
-        r"^[!%](?:pip3?|uv\s+pip)\s+install\s+(.+)",
-        r"^[!%]uv\s+add\s+(.+)",
-    ]
-    install_regexes = [re.compile(p, re.IGNORECASE) for p in install_patterns]
+    # 2. Streamlined regex-based parsing for shell/magic install commands (v7.3 improvement)
+    # Single consolidated pattern for better maintainability
+    install_pattern = re.compile(
+        r"^[!%]\s*(?:(?:pip3?|python\s+-m\s+pip|uv\s+pip|conda|mamba)\s+install|uv\s+add|poetry\s+add)\s+(.+)",
+        re.IGNORECASE
+    )
 
     for line in all_code_source.splitlines():
         line = line.split('#', 1)[0].strip() # Remove comments and whitespace.
         if not line:
             continue
 
-        for regex in install_regexes:
-            match = regex.match(line)
-            if match:
-                args_str = match.groups()[-1]
-                # Split by space to get individual packages/flags.
-                for part in re.split(r"\s+", args_str):
-                    if not part:
-                        continue
-                    # Skip flags like -U, --user, etc.
-                    if part.startswith('-'):
-                        if part in ('-r', '--requirement'):
-                            _log_action(action_name, "WARN", f"Unsupported '-r' flag found in install command and ignored: '{line}'")
-                        continue
-                    # A basic filter for valid-looking package names/specifiers.
-                    if re.match(r"^[\w\-\.]+(?:\[.*\])?(?:[=<>!~]=?.*)?$", part):
-                        base_pkg = part.split('[')[0].split('=')[0].split('>')[0].split('<')[0].split('~')[0].split('!')[0].strip().lower()
-                        if base_pkg not in _DYNAMIC_IGNORE_SET:
-                            canonical_name = _canonicalize_pkg_name(base_pkg)
-                            # Add the full specifier as found (e.g., 'pandas==1.2.3').
-                            discovered_packages.add((canonical_name, part))
-                break # Move to the next line after finding a match.
+        match = install_pattern.match(line)
+        if match:
+            args_str = match.group(1).strip()
+            # Use shlex.split() for proper handling of quoted arguments (v7.3 improvement)
+            try:
+                tokens = shlex.split(args_str)
+            except ValueError as e:
+                _log_action(action_name, "WARN", f"Could not shlex-parse arguments in line: '{line}'. Error: {e}.")
+                continue
+
+            for part in tokens:
+                if not part:
+                    continue
+                # Skip flags like -U, --user, etc.
+                if part.startswith('-'):
+                    if part in ('-r', '--requirement'):
+                        _log_action(action_name, "WARN", f"Unsupported '-r' flag found in install command and ignored: '{line}'")
+                    continue
+                # A basic filter for valid-looking package names/specifiers.
+                if re.match(r"^[\w\-\.]+(?:\[.*\])?(?:[=<>!~]=?.*)?$", part):
+                    base_pkg = part.split('[')[0].split('=')[0].split('>')[0].split('<')[0].split('~')[0].split('!')[0].strip().lower()
+                    if base_pkg not in _DYNAMIC_IGNORE_SET:
+                        canonical_name = _canonicalize_pkg_name(base_pkg)
+                        # Add the full specifier as found (e.g., 'pandas==1.2.3').
+                        discovered_packages.add((canonical_name, part))
 
     return discovered_packages
 
@@ -1306,23 +1329,35 @@ def _manage_project_dependencies(
         _log_action(action_name + "_dry_run", "INFO", msg)
         return
 
-    # --- Actually add dependencies ---
+    # --- Actually add dependencies with robust hybrid strategy ---
     successfully_added_specs = []
     failed_to_add_specs = []
 
     if final_packages_to_add:
         packages_to_add_specs_only = [spec for _, spec in final_packages_to_add]
-        _log_action(action_name, "INFO", f"Attempting to add {len(packages_to_add_specs_only)} new package(s) to '{PYPROJECT_TOML_NAME}' using a single `uv add` command...")
+        _log_action(action_name, "INFO", f"Attempting to add {len(packages_to_add_specs_only)} new package(s) to '{PYPROJECT_TOML_NAME}'.")
+
         try:
-            # Use a single `uv add` command for efficiency.
-            _run_command(["uv", "add"] + packages_to_add_specs_only, "uv_add_discovered_deps", work_dir=project_root)
+            # Stage 1: Try bulk add for efficiency (v7.3 hybrid strategy)
+            _log_action(action_name, "INFO", "Attempting a fast bulk-add operation...")
+            _run_command(["uv", "add"] + packages_to_add_specs_only, "uv_add_bulk", work_dir=project_root)
             successfully_added_specs.extend(packages_to_add_specs_only)
-            _log_action(action_name + "_add_bulk", "SUCCESS", f"Successfully added packages to '{PYPROJECT_TOML_NAME}'.")
         except Exception:
-            failed_to_add_specs.extend(packages_to_add_specs_only)
-            _log_action(action_name + "_add_bulk", "ERROR", "Failed to add one or more packages via `uv add`. Review logs and `uv` output above.", details={"packages": packages_to_add_specs_only})
+            # Stage 2: Individual fallback for robustness
+            _log_action(action_name, "WARN", "Bulk 'uv add' failed. Falling back to adding packages individually for robustness.")
+            for base, spec in final_packages_to_add:
+                try:
+                    _run_command(["uv", "add", spec], f"uv_add_individual_{base}", work_dir=project_root)
+                    successfully_added_specs.append(spec)
+                except Exception:
+                    failed_to_add_specs.append(spec)
     else:
         _log_action(action_name, "INFO", "No new dependencies identified for addition based on mode and existing declarations.")
+
+    if successfully_added_specs:
+        _log_action(action_name, "SUCCESS", f"Successfully added {len(successfully_added_specs)} packages.", details={"packages": successfully_added_specs})
+    if failed_to_add_specs:
+        _log_action(action_name, "ERROR", f"Failed to add {len(failed_to_add_specs)} packages.", details={"failed_packages": failed_to_add_specs})
 
     # --- Final Summary and Advice ---
     summary_lines = [
@@ -1478,14 +1513,15 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
                     data = json.load(f)
                 configs = data.get("configurations", [])
 
-                # Check if a config with the desired name and Python path already exists
+                # v7.3 Bug Fix: Check both name AND python interpreter path to prevent stale configurations
                 # Note: venv_python_executable might be relative to project_root, but VS Code usually resolves it
                 # For robustness, comparing against both original string and resolved path.
                 venv_python_executable_str = str(venv_python_executable)
                 venv_python_executable_resolved_str = str(venv_python_executable.resolve())
 
                 already_present = any(
-                    c.get("type") == "python" and c.get("name") == default_config_entry["name"] and \
+                    c.get("type") == "python" and
+                    c.get("name") == default_config_entry["name"] and
                     (c.get("python") == venv_python_executable_str or c.get("python") == venv_python_executable_resolved_str)
                     for c in configs
                 )
