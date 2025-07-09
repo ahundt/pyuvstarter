@@ -396,69 +396,13 @@ trap cleanup EXIT INT TERM
 
 # === MAIN EXECUTION ===
 
-if [ "$UNIT_TEST_MODE" = true ]; then
-    echo "🧪 UNIT TEST MODE: Testing pyuvstarter functionality"
-    echo "   Mode: $(get_mode_name)"
-    echo "   Cleanup: $([ "$NO_CLEANUP" = true ] && echo "Keep artifacts" || echo "Clean up")"
-    echo ""
+# === CREATE DEMO PROJECT (shared by both unit test and demo modes) ===
+echo "📁 Setting up realistic ML project (the 'before' state)..."
+rm -rf "$DEMO_DIR"
+mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts"
 
-    # Create demo project for testing
-    echo "📁 Setting up test project..."
-    rm -rf "$DEMO_DIR"
-    mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts"
-
-    # Create minimal test files
-    cat << 'EOF' > "$DEMO_DIR/requirements.txt"
-numpy
-pandas
-matplotlib
-EOF
-
-    cat << 'EOF' > "$DEMO_DIR/scripts/test_script.py"
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-
-def test_function():
-    print("Test script with dependencies")
-    return pd.DataFrame({'test': [1, 2, 3]})
-EOF
-
-    # Run unit tests
-    if run_unit_tests; then
-        echo ""
-        echo "🎉 UNIT TESTS COMPLETED SUCCESSFULLY"
-        echo "✅ pyuvstarter is working correctly from all test scenarios"
-        exit 0
-    else
-        echo ""
-        echo "❌ UNIT TESTS FAILED"
-        echo "💥 pyuvstarter has issues that need to be fixed"
-        exit 1
-    fi
-else
-    # Demo mode - always show demo, optionally record
-    if [ "$RECORD_DEMO" = true ]; then
-        echo "🎬 Creating and recording pyuvstarter demo..."
-    else
-        echo "🎬 Creating pyuvstarter demo..."
-    fi
-    echo "   Mode: $(get_mode_name)"
-    echo ""
-
-    # Check prerequisites for recording only
-    if [ "$RECORD_DEMO" = true ]; then
-        check_and_install_prerequisites
-    fi
-
-    # === 1. CREATE DEMO PROJECT ===
-    echo "📁 Setting up realistic ML project (the 'before' state)..."
-
-    rm -rf "$DEMO_DIR"
-    mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts"
-
-    # Incomplete requirements.txt (the problem pyuvstarter solves)
-    cat << 'EOF' > "$DEMO_DIR/requirements.txt"
+# Incomplete requirements.txt (the problem pyuvstarter solves)
+cat << 'EOF' > "$DEMO_DIR/requirements.txt"
 # Legacy requirements.txt - WOEFULLY INCOMPLETE!
 # Missing 15+ dependencies that are actually used in the project
 transformers
@@ -477,32 +421,8 @@ numpy
 # And many more missing dependencies...
 EOF
 
-    # Inadequate .gitignore
-    cat << 'EOF' > "$DEMO_DIR/.gitignore"
-# Terrible .gitignore - pyuvstarter will fix this!
-*.pyc
-# Missing: __pycache__, .venv, .ipynb_checkpoints, etc.
-EOF
-
-    # Project README highlighting the chaos
-    cat << 'EOF' > "$DEMO_DIR/README.md"
-# Messy ML Project
-
-This project demonstrates a typical "dependency hell" scenario:
-
-❌ **PROBLEMS:**
-- Incomplete requirements.txt (missing 15+ packages!)
-- No virtual environment setup
-- Dependencies scattered across notebooks via !pip install
-- Missing VS Code configuration
-- Inadequate .gitignore file
-- No reproducible environment
-
-✅ **SOLUTION:** Run `pyuvstarter` to fix everything automatically!
-EOF
-
-    # Python script with imports missing from requirements.txt
-    cat << 'EOF' > "$DEMO_DIR/scripts/data_analysis.py"
+# Python script with imports missing from requirements.txt
+cat << 'EOF' > "$DEMO_DIR/scripts/data_analysis.py"
 """Data analysis script with many dependencies missing from requirements.txt"""
 import pandas as pd          # MISSING from requirements.txt!
 import numpy as np           # ✅ In requirements.txt
@@ -514,7 +434,7 @@ import requests              # MISSING from requirements.txt!
 
 def analyze_data():
     """Demonstrates the dependency chaos pyuvstarter will fix"""
-    print("🔥 This script uses 6+ packages not in requirements.txt!")
+    print("� This script uses 6+ packages not in requirements.txt!")
     print("   pyuvstarter will discover and add them automatically!")
 
     # Simulate data analysis workflow
@@ -531,8 +451,8 @@ if __name__ == "__main__":
     analyze_data()
 EOF
 
-    # Notebook with mixed dependency installation methods
-    cat << 'EOF' > "$DEMO_DIR/notebooks/ml_experiment.ipynb"
+# Notebook with mixed dependency installation methods
+cat << 'EOF' > "$DEMO_DIR/notebooks/ml_experiment.ipynb"
 {
  "cells": [
   {
@@ -610,6 +530,67 @@ EOF
  "nbformat": 4,
  "nbformat_minor": 4
 }
+EOF
+
+
+
+if [ "$UNIT_TEST_MODE" = true ]; then
+    echo "🧪 UNIT TEST MODE: Testing pyuvstarter functionality"
+    echo "   Mode: $(get_mode_name)"
+    echo "   Cleanup: $([ "$NO_CLEANUP" = true ] && echo "Keep artifacts" || echo "Clean up")"
+    echo ""
+
+    # Run unit tests
+    if run_unit_tests; then
+        echo ""
+        echo "🎉 UNIT TESTS COMPLETED SUCCESSFULLY"
+        echo "✅ pyuvstarter is working correctly from all test scenarios"
+        exit 0
+    else
+        echo ""
+        echo "❌ UNIT TESTS FAILED"
+        echo "💥 pyuvstarter has issues that need to be fixed"
+        exit 1
+    fi
+else
+    # Demo mode - always show demo, optionally record
+    if [ "$RECORD_DEMO" = true ]; then
+        echo "🎬 Creating and recording pyuvstarter demo..."
+    else
+        echo "🎬 Creating pyuvstarter demo..."
+    fi
+    echo "   Mode: $(get_mode_name)"
+    echo ""
+
+    # Check prerequisites for recording only
+    if [ "$RECORD_DEMO" = true ]; then
+        check_and_install_prerequisites
+    fi
+
+    # === 1. CREATE DEMO PROJECT ===
+    echo "📁 Setting up realistic ML project files for demo (already created)..."
+
+    # Add demo-specific files (README, .gitignore)
+    cat << 'EOF' > "$DEMO_DIR/.gitignore"
+# Terrible .gitignore - pyuvstarter will fix this!
+*.pyc
+# Missing: __pycache__, .venv, .ipynb_checkpoints, etc.
+EOF
+
+    cat << 'EOF' > "$DEMO_DIR/README.md"
+# Messy ML Project
+
+This project demonstrates a typical "dependency hell" scenario:
+
+❌ **PROBLEMS:**
+- Incomplete requirements.txt (missing 15+ packages!)
+- No virtual environment setup
+- Dependencies scattered across notebooks via !pip install
+- Missing VS Code configuration
+- Inadequate .gitignore file
+- No reproducible environment
+
+✅ **SOLUTION:** Run `pyuvstarter` to fix everything automatically!
 EOF
 
     if [ "$RECORD_DEMO" = true ]; then
