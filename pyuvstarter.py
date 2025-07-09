@@ -1075,7 +1075,7 @@ def _ensure_project_initialized(project_root: Path, dry_run: bool):
     main_py_existed_before_init = main_py_path.exists()
 
     try:
-        _run_command(["uv", "init"], f"{action_name}_uv_init_exec", dry_run=dry_run)
+        _run_command(["uv", "init", "--no-workspace"], f"{action_name}_uv_init_exec", dry_run=dry_run)
 
         if dry_run:
             _log_action(action_name, "INFO", f"In dry-run mode: Assuming `uv init` would create/update '{PYPROJECT_TOML_NAME}'.")
