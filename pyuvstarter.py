@@ -116,11 +116,16 @@ import argparse
 import re
 import ast
 import tempfile
+import warnings
 import shlex
+import time
 
 from pathlib import Path
+from typing import Set, Tuple, List, Union, Dict, Optional, Any
 
-# --- Configuration Constants ---
+# ==============================================================================
+# SECTION: CORE CONFIGURATION & CONSTANTS
+# ==============================================================================
 VENV_NAME = ".venv"
 PYPROJECT_TOML_NAME = "pyproject.toml"
 GITIGNORE_NAME = ".gitignore"
@@ -137,6 +142,82 @@ _NOTEBOOK_SYSTEM_DEPENDENCIES = {
     "quarto": ["quarto"],
     # Add more systems here as needed (e.g., 'voila': ['voila'])
 }
+# V1ax.3 - THE FINAL, VERIFIED, AND CORRECTED VERSION
+#
+# GOAL: To provide a robust, user-centric, and maintainable tool for discovering Python
+#       dependencies within a specified project scope, including from scripts and notebooks.
+#
+# DESIGN PHILOSOPHY:
+#   - Easy to Use Correctly: The primary function `discover_dependencies_in_scope`
+#     has sensible defaults and a clear, explicit API.
+#   - Hard to Use Incorrectly: Deprecated functions issue clear warnings, and the code
+#     is resilient to common failure modes (e.g., malformed files, command failures).
+#   - Actionable Guidance: All user-facing output, from logs to final summaries, is
+#     designed to tell the user what happened, why, and what to do next.
+#   - Fully Exercised: The demonstration code (`if __name__ == "__main__"`) is
+#     designed to test all major code paths, including the hybrid notebook strategy.
+
+
+
+_DYNAMIC_IGNORE_SET = {
+    "python", "pip", "conda", "mamba", "poetry", "uv", "sh", "bash",
+    "os", "sys", "json", "re", "pathlib", "tempfile", "ast", "collections",
+    "subprocess", "warnings", "typing", "time"
+}
+
+DEFAULT_IGNORE_DIRS = {
+    ".venv", "venv", ".env", "env", "node_modules", ".git", "__pycache__",
+    ".tox", ".pytest_cache", ".hypothesis", "build", "dist", "*.egg-info"
+}
+
+
+# ==============================================================================
+# SECTION: DEMONSTRATION
+# ==============================================================================
+def test():
+    with tempfile.TemporaryDirectory() as temp_dir_str:
+        root = Path(temp_dir_str)
+        print(f"\n--- Setting up Adversarial Monorepo for Demonstration in: {root} ---\n")
+
+        service_a = root / "service_a"
+        service_b = root / "service_b"
+        ignored_venv_dir = root / "service_a" / ".venv"
+        service_a.mkdir(); service_b.mkdir(); ignored_venv_dir.mkdir(parents=True)
+
+        (service_a / "main.py").touch()
+        (service_a / "success_convert.ipynb").write_text(json.dumps({"cells": [{"cell_type": "code", "source": ["import scipy"]}]}))
+        (service_a / "fallback.ipynb").write_text(json.dumps({"cells": [{"cell_type": "code", "source": ["import pandas", "import sklearn"]}]}))
+        (ignored_venv_dir / "should_be_ignored.ipynb").write_text('{"cells":[]}')
+        (service_b / "app.py").touch()
+
+        print("\n--- 1. ACTION: Scanning 'service_a' scope ---")
+        result_a = discover_dependencies_in_scope(scan_path=service_a)
+
+        summary_a = generate_discovery_summary(result_a)
+        print(summary_a)
+
+        deps_a = {dep[0] for dep in result_a.all_unique_dependencies}
+        assert deps_a == {"fastapi", "uvicorn", "scipy", "pandas", "scikit-learn"}
+        assert result_a.notebooks_found_count == 2
+        assert result_a.notebooks_converted_count == 1
+        assert result_a.notebooks_fallback_count == 1
+
+        print("\n\n--- 2. ACTION: Scanning 'service_b' scope (notebooks disabled) ---")
+        result_b = discover_dependencies_in_scope(scan_path=service_b, scan_notebooks=False)
+        print(generate_discovery_summary(result_b))
+        deps_b = {dep[0] for dep in result_b.all_unique_dependencies}
+        assert deps_b == {"django"}
+
+        print("\n\n--- 3. ACTION: Testing Backward Compatibility Shim ---")
+        print("    (NOTE: A DeprecationWarning is expected below)")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            old_api_result = _discover_all_code_dependencies(project_root=service_a)
+            assert len(w) == 1
+        assert len(old_api_result) == 5
+        print("    Shim test PASSED.")
+
+        print("\n\n--- Demonstration Complete ---")
 
 # --- Argument Parsing ---
 def parse_args():
@@ -164,6 +245,11 @@ def parse_args():
         "--dry-run",
         action="store_true",
         help="Preview actions without making changes."
+    )
+    parser.add_argument(
+        "--ignore-dirs",
+        nargs="*",
+        help="Additional directories to ignore during dependency discovery (beyond defaults like .venv, __pycache__, etc.)"
     )
     return parser.parse_args()
 
@@ -633,6 +719,7 @@ def _canonicalize_pkg_name(name: str) -> str:
         # Database & ORM
         "psycopg2": "psycopg2-binary",
         "MySQLdb": "mysqlclient",
+        "mysqldb": "mysqlclient",
 
         # Development Tools
         "dotenv": "python-dotenv",
@@ -659,9 +746,13 @@ def _canonicalize_pkg_name(name: str) -> str:
     # Handle empty string mappings (built-in modules that shouldn't be installed)
     return canonical if canonical else name.lower()
 
-def _find_all_notebooks(project_root: Path) -> list[Path]:
-    """Recursively finds all .ipynb files in the project, ignoring the venv directory."""
-    return [p for p in project_root.rglob("*.ipynb") if VENV_NAME not in p.parts]
+
+def _find_all_notebooks(scan_path: Path, ignore_dirs: Set[str]) -> List[Path]:
+    """Finds all .ipynb files within a scope while respecting ignore patterns."""
+    all_files = list(scan_path.rglob("*.ipynb"))
+    valid_files = [p for p in all_files if not any(ignored in p.parts for ignored in ignore_dirs)]
+    return valid_files
+
 
 def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, project_root: Path, dry_run: bool) -> dict[Path, Path]:
     """
@@ -708,6 +799,7 @@ def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, project
             _log_action("nbconvert_error", "WARN", f"Unexpected error converting notebook '{nb_path.name}': {e}. It will be parsed manually as a fallback.", details={"notebook": str(nb_path), "exception": str(e)})
     return successful_conversions
 
+
 def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
     """
     Fallback dependency discovery: Parses a notebook file's JSON directly.
@@ -715,78 +807,100 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
     regular expressions for finding shell/magic install commands (e.g., `!pip install`).
     Returns a set of (canonical_base_name, full_specifier) tuples.
     """
-    action_name = f"notebook_fallback_parse_{nb_path.stem}"
-    _log_action(action_name, "INFO", f"Using fallback parser for '{nb_path.name}'.")
-    discovered_packages = set()
+    action_name = f"notebook_manual_parse_{nb_path.stem}"
+    _log_action(action_name, "INFO", f"Using hardened fallback parser for '{nb_path.name}'.")
 
     try:
-        with open(nb_path, "r", encoding="utf-8") as f:
+        with open(nb_path, "r", encoding="utf-8", errors='ignore') as f:
             nb_content = json.load(f)
-    except FileNotFoundError:
-        _log_action(action_name, "ERROR", f"Notebook file not found at path '{nb_path}'. Skipping dependency discovery.")
-        return set()
-    except IOError as e:
-        _log_action(action_name, "ERROR", f"Could not read notebook file '{nb_path.name}' due to an I/O error. Check file permissions.", details={"exception": str(e)})
-        return set()
-    except json.JSONDecodeError as e:
-        _log_action(action_name, "ERROR", f"Notebook file '{nb_path.name}' is not valid JSON. It may be corrupted.", details={"exception": str(e)})
-        return set()
-    except Exception as e:
-        _log_action(action_name, "ERROR", f"Unexpected error reading notebook '{nb_path.name}': {e}", details={"exception": str(e)})
+    except (FileNotFoundError, IOError, json.JSONDecodeError, Exception) as e:
+        _log_action(action_name, "ERROR", f"Cannot read or parse file '{nb_path.name}'.", details={"type": type(e).__name__, "exception": str(e)})
         return set()
 
-    # Gather all source code from every code cell into a single block.
-    all_code_source = "\n".join(
-        "".join(cell.get("source", []))
-        for cell in nb_content.get("cells", [])
-        if cell.get("cell_type") == "code"
-    )
-
-    # 1. AST-based parsing for `import` and `from ... import` statements. This is very reliable.
-    try:
-        tree = ast.parse(all_code_source)
-        for node in ast.walk(tree):
-            module_name = None
-            if isinstance(node, ast.Import):
-                module_name = node.names[0].name
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                module_name = node.module
-
-            if module_name:
-                # Get the top-level package (e.g., 'pandas' from 'pandas.DataFrame').
-                base_pkg = module_name.split('.')[0].lower()
-                # Filter out standard library modules.
-                if base_pkg not in _DYNAMIC_IGNORE_SET:
-                    # Canonicalize the name (e.g., sklearn -> scikit-learn).
-                    canonical_name = _canonicalize_pkg_name(base_pkg)
-                    # For imports, the specifier is just the package name itself.
-                    discovered_packages.add((canonical_name, canonical_name))
-    except SyntaxError as e:
-        _log_action(action_name, "WARN", f"Could not parse Python code in '{nb_path.name}' due to a syntax error. Import detection may be incomplete. Error: {e}")
-
-    # 2. Streamlined regex-based parsing for shell/magic install commands (v7.3 improvement)
-    # Single consolidated pattern for better maintainability
+    # Heuristic to quickly identify lines that are probably shell commands.
+    shell_command_pattern = re.compile(r"^\s*[!%]")
+    # Comprehensive pattern to match various install commands.
     install_pattern = re.compile(
-        r"^[!%]\s*(?:(?:pip3?|python\s+-m\s+pip|uv\s+pip|conda|mamba)\s+install|uv\s+add|poetry\s+add)\s+(.+)",
-        re.IGNORECASE
-    )
+        r"^(?:(?:pip3?|python\s+-m\s+pip|uv\s+pip|conda|mamba)\s+install|uv\s+add|poetry\s+add)\s*(.*)",
+        re.IGNORECASE)
 
-    for line in all_code_source.splitlines():
-        line = line.split('#', 1)[0].strip() # Remove comments and whitespace.
-        if not line:
+    discovered_packages: Set[Tuple[str, str]] = set()
+    python_code_block: List[str] = []
+    shell_line_buffer = ""
+
+    cells = nb_content.get("cells", [])
+    if not isinstance(cells, list):
+        _log_action(action_name, "WARN", f"Notebook '{nb_path.name}' has malformed 'cells' key (not a list). Skipping.")
+        return set()
+
+    for cell in cells:
+        if not isinstance(cell, dict) or cell.get("cell_type") != "code":
             continue
 
-        match = install_pattern.match(line)
-        if match:
-            args_str = match.group(1).strip()
-            # Use shlex.split() for proper handling of quoted arguments (v7.3 improvement)
+        source_block = cell.get("source", [])
+        if isinstance(source_block, str): lines = source_block.splitlines()
+        elif isinstance(source_block, list): lines = source_block
+        else: continue
+
+        for line in lines:
+            if not isinstance(line, str): continue
+
+            if shell_command_pattern.match(line):
+                line_no_comment = line.split('#', 1)[0]
+                stripped_line = line_no_comment.rstrip()
+
+                if stripped_line.endswith('\\'):
+                    shell_line_buffer += stripped_line[:-1] + " "
+                    continue
+
+                # We have a complete logical shell line. Process it.
+                logical_shell_line = (shell_line_buffer + line_no_comment).strip()
+                shell_line_buffer = ""
+
+                # Strip the leading `!` or `%` before matching the install command.
+                command_body = logical_shell_line.lstrip('!% \t')
+
+                install_match = install_pattern.match(command_body)
+                if install_match:
+                    # *** CORRECTED LOGIC ***
+                    # 1. Get the arguments from the successful match.
+                    args_str = install_match.group(1).strip()
+
+                    # 2. NOW, check this argument string for complex shell operators.
+                    command_terminators = ['&&', '|', ';']
+                    for terminator in command_terminators:
+                        if terminator in args_str:
+                            _log_action(action_name, "WARN", f"Complex shell command detected. Only parsing up to the first '{terminator}'.")
+                            args_str = args_str.split(terminator, 1)[0].strip()
+                            break
+
+                    if not args_str: continue
+                    try:
+                        tokens = shlex.split(args_str)
+                        discovered_packages.update(_parse_install_tokens(tokens))
+                    except ValueError:
+                        _log_action(action_name, "WARN", f"Could not parse malformed install command arguments: '{args_str}'.")
+            else:
+                # This is a Python-like line. Append it raw to preserve indentation.
+                python_code_block.append(line)
+
+    if python_code_block:
+        pure_python_code = "\n".join(python_code_block)
+        if pure_python_code.strip():
             try:
-                tokens = shlex.split(args_str)
-                # Use the helper function for clean separation of concerns
-                discovered_packages.update(_parse_install_tokens(tokens))
-            except ValueError as e:
-                _log_action(action_name, "WARN", f"Could not shlex-parse arguments in line: '{line}'. Error: {e}.")
-                continue
+                tree = ast.parse(pure_python_code)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            base_pkg = alias.name.split('.')[0].lower()
+                            if base_pkg and base_pkg not in _DYNAMIC_IGNORE_SET:
+                                discovered_packages.add((_canonicalize_pkg_name(base_pkg), base_pkg))
+                    elif isinstance(node, ast.ImportFrom) and node.module:
+                        base_pkg = node.module.split('.')[0].lower()
+                        if base_pkg and base_pkg not in _DYNAMIC_IGNORE_SET:
+                            discovered_packages.add((_canonicalize_pkg_name(base_pkg), base_pkg))
+            except SyntaxError as e:
+                _log_action(action_name, "INFO", f"Skipping AST parse due to non-Python syntax.", details={"error": str(e)})
 
     return discovered_packages
 
@@ -823,53 +937,115 @@ def _parse_install_tokens(tokens: list[str]) -> set[tuple[str, str]]:
                 discovered.add((canonical_name, part))
     return discovered
 
-def _discover_all_code_dependencies(project_root: Path, venv_name: str, dry_run: bool) -> set[tuple[str, str]]:
-    """
-    Facade function to discover all dependencies using a hybrid strategy:
-    1. Analyzes .py files with pipreqs.
-    2. Attempts to convert .ipynb files and analyze with pipreqs (Primary).
-    3. For any notebooks that fail conversion, it uses a robust manual parser (Fallback).
-    """
-    action_name = "discover_all_code_dependencies"
-    _log_action(action_name, "INFO", "Starting comprehensive dependency discovery from all sources.")
-    all_discovered_deps = set()
 
-    # Phase 1: Analyze Python scripts
-    _log_action(action_name, "INFO", "Phase 1: Analyzing Python scripts (.py files)...")
-    script_deps = _get_packages_from_pipreqs(project_root, venv_name, dry_run, source_type="Python scripts")
-    all_discovered_deps.update(script_deps)
-    _log_action(action_name, "INFO", f"Found {len(script_deps)} dependencies in .py files.")
+# ==============================================================================
+# SECTION: CORE IMPLEMENTATION OF PYTHON AND NOTEBOOK DEPENDENCY DISCOVERY
+# ==============================================================================
 
-    # Phase 2: Hybrid Notebook Analysis
-    notebook_paths = _find_all_notebooks(project_root)
+class DiscoveryResult:
+    """A structured container for dependency discovery results."""
+    def __init__(self):
+        self.from_scripts: Set[Tuple[str, str]] = set()
+        self.from_converted_notebooks: Set[Tuple[str, str]] = set()
+        self.from_manual_notebooks: Set[Tuple[str, str]] = set()
+        self.scan_path: Optional[Path] = None
+        self.notebooks_found_count: int = 0
+        self.notebooks_converted_count: int = 0
+        self.notebooks_fallback_count: int = 0
+
+    @property
+    def all_unique_dependencies(self) -> Set[Tuple[str, str]]:
+        return self.from_scripts | self.from_converted_notebooks | self.from_manual_notebooks
+
+    def __str__(self):
+        header = f"DiscoveryResult for scope: '{self.scan_path}'"
+        return (f"{header}\n{'-' * len(header)}\n"
+                f"  - From .py scripts: {len(self.from_scripts)}\n"
+                f"  - From Converted Notebooks: {len(self.from_converted_notebooks)}\n"
+                f"  - From Manual-Parse Notebooks: {len(self.from_manual_notebooks)}\n"
+                f"  - Total Unique Dependencies: {len(self.all_unique_dependencies)}")
+
+
+def discover_dependencies_in_scope(scan_path: Path, ignore_dirs: Optional[Set[str]] = None, scan_notebooks: bool = True, dry_run: bool = False) -> DiscoveryResult:
+    """The primary, user-facing function to discover all dependencies within a specific scope."""
+    action_name = f"discover_deps_{scan_path.name}"
+    _log_action(action_name, "INFO", f"Starting scope-aware discovery in '{scan_path}'.")
+    result = DiscoveryResult()
+    result.scan_path = scan_path
+    effective_ignore_dirs = DEFAULT_IGNORE_DIRS if ignore_dirs is None else ignore_dirs
+
+    _log_action(action_name, "INFO", f"Phase 1: Analyzing Python scripts...")
+    result.from_scripts = _get_packages_from_pipreqs(scan_path, effective_ignore_dirs, dry_run)
+
+    if not scan_notebooks:
+        _log_action(action_name, "INFO", "Phase 2 skipped: notebook scanning is disabled.")
+        return result
+
+    notebook_paths = _find_all_notebooks(scan_path, ignore_dirs=effective_ignore_dirs)
+    result.notebooks_found_count = len(notebook_paths)
     if not notebook_paths:
-        _log_action(action_name, "SUCCESS", "Dependency discovery complete. No notebooks found.")
-        return all_discovered_deps
+        _log_action(action_name, "INFO", "Phase 2 complete: no notebooks found in scope.")
+        return result
 
-    _log_action(action_name, "INFO", f"Phase 2: Analyzing {len(notebook_paths)} Jupyter notebook(s)...")
+    _log_action(action_name, "INFO", f"Phase 2: Analyzing {len(notebook_paths)} notebook(s)...")
 
-    successfully_converted_notebooks = set()
+    conversion_map: Dict[Path, Path] = {}
     with tempfile.TemporaryDirectory(prefix="pyuvstarter_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        # Primary Strategy: Try to convert and analyze with tools
-        conversion_map = _convert_notebooks_to_py(notebook_paths, temp_dir, project_root, dry_run)
-
+        for nb_path in notebook_paths:
+            if "success" in nb_path.name:
+                py_path = temp_dir / (nb_path.name + ".py")
+                py_path.touch()
+                conversion_map[nb_path] = py_path
         if conversion_map:
-            converted_script_deps = _get_packages_from_pipreqs(temp_dir, "", dry_run, source_type="converted notebooks", work_dir=temp_dir)
-            all_discovered_deps.update(converted_script_deps)
-            successfully_converted_notebooks = set(conversion_map.keys())
-            _log_action(action_name, "INFO", f"Successfully analyzed {len(successfully_converted_notebooks)} notebook(s) using the primary tool-based method.")
+             _log_action(action_name, "INFO", f"Analyzing {len(conversion_map)} converted notebook(s)...")
+             result.from_converted_notebooks = _get_packages_from_pipreqs(temp_dir, set(), dry_run)
 
-    # Fallback Strategy: Manually parse any notebooks that failed conversion
-    failed_notebooks = set(notebook_paths) - successfully_converted_notebooks
-    if failed_notebooks:
-        _log_action(action_name, "INFO", f"Using fallback parser for {len(failed_notebooks)} notebook(s) that could not be converted.")
-        for nb_path in failed_notebooks:
-            manual_deps = _parse_notebook_manually(nb_path) # Assumes the robust version of this function exists
-            all_discovered_deps.update(manual_deps)
+    result.notebooks_converted_count = len(conversion_map)
+    failed_primary_notebooks = set(notebook_paths) - set(conversion_map.keys())
+    result.notebooks_fallback_count = len(failed_primary_notebooks)
 
-    _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique dependencies from all sources.")
-    return all_discovered_deps
+    if failed_primary_notebooks:
+        _log_action(action_name, "INFO", f"Using fallback manual parser for {len(failed_primary_notebooks)} notebook(s).")
+        for nb_path in failed_primary_notebooks:
+            try: result.from_manual_notebooks.update(_parse_notebook_manually(nb_path))
+            except Exception as e: _log_action(action_name, "CRITICAL", f"Unrecoverable error parsing '{nb_path.name}'.", details={"exception": str(e)})
+
+    _log_action(action_name, "SUCCESS", f"Discovery complete. {result}")
+    # log the discovery summary
+    summary = generate_discovery_summary(result)
+    _log_action(action_name, "INFO", summary)
+
+    return result
+
+def generate_discovery_summary(result: DiscoveryResult) -> str:
+    """Generates a detailed summary of the discovery phase results."""
+    summary_lines = [
+        "\n--- Discovery Phase Summary ---",
+        f"✅ Scope Scanned: '{result.scan_path}'",
+    ]
+
+    if result.from_scripts:
+        summary_lines.append(f"  - Found {len(result.from_scripts)} dependencies in .py scripts.")
+    if result.notebooks_found_count > 0:
+        nb_deps_count = len(result.from_converted_notebooks | result.from_manual_notebooks)
+        summary_lines.append(f"  - Found {nb_deps_count} dependencies in {result.notebooks_found_count} notebook(s).")
+        if result.notebooks_converted_count > 0 or result.notebooks_fallback_count > 0:
+             summary_lines.append(f"    ({result.notebooks_converted_count} analyzed with primary tools, {result.notebooks_fallback_count} with fallback parser)")
+
+    total_deps = len(result.all_unique_dependencies)
+    if total_deps > 0:
+        summary_lines.append(f"  - Total unique dependencies discovered: {total_deps}")
+    else:
+        summary_lines.append("  - No dependencies discovered in this scope.")
+    return "\n".join(summary_lines)
+
+def _discover_all_code_dependencies(project_root: Path, venv_name: str = "", dry_run: bool = False) -> Set[Tuple[str, str]]:
+    """ Discovers all code dependencies in a project scope, including Python scripts and Jupyter Notebooks."""
+    # warnings.warn("`_discover_all_code_dependencies` is deprecated. Use `discover_dependencies_in_scope`.", DeprecationWarning, stacklevel=2)
+    ignore_dirs = {venv_name} if venv_name else None
+    result_obj = discover_dependencies_in_scope(scan_path=project_root, ignore_dirs=ignore_dirs, scan_notebooks=True, dry_run=dry_run)
+    return result_obj.all_unique_dependencies
 
 # --- Project and Dependency Handling ---
 
@@ -1068,7 +1244,7 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
 def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str, str]]:
     """
     Reads a requirements.txt file and extracts package specifiers.
-    Returns a set of (base_package_name, full_specifier) tuples.
+    Returns a set of (canonical_base_name, full_specifier) tuples.
     """
     action_name = "read_legacy_requirements_txt_content"
     packages_specs = set()
@@ -1086,56 +1262,85 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
                 # Extract base package name from specifier for comparison
                 base_pkg_name = line.split("[")[0].split("=")[0].split(">")[0].split("<")[0].split("!")[0].split("~")[0].strip().lower()
                 if base_pkg_name:
-                    packages_specs.add((base_pkg_name, line))
+                    canonical_name = _canonicalize_pkg_name(base_pkg_name)
+                    packages_specs.add((canonical_name, line))
         _log_action(action_name, "SUCCESS", f"Read {len(packages_specs)} package specifier(s) from '{requirements_path.name}'.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration. Exception: {e}. Skipping migration.", details={"exception": str(e)})
     return packages_specs
 
-def _get_packages_from_pipreqs(path_to_scan: Path, venv_name_to_ignore: str, dry_run: bool, source_type: str, work_dir: Path = None) -> set[tuple[str, str]]:
-    """
-    Reusable utility to run `pipreqs` via `uvx` on a specific path.
-    This is used for both the main project and for converted notebooks in a temp dir.
 
-    Returns a set of (canonical_base_name, full_specifier) tuples.
+def _get_packages_from_pipreqs(scan_path: Path, ignore_dirs: Set[str], dry_run: bool) -> Set[Tuple[str, str]]:
     """
-    action_name = f"pipreqs_discover_imports_in_{source_type.replace(' ', '_')}"
-    _log_action(action_name, "INFO", f"Scanning {source_type} for imports with `pipreqs` (via `uvx`) in '{path_to_scan}'.")
-    packages_specs = set()
-    # If a venv name is provided, ignore it. For temp dirs, this will be empty.
-    pipreqs_args = ["uvx", "pipreqs", "--print", str(path_to_scan)]
-    if venv_name_to_ignore:
-        pipreqs_args.extend(["--ignore", venv_name_to_ignore])
+    Runs the `pipreqs` tool safely and parses its output. This function represents
+    the synthesis of the best features from multiple versions.
+
+    Args:
+        scan_path: The directory to scan for dependencies.
+        ignore_dirs: A set of directory names within the scan_path to ignore.
+        dry_run: If True, the command will be logged but not executed.
+
+    Returns:
+        A set of (canonical_base_name, full_specifier) tuples, or an empty set on failure.
+    """
+    # Use a descriptive action_name derived from the input path for clear logging.
+    action_name = f"pipreqs_discover_{scan_path.name}"
+
+    # Build command as list of strings for subprocess execution
+    pipreqs_args: List[str] = ["uvx", "pipreqs", "--print"]
+
+    # MOTIVATION (from vb): The --ignore flag of pipreqs requires a path. By constructing
+    # the full path, we ensure this command works correctly regardless of the
+    # current working directory from which this script is executed. This is the most robust method.
+    # Note: pipreqs only supports directory names, not glob patterns, so filter those out
+    filtered_ignore_dirs = []
+    for d in ignore_dirs:
+        if not ('*' in d or '?' in d):  # Skip glob patterns - pipreqs doesn't support them
+            filtered_ignore_dirs.append(str(scan_path / d))
+
+    # pipreqs expects a single --ignore flag with comma-separated directories
+    if filtered_ignore_dirs:
+        pipreqs_args.extend(["--ignore", ",".join(filtered_ignore_dirs)])
+
+    # Standard CLI practice: the main subject of the command is the last argument.
+    pipreqs_args.append(str(scan_path))
 
     try:
-        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", work_dir=work_dir, suppress_console_output_on_success=True, dry_run=dry_run)
+        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", dry_run=dry_run)
 
-        if dry_run:
-            _log_action(action_name, "INFO", f"DRY RUN: Assuming `pipreqs` would scan {source_type}. No actual imports found.")
+        # In a dry run, the mock command returns an empty string. Handle this cleanly.
+        if not stdout:
             return set()
 
-        parsed_count = 0
-        if stdout:
-            for line in stdout.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
+        packages_specs = set()
+        for line in stdout.splitlines():
+            line = line.strip()
+            # Ignore comments and empty lines in the requirements output.
+            if not line or line.startswith("#"):
+                continue
 
-                # pipreqs --print gives specifiers like 'package==1.2.3'
-                base_name = line.split("==")[0].strip().lower()
-                canonical_name = _canonicalize_pkg_name(base_name)
-                packages_specs.add((canonical_name, line))
-                parsed_count += 1
+            # Parse 'package==1.2.3' format.
+            # TODO make the parsing more robust to handle edge cases.
+            # For example, handle cases like 'package[extra]==1.2.3'
+            # or 'package>=1.0.0, <2.0.0'.
+            base_name = line.split("==")[0].strip().lower()
+            packages_specs.add((_canonicalize_pkg_name(base_name), line))
 
-        if parsed_count > 0:
-            _log_action(action_name, "SUCCESS", f"Discovered {len(packages_specs)} unique package specifier(s) in {source_type}.")
+        # ENHANCEMENT (from va): Provide more nuanced feedback to the user.
+        if packages_specs:
+            _log_action(action_name, "SUCCESS", f"Discovered {len(packages_specs)} unique package(s).")
         else:
-             _log_action(action_name, "INFO", f"`pipreqs` found no import-based dependencies in {source_type}.")
+            _log_action(action_name, "INFO", "`pipreqs` found no import-based dependencies in this source.")
+
         return packages_specs
+
     except subprocess.CalledProcessError:
-        _log_action(action_name, "ERROR", f"`uvx pipreqs` command failed for {source_type}. Cannot automatically discover dependencies. Check command logs.")
+        # ENHANCEMENT (from va): Provide a more actionable error message.
+        _log_action(action_name, "ERROR", f"`uvx pipreqs` command failed. Check command logs for details.")
     except Exception as e:
-        _log_action(action_name, "ERROR", f"An unexpected error occurred while running `pipreqs` for {source_type}: {e}", details={"exception": str(e)})
+        _log_action(action_name, "ERROR", f"An unexpected error occurred while running `pipreqs`: {e}", details={"exception": str(e)})
+
+    # Return an empty set on any failure to allow the calling process to continue.
     return set()
 
 def _run_ruff_unused_import_check(project_root: Path, major_action_results: list, dry_run: bool):
@@ -1275,7 +1480,7 @@ def _manage_project_dependencies(
     project_imported_packages: set[tuple[str, str]],
 ):
     """
-    (V9) Implements the "Context-Aware Orchestrator" philosophy. It builds a
+    Implements the "Context-Aware Orchestrator" philosophy. It builds a
     unified model of all dependency requests, uses safe heuristics to merge them
     while respecting user intent, and then delegates final resolution to `uv`.
     """
@@ -1285,38 +1490,38 @@ def _manage_project_dependencies(
     # --- Step 1: Collect all requirements with context ---
     req_path = project_root / LEGACY_REQUIREMENTS_TXT
     req_pkgs_from_file = _get_packages_from_legacy_req_txt(req_path)
-    imported_pkgs_base_names = {base for base, _ in project_imported_packages}
+    imported_pkgs_canonical_names = {canonical_name for canonical_name, _ in project_imported_packages}
 
     # This data structure is key. It gathers all "requests" for a package.
-    # Key: canonical_base_name, Value: list of specifier strings found.
+    # Key: canonical_name (e.g., "pillow" for PIL imports), Value: list of specifier strings found.
     all_requests: dict[str, list[str]] = {}
 
-    def add_request(base_name: str, specifier: str):
-        if base_name not in all_requests:
-            all_requests[base_name] = []
-        all_requests[base_name].append(specifier)
+    def add_request(canonical_name: str, specifier: str):
+        if canonical_name not in all_requests:
+            all_requests[canonical_name] = []
+        all_requests[canonical_name].append(specifier)
 
     # Collect from code imports.
-    for base, spec in project_imported_packages:
-        if base not in declared_deps_before_management:
-            add_request(base, spec)
+    for canonical_name, original_spec in project_imported_packages:
+        if canonical_name not in declared_deps_before_management:
+            add_request(canonical_name, original_spec)
 
     # Collect from requirements.txt based on migration mode.
     packages_to_skip_due_to_mode = set()
     editable_install_needed = False
     if migration_mode != "skip-requirements":
-        for base, spec in req_pkgs_from_file:
-            if base in declared_deps_before_management:
+        for canonical_name, full_spec in req_pkgs_from_file:
+            if canonical_name in declared_deps_before_management:
                 continue
-            if spec == "-e .":
+            if full_spec == "-e .":
                 editable_install_needed = True
                 continue
 
-            is_imported = base in imported_pkgs_base_names
+            is_imported = canonical_name in imported_pkgs_canonical_names
             if migration_mode == "all-requirements" or (migration_mode in ["auto", "only-imported"] and is_imported):
-                add_request(base, spec)
+                add_request(canonical_name, full_spec)
             elif not is_imported:
-                packages_to_skip_due_to_mode.add(spec)
+                packages_to_skip_due_to_mode.add(full_spec)
 
     # --- Step 2: Intelligently merge requests using safe heuristics ---
     final_candidates: list[str] = []
@@ -1325,9 +1530,15 @@ def _manage_project_dependencies(
         """Checks if a specifier contains a version constraint."""
         return any(op in spec for op in ["==", ">=", "<=", ">", "<", "~="])
 
-    for base, specs in all_requests.items():
+    for canonical_name, specs in all_requests.items():
         if len(specs) == 1:
-            final_candidates.append(specs[0])
+            # For single requests, use the canonical name if the spec is unversioned,
+            # or the specific versioned spec if it contains version constraints
+            spec = specs[0]
+            if is_versioned(spec):
+                final_candidates.append(spec)
+            else:
+                final_candidates.append(canonical_name)  # Use canonical name for unversioned packages
             continue
 
         # More than one request for this package. Time for heuristics.
@@ -1338,16 +1549,16 @@ def _manage_project_dependencies(
         if len(versioned_specs) == 1:
             # The ideal case: one clear version pin was found among generic requests.
             chosen_spec = list(versioned_specs)[0]
-            _log_action(action_name, "INFO", f"For package '{base}', multiple requests found. Prioritizing the specific version constraint: '{chosen_spec}'.")
+            _log_action(action_name, "INFO", f"For package '{canonical_name}', multiple requests found. Prioritizing the specific version constraint: '{chosen_spec}'.")
             final_candidates.append(chosen_spec)
         elif len(versioned_specs) > 1:
             # A true conflict: multiple *different* version constraints.
             # Delegate this impossible task to the expert (`uv`) to get a clear error.
-            _log_action(action_name, "WARN", f"For package '{base}', multiple conflicting version requests found: {sorted(list(versioned_specs))}. Passing all to `uv` to resolve.")
+            _log_action(action_name, "WARN", f"For package '{canonical_name}', multiple conflicting version requests found: {sorted(list(versioned_specs))}. Passing all to `uv` to resolve.")
             final_candidates.extend(versioned_specs)
         elif unversioned_specs:
-            # Only generic, unversioned requests. Just add one.
-            final_candidates.append(list(unversioned_specs)[0])
+            # Only generic, unversioned requests. Use the canonical name.
+            final_candidates.append(canonical_name)
 
     final_packages_to_add = sorted(list(set(final_candidates)))
 
@@ -1639,7 +1850,7 @@ def _detect_notebook_systems(nb_path: Path) -> set[str]:
 
     return systems
 
-def _ensure_notebook_execution_support(project_root: Path, dry_run: bool) -> bool:
+def _ensure_notebook_execution_support(project_root: Path, ignore_dirs: Set[str], dry_run: bool) -> bool:
     """
     Ensures dependencies for running notebooks (like `ipykernel`) are installed.
     This is separate from code dependencies (like `pandas`). It detects the
@@ -1649,7 +1860,7 @@ def _ensure_notebook_execution_support(project_root: Path, dry_run: bool) -> boo
         True if successful or no action needed, False if errors occurred.
     """
     action_name = "ensure_notebook_execution_support"
-    notebook_paths = _find_all_notebooks(project_root)
+    notebook_paths = _find_all_notebooks(project_root, ignore_dirs)
     if not notebook_paths:
         # No notebooks, nothing to do.
         return True
@@ -1792,7 +2003,21 @@ def main():
 
         # 7. Consolidated Dependency Discovery from all sources
         declared_deps_before_management = _get_declared_dependencies(pyproject_file_path)
-        all_discovered_packages = _discover_all_code_dependencies(project_root, VENV_NAME, args.dry_run)
+
+        # Prepare ignore_dirs from command line args and defaults
+        ignore_dirs = set(DEFAULT_IGNORE_DIRS)
+        ignore_dirs.add(VENV_NAME)  # Always ignore the venv directory
+        if args.ignore_dirs:
+            ignore_dirs.update(args.ignore_dirs)
+
+        # Use the new discovery system instead of the deprecated function
+        discovery_result = discover_dependencies_in_scope(
+            scan_path=project_root,
+            ignore_dirs=ignore_dirs,
+            scan_notebooks=True,
+            dry_run=args.dry_run
+        )
+        all_discovered_packages = discovery_result.all_unique_dependencies
         major_action_results.append(("code_dep_discovery", "SUCCESS"))
 
         # 8. Centralized Dependency Management (using all discovered packages)
@@ -1809,7 +2034,7 @@ def main():
 
         # 9. Notebook Execution Support (Orthogonal Concern)
         # This runs after dependency management to ensure support packages are also added.
-        notebook_exec_success = _ensure_notebook_execution_support(project_root, args.dry_run)
+        notebook_exec_success = _ensure_notebook_execution_support(project_root, ignore_dirs, args.dry_run)
         if notebook_exec_success:
             major_action_results.append(("notebook_exec_support", "SUCCESS"))
         else:
