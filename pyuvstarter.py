@@ -825,62 +825,50 @@ def _parse_install_tokens(tokens: list[str]) -> set[tuple[str, str]]:
 
 def _discover_all_code_dependencies(project_root: Path, venv_name: str, dry_run: bool) -> set[tuple[str, str]]:
     """
-    Facade function to discover all code dependencies from `.py` and `.ipynb` files.
-    This is the new, consolidated entry point for all dependency discovery.
-
-    Returns:
-        A set of (canonical_base_name, full_specifier) tuples.
+    Facade function to discover all dependencies using a hybrid strategy:
+    1. Analyzes .py files with pipreqs.
+    2. Attempts to convert .ipynb files and analyze with pipreqs (Primary).
+    3. For any notebooks that fail conversion, it uses a robust manual parser (Fallback).
     """
     action_name = "discover_all_code_dependencies"
-    _log_action(action_name, "INFO", "Starting comprehensive dependency discovery from all sources (.py, .ipynb).")
+    _log_action(action_name, "INFO", "Starting comprehensive dependency discovery from all sources.")
     all_discovered_deps = set()
 
-    # Discover dependencies from standard Python scripts first.
-    _log_action(action_name, "INFO", "Phase 1: Analyzing Python scripts (.py files) for imports...")
+    # Phase 1: Analyze Python scripts
+    _log_action(action_name, "INFO", "Phase 1: Analyzing Python scripts (.py files)...")
     script_deps = _get_packages_from_pipreqs(project_root, venv_name, dry_run, source_type="Python scripts")
     all_discovered_deps.update(script_deps)
-    _log_action(action_name, "INFO", f"Found {len(script_deps)} dependencies from Python scripts.")
+    _log_action(action_name, "INFO", f"Found {len(script_deps)} dependencies in .py files.")
 
-    # Now, handle notebooks.
+    # Phase 2: Hybrid Notebook Analysis
     notebook_paths = _find_all_notebooks(project_root)
     if not notebook_paths:
-        _log_action(action_name, "INFO", "No Jupyter notebooks (.ipynb) found in project.")
-        _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique dependencies from Python scripts.")
+        _log_action(action_name, "SUCCESS", "Dependency discovery complete. No notebooks found.")
         return all_discovered_deps
 
-    _log_action(action_name, "INFO", f"Phase 2: Analyzing {len(notebook_paths)} Jupyter notebook(s) for dependencies...")
+    _log_action(action_name, "INFO", f"Phase 2: Analyzing {len(notebook_paths)} Jupyter notebook(s)...")
 
-    # Primary strategy: convert to .py and use pipreqs.
-    notebook_deps_found_via_tools = set()
+    successfully_converted_notebooks = set()
     with tempfile.TemporaryDirectory(prefix="pyuvstarter_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        # Attempt to convert all notebooks and track precisely which ones succeed.
-        _log_action(action_name, "INFO", "Attempting tool-based analysis (jupyter nbconvert + pipreqs)...")
+        # Primary Strategy: Try to convert and analyze with tools
         conversion_map = _convert_notebooks_to_py(notebook_paths, temp_dir, project_root, dry_run)
 
         if conversion_map:
-            # If conversion was successful for some notebooks, run pipreqs on the temporary directory.
-            # We ignore venv_name here as it's not relevant for a clean temp dir.
-            notebook_deps_found_via_tools = _get_packages_from_pipreqs(temp_dir, "", dry_run, source_type="converted notebooks", work_dir=temp_dir)
-            all_discovered_deps.update(notebook_deps_found_via_tools)
+            converted_script_deps = _get_packages_from_pipreqs(temp_dir, "", dry_run, source_type="converted notebooks", work_dir=temp_dir)
+            all_discovered_deps.update(converted_script_deps)
+            successfully_converted_notebooks = set(conversion_map.keys())
+            _log_action(action_name, "INFO", f"Successfully analyzed {len(successfully_converted_notebooks)} notebook(s) using the primary tool-based method.")
 
-            _log_action(action_name, "SUCCESS", f"Tool-based analysis: {len(conversion_map)} notebook(s) processed, {len(notebook_deps_found_via_tools)} dependencies found.")
+    # Fallback Strategy: Manually parse any notebooks that failed conversion
+    failed_notebooks = set(notebook_paths) - successfully_converted_notebooks
+    if failed_notebooks:
+        _log_action(action_name, "INFO", f"Using fallback parser for {len(failed_notebooks)} notebook(s) that could not be converted.")
+        for nb_path in failed_notebooks:
+            manual_deps = _parse_notebook_manually(nb_path) # Assumes the robust version of this function exists
+            all_discovered_deps.update(manual_deps)
 
-    # Fallback strategy: Deterministic fallback for the exact set of failed notebooks
-    # Calculate which notebooks failed conversion by taking the difference
-    successfully_processed_notebooks = set(conversion_map.keys()) if conversion_map else set()
-    notebooks_to_manually_parse = set(notebook_paths) - successfully_processed_notebooks
-
-    if notebooks_to_manually_parse:
-        _log_action(action_name, "INFO", f"Fallback analysis: Processing {len(notebooks_to_manually_parse)} notebook(s) that couldn't be converted...")
-        fallback_deps_count = 0
-        for nb_path in notebooks_to_manually_parse:
-            fallback_deps = _parse_notebook_manually(nb_path)
-            all_discovered_deps.update(fallback_deps)
-            fallback_deps_count += len(fallback_deps)
-        _log_action(action_name, "SUCCESS", f"Fallback analysis: {len(notebooks_to_manually_parse)} notebook(s) processed, {fallback_deps_count} additional dependencies found.")
-
-    _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique dependencies from all sources (scripts + notebooks).")
+    _log_action(action_name, "SUCCESS", f"Dependency discovery complete. Found {len(all_discovered_deps)} unique dependencies from all sources.")
     return all_discovered_deps
 
 # --- Project and Dependency Handling ---
