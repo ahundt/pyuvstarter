@@ -106,6 +106,7 @@ find ~/.local/share/uv/tools ~/.cache/uv ~/.local/lib ~/.pyenv .venv -iname 'pyu
 
 import sys
 import json
+import os
 import shutil
 import subprocess
 import importlib
@@ -302,7 +303,7 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
     print(f"{console_prefix}: ({action_name}) {message}{details_str}")
 
 
-def _get_next_steps_text(project_root: Path = Path.cwd()) -> str:
+def _get_next_steps_text(project_root: Path) -> str:
     """
     Generates context-aware 'Next Steps' guidance text.
 
@@ -328,7 +329,7 @@ def _get_next_steps_text(project_root: Path = Path.cwd()) -> str:
     return "Next Steps:\n" + "\n".join(steps)
 
 
-def _save_log(log_file_path: Path, project_root: Path = Path.cwd()):
+def _save_log(log_file_path: Path, project_root: Path):
     """Saves the accumulated log data to a JSON file."""
     global _log_data_global
     _log_data_global["end_time_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -368,9 +369,12 @@ def _run_command(command_list: list[str], action_log_name: str, work_dir: Path =
     Returns (stdout_str, stderr_str) if capture_output is True.
     If capture_output is False, stdout/stderr will be empty strings, and output streams to console.
     If dry_run is True, logs the command but does not execute it.
+
+    Note: Since the main() function changes the CWD to project_root, work_dir defaults to
+    the project root directory, making command execution safe and consistent.
     """
     if work_dir is None:
-        work_dir = Path.cwd()
+        work_dir = Path.cwd()  # This is now the project_root directory
     cmd_str = ' '.join(command_list) if isinstance(command_list, list) else command_list
 
     if dry_run:
@@ -659,7 +663,7 @@ def _find_all_notebooks(project_root: Path) -> list[Path]:
     """Recursively finds all .ipynb files in the project, ignoring the venv directory."""
     return [p for p in project_root.rglob("*.ipynb") if VENV_NAME not in p.parts]
 
-def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, dry_run: bool) -> dict[Path, Path]:
+def _convert_notebooks_to_py(notebook_paths: list[Path], temp_dir: Path, project_root: Path, dry_run: bool) -> dict[Path, Path]:
     """
     Converts notebooks to .py scripts, returning a map of original to converted paths for precise failure tracking.
 
@@ -852,12 +856,12 @@ def _discover_all_code_dependencies(project_root: Path, venv_name: str, dry_run:
         temp_dir = Path(temp_dir_str)
         # Attempt to convert all notebooks and track precisely which ones succeed.
         _log_action(action_name, "INFO", "Attempting tool-based analysis (jupyter nbconvert + pipreqs)...")
-        conversion_map = _convert_notebooks_to_py(notebook_paths, temp_dir, dry_run)
+        conversion_map = _convert_notebooks_to_py(notebook_paths, temp_dir, project_root, dry_run)
 
         if conversion_map:
             # If conversion was successful for some notebooks, run pipreqs on the temporary directory.
             # We ignore venv_name here as it's not relevant for a clean temp dir.
-            notebook_deps_found_via_tools = _get_packages_from_pipreqs(temp_dir, "", dry_run, source_type="converted notebooks")
+            notebook_deps_found_via_tools = _get_packages_from_pipreqs(temp_dir, "", dry_run, source_type="converted notebooks", work_dir=temp_dir)
             all_discovered_deps.update(notebook_deps_found_via_tools)
 
             _log_action(action_name, "SUCCESS", f"Tool-based analysis: {len(conversion_map)} notebook(s) processed, {len(notebook_deps_found_via_tools)} dependencies found.")
@@ -1100,7 +1104,7 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
         _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration. Exception: {e}. Skipping migration.", details={"exception": str(e)})
     return packages_specs
 
-def _get_packages_from_pipreqs(path_to_scan: Path, venv_name_to_ignore: str, dry_run: bool, source_type: str) -> set[tuple[str, str]]:
+def _get_packages_from_pipreqs(path_to_scan: Path, venv_name_to_ignore: str, dry_run: bool, source_type: str, work_dir: Path = None) -> set[tuple[str, str]]:
     """
     Reusable utility to run `pipreqs` via `uvx` on a specific path.
     This is used for both the main project and for converted notebooks in a temp dir.
@@ -1116,7 +1120,7 @@ def _get_packages_from_pipreqs(path_to_scan: Path, venv_name_to_ignore: str, dry
         pipreqs_args.extend(["--ignore", venv_name_to_ignore])
 
     try:
-        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", suppress_console_output_on_success=True, dry_run=dry_run)
+        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", work_dir=work_dir, suppress_console_output_on_success=True, dry_run=dry_run)
 
         if dry_run:
             _log_action(action_name, "INFO", f"DRY RUN: Assuming `pipreqs` would scan {source_type}. No actual imports found.")
@@ -1390,14 +1394,14 @@ def _manage_project_dependencies(
         try:
             # Stage 1: Try bulk add for efficiency (v7.3 hybrid strategy)
             _log_action(action_name, "INFO", "Attempting a fast bulk-add operation...")
-            _run_command(["uv", "add"] + packages_to_add_specs_only, "uv_add_bulk", work_dir=project_root)
+            _run_command(["uv", "add"] + packages_to_add_specs_only, "uv_add_bulk")
             successfully_added_specs.extend(packages_to_add_specs_only)
         except Exception:
             # Stage 2: Individual fallback for robustness
             _log_action(action_name, "WARN", "Bulk 'uv add' failed. Falling back to adding packages individually for robustness.")
             for base, spec in final_packages_to_add:
                 try:
-                    _run_command(["uv", "add", spec], f"uv_add_individual_{base}", work_dir=project_root)
+                    _run_command(["uv", "add", spec], f"uv_add_individual_{base}")
                     successfully_added_specs.append(spec)
                 except Exception:
                     failed_to_add_specs.append(spec)
@@ -1709,7 +1713,7 @@ def _ensure_notebook_execution_support(project_root: Path, dry_run: bool) -> boo
         else:
             try:
                 # Use a single `uv add` command for efficiency.
-                _run_command(["uv", "add"] + sorted(list(packages_to_add)), f"{action_name}_uv_add", work_dir=project_root)
+                _run_command(["uv", "add"] + sorted(list(packages_to_add)), f"{action_name}_uv_add")
                 _log_action(action_name, "SUCCESS", f"Successfully added notebook execution packages: {sorted(list(packages_to_add))}")
                 return True
             except Exception as e:
@@ -1729,6 +1733,14 @@ def main():
         _log_action("show_version", "INFO", f"pyuvstarter version: {version}")
         sys.exit(0)
     project_root = Path(args.project_dir).expanduser().resolve()
+
+    # Change to project root directory for consistent, safe operation
+    # This ensures all file operations and commands work relative to the project root
+    original_cwd = Path.cwd()
+    if original_cwd != project_root:
+        _log_action("change_directory", "INFO", f"Changing working directory from {original_cwd} to {project_root}")
+        os.chdir(project_root)
+
     log_file_path = project_root / JSON_LOG_FILE_NAME
     _init_log(project_root)
 
