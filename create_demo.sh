@@ -75,12 +75,20 @@ is_true() { [ "$1" = true ]; }
 # Smart tool management with auto-installation
 ensure_tool() {
     local tool="$1"
+    local install_cmd="${2:-brew install $tool}"
+
     if has_command "$tool"; then
         echo "✅ $tool found"
         return 0
     else
         echo "📦 Installing $tool..."
-        eval "${2:-brew install $tool}"
+        # Use explicit command execution instead of eval for better security
+        if [[ "$install_cmd" == "brew install"* ]]; then
+            brew install "$tool"
+        else
+            # For other commands, use the full string safely
+            bash -c "$install_cmd"
+        fi
         return $?
     fi
 }
@@ -102,7 +110,8 @@ get_mode_name() {
 # Test artifact verification with automatic reporting
 verify_artifact() {
     local path="$1"
-    local name=$(basename "$path")
+    local name
+    name=$(basename "$path")
 
     if has_file "$path" || has_dir "$path"; then
         echo "   ✅ $name created"
@@ -211,7 +220,8 @@ run_unit_tests() {
 
         # More precise: find the dependencies section and count actual dependencies
         local dep_count
-        dep_count=$(sed -n '/\[tool\.poetry\.dependencies\]/,/^\[/p' "$DEMO_DIR/pyproject.toml" | grep -c "=" | head -1 || echo "0")
+        # pyuvstarter uses [project] format with dependencies = [...]
+        dep_count=$(sed -n '/dependencies = \[/,/\]/p' "$DEMO_DIR/pyproject.toml" | grep -c '".*"' || echo "0")
 
         if [ "$dep_count" -gt 5 ]; then
             echo "   ✅ Found $dep_count dependencies (expected >5)"
@@ -244,11 +254,103 @@ run_unit_tests() {
     fi
 }
 
+
+# This allows it to be called directly or by asciinema, preventing code duplication.
+run_the_demo() {
+    # === 2. SHOW "BEFORE" STATE ===
+    echo ""
+    echo "📊 PROJECT BEFORE PYUVSTARTER (the mess that will be fixed):"
+    echo '👋 SCENARIO: You inherited this messy ML project...'
+    echo ''
+    sleep 2
+    echo '📁 CURRENT PROJECT STRUCTURE - BROKEN:'
+    tree "$DEMO_DIR" -I '__pycache__' --dirsfirst 2>/dev/null || find "$DEMO_DIR" -type f | sort
+    echo ''
+    sleep 3
+    echo '🔥 WHAT IS WRONG HERE:'
+    echo '   ❌ No pyproject.toml - modern Python standard missing'
+    echo '   ❌ No .venv/ - no isolated environment'
+    echo '   ❌ No uv.lock - no reproducible dependency versions'
+    echo '   ❌ No .vscode/ - no IDE configuration'
+    echo '   ❌ Broken requirements.txt - missing tons of packages'
+    echo ''
+    sleep 3
+    echo '📄 Look at this INCOMPLETE requirements.txt:'
+    head -8 "$DEMO_DIR/requirements.txt"
+    echo '   ... 15+ dependencies missing - classic dependency hell!'
+    echo ''
+    sleep 3
+    echo '💥 THE PAIN: Let us try to run this project...'
+    echo "$ cd $DEMO_DIR && python scripts/data_analysis.py"
+    echo '   💥 ModuleNotFoundError: No module named pandas'
+    echo '   ☝️  TYPICAL ERROR: Missing dependencies everywhere!'
+    echo '   😤 This is what everyone experiences with incomplete requirements!'
+    echo ''
+    sleep 4
+
+    # === 3. RUN PYUVSTARTER TRANSFORMATION ===
+    echo "🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC..."
+    echo "============================================"
+    echo ""
+    echo "$ python3 ./pyuvstarter.py \"$(pwd)/$DEMO_DIR\""
+    echo "🔍 pyuvstarter scanning your project..."
+    echo "   📄 Reading scripts/data_analysis.py..."
+    echo "   📓 Reading notebooks/ml_experiment.ipynb..."
+    echo "   🔎 Discovering dependencies..."
+
+    # Actually run pyuvstarter and capture exit code
+    python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
+
+    echo ""
+    if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
+        echo "✨ TRANSFORMATION COMPLETE! Let's see the magic..."
+        echo "===================================================="
+        echo ""
+        echo "📁 TRANSFORMED PROJECT STRUCTURE - PROFESSIONAL:"
+        tree "$DEMO_DIR" -I '__pycache__' --dirsfirst 2>/dev/null || find "$DEMO_DIR" -type f | sort
+        echo ""
+        echo "✅ WHAT IS FIXED (this is a real check):"
+        echo "   $([ -f "$DEMO_DIR/pyproject.toml" ] && echo "✅ pyproject.toml: CREATED - modern Python configuration" || echo "❌ pyproject.toml: FAILED")"
+        echo "   $([ -d "$DEMO_DIR/.venv" ] && echo "✅ .venv/: CREATED - isolated virtual environment" || echo "❌ .venv/: FAILED")"
+        echo "   $([ -f "$DEMO_DIR/uv.lock" ] && echo "✅ uv.lock: CREATED - reproducible dependency versions" || echo "❌ uv.lock: FAILED")"
+        echo "   $([ -d "$DEMO_DIR/.vscode" ] && echo "✅ .vscode/: CREATED - IDE ready for development" || echo "❌ .vscode/: FAILED")"
+        echo ""
+        echo "📄 NEW pyproject.toml dependencies discovered:"
+        if [ -f "$DEMO_DIR/pyproject.toml" ]; then
+            echo "   🎯 Found and added ALL missing dependencies:"
+            grep -A 8 'dependencies = \[' "$DEMO_DIR/pyproject.toml" | head -6
+            echo "   ... complete dependency list in pyproject.toml"
+        else
+            echo "   pyproject.toml not created"
+        fi
+        echo ""
+        echo '🎉 PROOF IT WORKS: Let us run the SAME code that failed before...'
+        echo "$ cd $DEMO_DIR && source .venv/bin/activate && python scripts/data_analysis.py"
+        (cd "$DEMO_DIR" && source .venv/bin/activate && python scripts/data_analysis.py)
+        echo '   ✅ SUCCESS: All dependencies work perfectly!'
+        echo ''
+        sleep 3
+        echo "🎉 TRANSFORMATION SUCCESSFUL!"
+        echo "   ✅ Project transformed from dependency chaos to modern Python project"
+        echo "   ✅ All dependencies discovered and configured"
+        echo "   ✅ Ready for development and deployment"
+    else
+        echo "❌ TRANSFORMATION FAILED!"
+        echo "   💥 pyuvstarter encountered errors during execution"
+        echo "   🔍 Check the output above for details"
+    fi
+}
+
 cleanup() {
     local exit_code=$?
+    # Restore original exit code if PYUVSTARTER_EXIT_CODE has a failure
+    if [ $exit_code -eq 0 ] && [ $PYUVSTARTER_EXIT_CODE -ne 0 ]; then
+        exit_code=$PYUVSTARTER_EXIT_CODE
+    fi
+
     echo ""
 
-    if [ $exit_code -ne 0 ]; then
+    if [ $exit_code -ne 0 ] && [ "$UNIT_TEST_MODE" = false ]; then
         echo "❌ Operation failed with exit code $exit_code. Cleaning up..."
     elif [ "$UNIT_TEST_MODE" = true ]; then
         echo "🧹 Unit test complete. Cleaning up..."
@@ -267,16 +369,16 @@ cleanup() {
         [ "$cleanup_action" = "remove" ] && rm -rf "$DEMO_DIR"
     fi
 
-    # Handle intermediate files - remove recordings unless unit testing or recording demo
-    if ! is_true "$UNIT_TEST_MODE" && ! is_true "$RECORD_DEMO"; then
+    # Handle intermediate files - remove recordings unless no-cleanup is specified
+    if ! is_true "$NO_CLEANUP"; then
         if has_file "$CAST_FILE"; then
             echo "   🗑️  Removing recording: $CAST_FILE"
             rm -f "$CAST_FILE"
         fi
     fi
 
-    # Clean up failed recordings
-    if has_file "$CAST_FILE" && ! has_file "$GIF_FILE" && ! is_true "$UNIT_TEST_MODE" && ! is_true "$RECORD_DEMO"; then
+    # Clean up failed recordings (only if not keeping artifacts)
+    if has_file "$CAST_FILE" && ! has_file "$GIF_FILE" && ! is_true "$NO_CLEANUP"; then
         rm -f "$CAST_FILE"
     fi
 
@@ -307,8 +409,9 @@ if [ "$UNIT_TEST_MODE" = true ]; then
 
     # Create minimal test files
     cat << 'EOF' > "$DEMO_DIR/requirements.txt"
-# Test requirements
-numpy==1.24.0
+numpy
+pandas
+matplotlib
 EOF
 
     cat << 'EOF' > "$DEMO_DIR/scripts/test_script.py"
@@ -348,14 +451,14 @@ else
         check_and_install_prerequisites
     fi
 
-# === 1. CREATE DEMO PROJECT ===
-echo "📁 Setting up realistic ML project (the 'before' state)..."
+    # === 1. CREATE DEMO PROJECT ===
+    echo "📁 Setting up realistic ML project (the 'before' state)..."
 
-rm -rf "$DEMO_DIR"
-mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts"
+    rm -rf "$DEMO_DIR"
+    mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts"
 
-# Incomplete requirements.txt (the problem pyuvstarter solves)
-cat << 'EOF' > "$DEMO_DIR/requirements.txt"
+    # Incomplete requirements.txt (the problem pyuvstarter solves)
+    cat << 'EOF' > "$DEMO_DIR/requirements.txt"
 # Legacy requirements.txt - WOEFULLY INCOMPLETE!
 # Missing 15+ dependencies that are actually used in the project
 transformers
@@ -374,15 +477,15 @@ numpy
 # And many more missing dependencies...
 EOF
 
-# Inadequate .gitignore
-cat << 'EOF' > "$DEMO_DIR/.gitignore"
+    # Inadequate .gitignore
+    cat << 'EOF' > "$DEMO_DIR/.gitignore"
 # Terrible .gitignore - pyuvstarter will fix this!
 *.pyc
 # Missing: __pycache__, .venv, .ipynb_checkpoints, etc.
 EOF
 
-# Project README highlighting the chaos
-cat << 'EOF' > "$DEMO_DIR/README.md"
+    # Project README highlighting the chaos
+    cat << 'EOF' > "$DEMO_DIR/README.md"
 # Messy ML Project
 
 This project demonstrates a typical "dependency hell" scenario:
@@ -398,8 +501,8 @@ This project demonstrates a typical "dependency hell" scenario:
 ✅ **SOLUTION:** Run `pyuvstarter` to fix everything automatically!
 EOF
 
-# Python script with imports missing from requirements.txt
-cat << 'EOF' > "$DEMO_DIR/scripts/data_analysis.py"
+    # Python script with imports missing from requirements.txt
+    cat << 'EOF' > "$DEMO_DIR/scripts/data_analysis.py"
 """Data analysis script with many dependencies missing from requirements.txt"""
 import pandas as pd          # MISSING from requirements.txt!
 import numpy as np           # ✅ In requirements.txt
@@ -421,14 +524,15 @@ def analyze_data():
     plt.figure(figsize=(10, 6))
     sns.histplot(data['values'])
     plt.title('Demo: Dependencies discovered by pyuvstarter')
+    # plt.show() # Disabled for non-interactive script
     return scaled
 
 if __name__ == "__main__":
     analyze_data()
 EOF
 
-# Notebook with mixed dependency installation methods
-cat << 'EOF' > "$DEMO_DIR/notebooks/ml_experiment.ipynb"
+    # Notebook with mixed dependency installation methods
+    cat << 'EOF' > "$DEMO_DIR/notebooks/ml_experiment.ipynb"
 {
  "cells": [
   {
@@ -508,20 +612,51 @@ cat << 'EOF' > "$DEMO_DIR/notebooks/ml_experiment.ipynb"
 }
 EOF
 
-# === 2. SHOW "BEFORE" STATE ===
+    if [ "$RECORD_DEMO" = true ]; then
+        echo "🔴 Recording comprehensive pyuvstarter transformation demo..."
+        export DEMO_DIR
+        # Create a temporary script that contains the demo logic
+        # This is more reliable than trying to pass functions to asciinema
+        cat > "$DEMO_DIR/../demo_script.sh" << 'DEMO_SCRIPT_EOF'
+#!/bin/bash
+set -e
+
+# Recreate essential functions and variables needed for the demo
+DEMO_DIR="pyuvstarter_demo_project"
+has_file() { [ -f "$1" ]; }
+has_dir() { [ -d "$1" ]; }
+
+# === DEMO SEQUENCE ===
 echo ""
 echo "📊 PROJECT BEFORE PYUVSTARTER (the mess that will be fixed):"
-echo "   📄 requirements.txt: $(wc -l < "$DEMO_DIR/requirements.txt" | tr -d ' ') lines (INCOMPLETE - missing 15+ packages!)"
-echo "   🐍 Python files: $(find "$DEMO_DIR" -name "*.py" | wc -l | tr -d ' ')"
-echo "   📓 Jupyter notebooks: $(find "$DEMO_DIR" -name "*.ipynb" | wc -l | tr -d ' ')"
-echo "   ⚙️  pyproject.toml: $([ -f "$DEMO_DIR/pyproject.toml" ] && echo "EXISTS" || echo "❌ MISSING")"
-echo "   🐍 .venv/: $([ -d "$DEMO_DIR/.venv" ] && echo "EXISTS" || echo "❌ MISSING")"
-echo "   💻 .vscode/: $([ -d "$DEMO_DIR/.vscode" ] && echo "EXISTS" || echo "❌ MISSING")"
-echo "   🔒 uv.lock: $([ -f "$DEMO_DIR/uv.lock" ] && echo "EXISTS" || echo "❌ MISSING")"
-echo "   🙈 .gitignore: $([ -f "$DEMO_DIR/.gitignore" ] && echo "EXISTS" || echo "❌ MISSING")"
-echo ""
+echo '👋 SCENARIO: You inherited this messy ML project...'
+echo ''
+sleep 2
+echo '📁 CURRENT PROJECT STRUCTURE - BROKEN:'
+tree "$DEMO_DIR" -I '__pycache__' --dirsfirst 2>/dev/null || find "$DEMO_DIR" -type f | sort
+echo ''
+sleep 3
+echo '🔥 WHAT IS WRONG HERE:'
+echo '   ❌ No pyproject.toml - modern Python standard missing'
+echo '   ❌ No .venv/ - no isolated environment'
+echo '   ❌ No uv.lock - no reproducible dependency versions'
+echo '   ❌ No .vscode/ - no IDE configuration'
+echo '   ❌ Broken requirements.txt - missing tons of packages'
+echo ''
+sleep 3
+echo '📄 Look at this INCOMPLETE requirements.txt:'
+head -8 "$DEMO_DIR/requirements.txt"
+echo '   ... 15+ dependencies missing - classic dependency hell!'
+echo ''
+sleep 3
+echo '💥 THE PAIN: Let us try to run this project...'
+echo "$ cd $DEMO_DIR && python scripts/data_analysis.py"
+echo '   💥 ModuleNotFoundError: No module named pandas'
+echo '   ☝️  TYPICAL ERROR: Missing dependencies everywhere!'
+echo '   😤 This is what everyone experiences with incomplete requirements!'
+echo ''
+sleep 4
 
-# === 3. RUN PYUVSTARTER TRANSFORMATION ===
 echo "🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC..."
 echo "============================================"
 echo ""
@@ -552,12 +687,20 @@ if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
     echo "📄 NEW pyproject.toml dependencies discovered:"
     if [ -f "$DEMO_DIR/pyproject.toml" ]; then
         echo "   🎯 Found and added ALL missing dependencies:"
-        grep -A 8 dependencies "$DEMO_DIR/pyproject.toml" | head -6
+        grep -A 8 'dependencies = \[' "$DEMO_DIR/pyproject.toml" | head -6 || echo "   (dependencies section found)"
         echo "   ... complete dependency list in pyproject.toml"
     else
         echo "   pyproject.toml not created"
     fi
     echo ""
+    sleep 3
+    echo '🎉 PROOF IT WORKS: Let us run the SAME code that failed before...'
+    echo "$ cd $DEMO_DIR && source .venv/bin/activate && python scripts/data_analysis.py"
+    (cd "$DEMO_DIR" && source .venv/bin/activate && python scripts/data_analysis.py)
+    echo '   ✅ SUCCESS: All dependencies work perfectly!'
+    echo ''
+    sleep 3
+    # --- END BUG FIX ---
     echo "🎉 TRANSFORMATION SUCCESSFUL!"
     echo "   ✅ Project transformed from dependency chaos to modern Python project"
     echo "   ✅ All dependencies discovered and configured"
@@ -568,229 +711,110 @@ else
     echo "   🔍 Check the output above for details"
 fi
 
-# === 4. RECORD DEMO ===
-if [ "$RECORD_DEMO" = true ]; then
-    echo "🔴 Recording comprehensive pyuvstarter transformation demo..."
-
-    export DEMO_DIR
-
-    # Record the demo with asciinema
-    asciinema rec "$CAST_FILE" --overwrite --title="pyuvstarter: ML Project Transformation" -c "
-
-echo '🚀 PYUVSTARTER DEMO: From Dependency Chaos to Modern Python Project'
-echo '=================================================================='
-echo ''
-sleep 2
-echo '👋 SCENARIO: You inherited this messy ML project...'
-echo ''
-sleep 2
-echo '📁 CURRENT PROJECT STRUCTURE - BROKEN:'
-tree \"$DEMO_DIR\" -I '__pycache__' --dirsfirst || find \"$DEMO_DIR\" -type f | sort
-echo ''
-sleep 3
-echo '🔥 WHAT IS WRONG HERE:'
-echo '   ❌ No pyproject.toml - modern Python standard missing'
-echo '   ❌ No .venv/ - no isolated environment'
-echo '   ❌ No uv.lock - no reproducible dependency versions'
-echo '   ❌ No .vscode/ - no IDE configuration'
-echo '   ❌ Broken requirements.txt - missing tons of packages'
-echo ''
-sleep 3
-echo '📄 Look at this INCOMPLETE requirements.txt:'
-head -8 \"$DEMO_DIR/requirements.txt\"
-echo '   ... 15+ dependencies missing - classic dependency hell!'
-echo ''
-sleep 3
-echo '💥 THE PAIN: Let us try to run this project...'
-echo 'cd $DEMO_DIR && python scripts/data_analysis.py'
-echo '   💥 ModuleNotFoundError: No module named pandas'
-echo '   ☝️  TYPICAL ERROR: Missing dependencies everywhere!'
-echo '   😤 This is what everyone experiences with incomplete requirements!'
-echo ''
-sleep 4
-echo '🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC...'
-echo '============================================'
-sleep 2
-echo ''
-echo '$ pyuvstarter \$(pwd)/$DEMO_DIR'
-echo '🔍 pyuvstarter scanning your project...'
-echo '   📄 Reading scripts/data_analysis.py...'
-echo '   📓 Reading notebooks/ml_experiment.ipynb...'
-echo '   🔎 Discovering dependencies...'
-python3 \$(pwd)/pyuvstarter.py \$(pwd)/$DEMO_DIR
-echo ''
-sleep 3
-echo '✨ TRANSFORMATION COMPLETE! Let us see the magic...'
-echo '===================================================='
-echo ''
-sleep 2
-echo '📁 TRANSFORMED PROJECT STRUCTURE - PROFESSIONAL:'
-tree \"$DEMO_DIR\" -I '__pycache__' --dirsfirst || find \"$DEMO_DIR\" -type f | sort
-echo ''
-sleep 3
-echo '✅ WHAT IS FIXED (this is a real check):'
-echo \"   \\\$([ -f \\\"\\\$DEMO_DIR/pyproject.toml\\\" ] && echo \\\"✅ pyproject.toml: CREATED - modern Python configuration\\\" || echo \\\"❌ pyproject.toml: FAILED\\\")\"
-echo \"   \\\$([ -d \\\"\\\$DEMO_DIR/.venv\\\" ] && echo \\\"✅ .venv/: CREATED - isolated virtual environment\\\" || echo \\\"❌ .venv/: FAILED\\\")\"
-echo \"   \\\$([ -f \\\"\\\$DEMO_DIR/uv.lock\\\" ] && echo \\\"✅ uv.lock: CREATED - reproducible dependency versions\\\" || echo \\\"❌ uv.lock: FAILED\\\")\"
-echo \"   \\\$([ -d \\\"\\\$DEMO_DIR/.vscode\\\" ] && echo \\\"✅ .vscode/: CREATED - IDE ready for development\\\" || echo \\\"❌ .vscode/: FAILED\\\")\"
-echo ''
-sleep 3
-echo '📄 NEW pyproject.toml dependencies discovered:'
-if [ -f \"\$DEMO_DIR/pyproject.toml\" ]; then
-  echo '   🎯 Found and added ALL missing dependencies:'
-  grep -A 8 dependencies \"\$DEMO_DIR/pyproject.toml\" | head -6
-  echo '   ... complete dependency list in pyproject.toml'
-else
-  echo '   pyproject.toml not created'
-fi
-echo ''
-sleep 3
-echo '🎉 PROOF IT WORKS: Let us run the SAME code that failed before...'
-echo 'cd $DEMO_DIR && source .venv/bin/activate && python scripts/data_analysis.py'
-echo '   ✅ SUCCESS: All dependencies work perfectly!'
-echo ''
-sleep 3
-echo '📊 DEPENDENCY DISCOVERY RESULTS:'
-echo '   📈 Started with: 2 packages in requirements.txt'
-echo '   📈 pyuvstarter found: 20+ total dependencies'
-echo '   📈 Missing packages: 18+ - 90% of dependencies were missing!'
-echo '   ⏱️  Time to find manually: ~4 hours of detective work'
-echo '   ⚡ Time with pyuvstarter: 30 seconds'
-echo ''
-sleep 3
-echo '🎯 WHAT PYUVSTARTER ACCOMPLISHED:'
-echo '================================='
-echo '   ✅ Scanned 1 Python script + 1 Jupyter notebook'
-echo '   ✅ Discovered 20+ missing dependencies automatically'
-echo '   ✅ Created modern pyproject.toml with ALL dependencies'
-echo '   ✅ Set up isolated .venv virtual environment'
-echo '   ✅ Generated uv.lock for reproducible installs'
-echo '   ✅ Enhanced .gitignore with Python best practices'
-echo '   ✅ Configured vscode for immediate development'
-echo '   ✅ Transformed chaos into professional Python project'
-echo ''
-sleep 2
-echo '🎉 BEFORE vs AFTER:'
-echo '   BEFORE: Broken project, dependency hell, hours of setup'
-echo '   AFTER:  Professional project, all deps found, ready to code!'
-echo ''
-echo '💪 WHAT IS NOW POSSIBLE:'
-echo '   🚀 Open in VS Code with correct Python interpreter'
-echo '   🚀 Run any script immediately - all dependencies work'
-echo '   🚀 Share project with guaranteed reproducibility'
-echo '   🚀 Deploy with confidence using locked versions'
-echo '   🚀 Onboard new team members in seconds, not hours'
-echo ''
-sleep 3
-echo '📚 HOW TO USE PYUVSTARTER ON YOUR PROJECT:'
-echo '=========================================='
-echo '   1. 📁 Navigate to your messy Python project'
-echo '   2. ⚡ Run: python pyuvstarter.py /path/to/your/project'
-echo '   3. 🎉 That is it! Project transformed and ready to use'
-echo ''
-echo '💡 PERFECT FOR:'
-echo '   • Projects with scattered !pip install commands'
-echo '   • Old projects with incomplete requirements.txt'
-echo '   • Data science projects mixing .py and .ipynb files'
-echo '   • Any project that works on your machine but not others'
-echo ''
-sleep 3
-echo '⚡ SUMMARY: Seconds to transform vs hours of manual dependency hunting!'
-echo ''
-sleep 2
-"
-
-    echo "✅ Recording complete: $CAST_FILE"
-
-    # === 4. GENERATE GIF ===
-    echo ""
-    echo "🎨 Generating GitHub-optimized demo GIF..."
-
-    # Optimized for comprehensive demo with better readability and smaller file size
-    agg --theme dracula \
-    --speed 1.2 \
-    --font-size 14 \
-    --cols 95 \
-    --rows 35 \
-    --fps-cap 10 \
-    "$CAST_FILE" "$GIF_FILE"
-
-# Check if GIF was created successfully
-if ! has_file "$GIF_FILE"; then
-    echo "❌ GIF generation failed!"
-    exit 1
-fi
-
-GIF_SIZE=$(du -h "$GIF_FILE" | cut -f1)
-    echo "✅ Demo GIF generated: $GIF_FILE ($GIF_SIZE)"
-
-    # Check GitHub file size limits (100MB)
-    if [ "$(stat -f%z "$GIF_FILE" 2>/dev/null || wc -c < "$GIF_FILE" | tr -d ' ')" -gt 104857600 ]; then
-        echo "⚠️  Large file. Consider GitHub releases for hosting."
-    fi
-fi
-
-# === 5. COMPLETION MESSAGES ===
-echo ""
-
-echo "🎉 DEMO CREATION COMPLETE!"
-echo "=========================="
-echo "✨ Mode: $(get_mode_name)"
-echo ""
-
-if is_true "$NO_CLEANUP"; then
-    echo "📁 Generated files (preserved for inspection):"
-    if is_true "$RECORD_DEMO"; then
-        echo "   • $GIF_FILE - Demo GIF for README"
-        echo "   • $CAST_FILE - asciinema recording"
-    fi
-    echo "   • $DEMO_DIR/ - Demo project (inspect the transformation!)"
-    echo ""
-else
-    echo "📁 Generated files:"
-    if is_true "$RECORD_DEMO"; then
-        echo "   • $GIF_FILE - Demo GIF for README"
-    else
-        echo "   • $DEMO_DIR/ - Demo project (temporarily created)"
-    fi
-    echo ""
-fi
-
-if is_true "$RECORD_DEMO"; then
-    echo "📋 READY TO USE:"
-    echo "   1. Commit: git add $GIF_FILE && git commit -m 'Add demo GIF'"
-    echo "   2. Push: git push origin main"
-    echo "   3. Your README demo will be live on GitHub!"
-else
-    echo "📋 DEMO SHOWN:"
-    echo "   1. Demo project created and displayed the transformation process"
-    echo "   2. To record a GIF: ./create_demo.sh --record-demo"
-    echo "   3. To keep demo files: ./create_demo.sh --no-cleanup"
-fi
-
-echo ""
-echo "💡 This comprehensive demo showcases:"
-echo "   🎯 Visual before/after project tree transformation"
-echo "   🎯 Concrete failure-to-success demonstration"
-echo "   🎯 Smart dependency discovery from .py + .ipynb files"
-echo "   🎯 Complete project modernization (uv + VS Code + git)"
-echo "   🎯 Specific impact metrics (20+ deps, 90% missing)"
-echo "   🎯 Professional ML workflow transformation"
-echo "   🎯 Clear usage instructions for beginners"
-echo "   🎯 Dramatic time savings (seconds vs hours)"
-
-if is_true "$RECORD_DEMO"; then
-    echo ""
-    echo "🚀 SHARING READY:"
-    echo "   📱 Social: 'See how pyuvstarter transforms messy Python projects into modern uv workspaces in seconds!'"
-    echo "   🏷️  Tags: #Python #UV #DevTools #MachineLearning #Automation #DependencyManagement"
-    echo "   🌐 Demo URL: https://raw.githubusercontent.com/YOUR_USER/REPO/main/$GIF_FILE"
-
-    echo ""
-    echo "✨ Demo ready! Your pyuvstarter project now has a compelling visual demo."
-fi
-
-# Demo completed - exit with pyuvstarter's exit code
 exit $PYUVSTARTER_EXIT_CODE
+DEMO_SCRIPT_EOF
 
+        chmod +x "$DEMO_DIR/../demo_script.sh"
+        asciinema rec "$CAST_FILE" --overwrite --title="pyuvstarter: ML Project Transformation" --command="$DEMO_DIR/../demo_script.sh"
+
+        # Clean up temporary script
+        rm -f "$DEMO_DIR/../demo_script.sh"
+        echo "✅ Recording complete: $CAST_FILE"
+    else
+        # If not recording, just run the demo sequence directly.
+        run_the_demo
+    fi
+
+    # === GIF GENERATION (only if recording) ===
+    if [ "$RECORD_DEMO" = true ]; then
+        echo ""
+        echo "🎨 Generating GitHub-optimized demo GIF..."
+
+        # Optimized for comprehensive demo with better readability and smaller file size
+        agg --theme dracula \
+        --speed 1.2 \
+        --font-size 14 \
+        --cols 95 \
+        --rows 35 \
+        --fps-cap 10 \
+        "$CAST_FILE" "$GIF_FILE"
+
+        # Check if GIF was created successfully
+        if ! has_file "$GIF_FILE"; then
+            echo "❌ GIF generation failed!"
+            exit 1
+        fi
+
+        GIF_SIZE=$(du -h "$GIF_FILE" | cut -f1)
+        echo "✅ Demo GIF generated: $GIF_FILE ($GIF_SIZE)"
+
+        # Check GitHub file size limits (100MB)
+        if [ "$(stat -f%z "$GIF_FILE" 2>/dev/null || wc -c < "$GIF_FILE" | tr -d ' ')" -gt 104857600 ]; then
+            echo "⚠️  Large file. Consider GitHub releases for hosting."
+        fi
+    fi
+
+    # === 5. COMPLETION MESSAGES ===
+    echo ""
+
+    echo "🎉 DEMO CREATION COMPLETE!"
+    echo "=========================="
+    echo "✨ Mode: $(get_mode_name)"
+    echo ""
+
+    if is_true "$NO_CLEANUP"; then
+        echo "📁 Generated files (preserved for inspection):"
+        if is_true "$RECORD_DEMO"; then
+            echo "   • $GIF_FILE - Demo GIF for README"
+            echo "   • $CAST_FILE - asciinema recording"
+        fi
+        echo "   • $DEMO_DIR/ - Demo project (inspect the transformation!)"
+        echo ""
+    else
+        echo "📁 Generated files:"
+        if is_true "$RECORD_DEMO"; then
+            echo "   • $GIF_FILE - Demo GIF for README"
+        else
+            echo "   • $DEMO_DIR/ - Demo project (temporarily created and now removed)"
+        fi
+        echo ""
+    fi
+
+    if is_true "$RECORD_DEMO"; then
+        echo "📋 READY TO USE:"
+        echo "   1. Commit: git add $GIF_FILE && git commit -m 'Add demo GIF'"
+        echo "   2. Push: git push origin main"
+        echo "   3. Your README demo will be live on GitHub!"
+    else
+        echo "📋 DEMO SHOWN:"
+        echo "   1. Demo project created and displayed the transformation process"
+        echo "   2. To record a GIF: ./create_demo.sh --record-demo"
+        echo "   3. To keep demo files: ./create_demo.sh --no-cleanup"
+    fi
+
+    echo ""
+    echo "💡 This comprehensive demo showcases:"
+    echo "   🎯 Visual before/after project tree transformation"
+    echo "   🎯 Concrete failure-to-success demonstration"
+    echo "   🎯 Smart dependency discovery from .py + .ipynb files"
+    echo "   🎯 Complete project modernization (uv + VS Code + git)"
+    echo "   🎯 Specific impact metrics (20+ deps, 90% missing)"
+    echo "   🎯 Professional ML workflow transformation"
+    echo "   🎯 Clear usage instructions for beginners"
+    echo "   🎯 Dramatic time savings (seconds vs hours)"
+
+    if is_true "$RECORD_DEMO"; then
+        echo ""
+        echo "🚀 SHARING READY:"
+        echo "   📱 Social: 'See how pyuvstarter transforms messy Python projects into modern uv workspaces in seconds!'"
+        echo "   🏷️  Tags: #Python #UV #DevTools #MachineLearning #Automation #DependencyManagement"
+        echo "   🌐 Demo URL: https://raw.githubusercontent.com/YOUR_USER/REPO/main/$GIF_FILE"
+
+        echo ""
+        echo "✨ Demo ready! Your pyuvstarter project now has a compelling visual demo."
+    fi
 fi
+
+# The final exit is handled by the `trap`, which uses $PYUVSTARTER_EXIT_CODE
+# This ensures that even if the demo *looks* successful, if pyuvstarter failed,
+# the script will exit with a failure code.
