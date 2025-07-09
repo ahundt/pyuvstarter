@@ -1271,179 +1271,164 @@ def _manage_project_dependencies(
     pyproject_file_path: Path,
     migration_mode: str,
     dry_run: bool,
-    declared_deps_before_management: set[str], # set of base package names from pyproject.toml
-    project_imported_packages: set[tuple[str, str]], # set of (base_name, spec) from all sources
+    declared_deps_before_management: set[str],
+    project_imported_packages: set[tuple[str, str]],
 ):
     """
-    Manages project dependencies by migrating from requirements.txt, adding imports,
-    and syncing with pyproject.toml based on the configured migration_mode.
-    This function centralizes all dependency management logic.
+    (V9) Implements the "Context-Aware Orchestrator" philosophy. It builds a
+    unified model of all dependency requests, uses safe heuristics to merge them
+    while respecting user intent, and then delegates final resolution to `uv`.
     """
     action_name = "manage_project_dependencies"
-    _log_action(action_name, "INFO", f"Starting dependency management with mode: '{migration_mode}', dry-run: {dry_run}.")
+    _log_action(action_name, "INFO", f"Starting dependency management with mode: '{migration_mode}'.")
 
+    # --- Step 1: Collect all requirements with context ---
     req_path = project_root / LEGACY_REQUIREMENTS_TXT
-    req_pkgs_from_file = _get_packages_from_legacy_req_txt(req_path) # set of (base_name, spec)
-
-    # Convert imported_packages to a set of base names for quick lookups
+    req_pkgs_from_file = _get_packages_from_legacy_req_txt(req_path)
     imported_pkgs_base_names = {base for base, _ in project_imported_packages}
 
-    # Data structures to build up the plan
-    packages_to_add_candidate: set[tuple[str, str]] = set() # (base_name, full_specifier)
-    packages_to_skip_due_to_mode: set[tuple[str, str]] = set() # (base_name, full_specifier) -- for reasons like 'not imported'
-    packages_already_in_pyproject: set[tuple[str, str]] = set() # (base_name, full_specifier)
+    # This data structure is key. It gathers all "requests" for a package.
+    # Key: canonical_base_name, Value: list of specifier strings found.
+    all_requests: dict[str, list[str]] = {}
 
-    # Helper to check if a package (base_name) is already declared in pyproject.toml
-    # and adds it to the packages_already_in_pyproject set for detailed logging
-    def _check_and_mark_declared(base_name: str, full_spec: str) -> bool:
-        if base_name in declared_deps_before_management:
-            packages_already_in_pyproject.add((base_name, full_spec))
-            return True
-        return False
+    def add_request(base_name: str, specifier: str):
+        if base_name not in all_requests:
+            all_requests[base_name] = []
+        all_requests[base_name].append(specifier)
 
-    # --- Determine packages to add based on migration mode ---
+    # Collect from code imports.
+    for base, spec in project_imported_packages:
+        if base not in declared_deps_before_management:
+            add_request(base, spec)
 
-    if migration_mode == "skip-requirements":
-        _log_action(action_name, "INFO", f"Migration mode set to '{migration_mode}'. Ignoring '{LEGACY_REQUIREMENTS_TXT}'.")
-        for base, spec in project_imported_packages:
-            if not _check_and_mark_declared(base, spec):
-                packages_to_add_candidate.add((base, spec))
-
-    elif migration_mode in ("auto", "only-imported"):
-        _log_action(action_name, "INFO", f"Migration mode set to '{migration_mode}'. Will migrate requirements.txt entries only if imported, and add all other imported packages.")
-
-        # 1. Process packages from requirements.txt: prioritize those that are imported
+    # Collect from requirements.txt based on migration mode.
+    packages_to_skip_due_to_mode = set()
+    editable_install_needed = False
+    if migration_mode != "skip-requirements":
         for base, spec in req_pkgs_from_file:
-            if _check_and_mark_declared(base, spec):
-                continue # Already declared in pyproject, no need to process further for addition
+            if base in declared_deps_before_management:
+                continue
+            if spec == "-e .":
+                editable_install_needed = True
+                continue
 
-            if base in imported_pkgs_base_names:
-                packages_to_add_candidate.add((base, spec))
-            else:
-                # Mark as unused from requirements.txt because it's not imported
-                packages_to_skip_due_to_mode.add((base, spec))
+            is_imported = base in imported_pkgs_base_names
+            if migration_mode == "all-requirements" or (migration_mode in ["auto", "only-imported"] and is_imported):
+                add_request(base, spec)
+            elif not is_imported:
+                packages_to_skip_due_to_mode.add(spec)
 
-        # 2. Process packages from project imports: add any that are not already declared or slated for addition
-        # This covers imports not found in requirements.txt
-        for base, spec in project_imported_packages:
-            if not _check_and_mark_declared(base, spec) and (base, spec) not in packages_to_add_candidate:
-                packages_to_add_candidate.add((base, spec))
+    # --- Step 2: Intelligently merge requests using safe heuristics ---
+    final_candidates: list[str] = []
 
-    elif migration_mode == "all-requirements":
-        _log_action(action_name, "INFO", f"Migration mode set to '{migration_mode}'. Will add all dependencies from '{LEGACY_REQUIREMENTS_TXT}' and then all imported packages.")
+    def is_versioned(spec: str) -> bool:
+        """Checks if a specifier contains a version constraint."""
+        return any(op in spec for op in ["==", ">=", "<=", ">", "<", "~="])
 
-        # 1. Process packages from requirements.txt first
-        for base, spec in req_pkgs_from_file:
-            if not _check_and_mark_declared(base, spec):
-                packages_to_add_candidate.add((base, spec))
+    for base, specs in all_requests.items():
+        if len(specs) == 1:
+            final_candidates.append(specs[0])
+            continue
 
-        # 2. Process packages from project imports. Add any that are not already declared in pyproject.toml
-        # AND not already added from requirements.txt in this run.
-        currently_added_base_names = {base for base, _ in packages_to_add_candidate}
-        for base, spec in project_imported_packages:
-            if not _check_and_mark_declared(base, spec) and base not in currently_added_base_names:
-                packages_to_add_candidate.add((base, spec))
+        # More than one request for this package. Time for heuristics.
+        # Rule: A more specific (versioned) specifier wins over a less specific one.
+        versioned_specs = {s for s in specs if is_versioned(s)}
+        unversioned_specs = {s for s in specs if not is_versioned(s)}
 
-    else:
-        _log_action(action_name, "ERROR", f"Invalid dependency migration mode: {migration_mode}. No dependencies will be added/managed.")
+        if len(versioned_specs) == 1:
+            # The ideal case: one clear version pin was found among generic requests.
+            chosen_spec = list(versioned_specs)[0]
+            _log_action(action_name, "INFO", f"For package '{base}', multiple requests found. Prioritizing the specific version constraint: '{chosen_spec}'.")
+            final_candidates.append(chosen_spec)
+        elif len(versioned_specs) > 1:
+            # A true conflict: multiple *different* version constraints.
+            # Delegate this impossible task to the expert (`uv`) to get a clear error.
+            _log_action(action_name, "WARN", f"For package '{base}', multiple conflicting version requests found: {sorted(list(versioned_specs))}. Passing all to `uv` to resolve.")
+            final_candidates.extend(versioned_specs)
+        elif unversioned_specs:
+            # Only generic, unversioned requests. Just add one.
+            final_candidates.append(list(unversioned_specs)[0])
+
+    final_packages_to_add = sorted(list(set(final_candidates)))
+
+    # --- Step 3: Transparently report the plan ---
+    if not final_packages_to_add and not editable_install_needed:
+        _log_action(action_name, "INFO", "No new dependencies to manage.")
         return
 
-    # Final sorted list for consistent logging and action
-    final_packages_to_add: list[tuple[str, str]] = sorted(list(packages_to_add_candidate), key=lambda x: x[0])
-    all_skipped_info_for_log: list[tuple[str, str, str]] = [] # (base_name, spec, reason)
-
-    # Collect all skipped packages with their reasons
-    for base, spec in packages_already_in_pyproject:
-        all_skipped_info_for_log.append((base, spec, "already in pyproject.toml"))
-    for base, spec in packages_to_skip_due_to_mode:
-        all_skipped_info_for_log.append((base, spec, "not imported (unused from requirements.txt)"))
-    all_skipped_info_for_log = sorted(all_skipped_info_for_log, key=lambda x: x[0])
-
-    # --- Dry run output ---
-    if dry_run:
-        msg = (
-            "\n--- DRY RUN: Dependency Management Summary ---\n"
-            f"Mode: {migration_mode}\n"
-            f"Would add: {[spec for base, spec in final_packages_to_add] if final_packages_to_add else 'None'}\n"
-            f"Would skip: {[f'{spec} ({reason})' for base, spec, reason in all_skipped_info_for_log] if all_skipped_info_for_log else 'None'}\n"
-            "This was a dry run. No changes were made.\nTo perform the dependency management, re-run without the --dry-run flag."
-        )
-        _log_action(action_name + "_dry_run", "INFO", msg)
-        return
-
-    # --- Actually add dependencies with robust hybrid strategy ---
-    successfully_added_specs = []
-    failed_to_add_specs = []
-
+    _log_action(action_name, "INFO", "--- Dependency Resolution Plan ---")
     if final_packages_to_add:
-        packages_to_add_specs_only = [spec for _, spec in final_packages_to_add]
-        _log_action(action_name, "INFO", f"Attempting to add {len(packages_to_add_specs_only)} new package(s) to '{PYPROJECT_TOML_NAME}'.")
+        _log_action(action_name, "INFO", f"Will ask `uv` to resolve these requirements: {final_packages_to_add}")
+    if packages_to_skip_due_to_mode:
+         _log_action(action_name, "INFO", f"Skipping unused requirements.txt entries: {sorted(list(packages_to_skip_due_to_mode))}")
+    if editable_install_needed:
+        _log_action(action_name, "INFO", "An editable install (`-e .`) will be performed.")
+    _log_action(action_name, "INFO", "---------------------------------")
 
-        try:
-            # Stage 1: Try bulk add for efficiency (v7.3 hybrid strategy)
-            _log_action(action_name, "INFO", "Attempting a fast bulk-add operation...")
-            _run_command(["uv", "add"] + packages_to_add_specs_only, "uv_add_bulk")
-            successfully_added_specs.extend(packages_to_add_specs_only)
-        except Exception:
-            # Stage 2: Individual fallback for robustness
-            _log_action(action_name, "WARN", "Bulk 'uv add' failed. Falling back to adding packages individually for robustness.")
-            for base, spec in final_packages_to_add:
+    # --- Step 4: Delegate to `uv` and translate the verdict ---
+    if final_packages_to_add:
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Skipping 'uv add' command.")
+        else:
+            try:
+                _run_command(["uv", "add"] + final_packages_to_add, "uv_add_bulk")
+            except subprocess.CalledProcessError as e:
+                # The "Expert Translator" logic for clear error messages.
+                stderr = e.stderr.lower() if e.stderr else ""
+                if "no solution found" in stderr:
+                    _log_action("uv_add_conflict", "ERROR", "DEPENDENCY CONFLICT: `uv` could not find compatible package versions. ACTION: Review the `uv` error in the log and manually adjust versions.")
+                elif "failed to build" in stderr:
+                    _log_action("uv_add_build_failure", "ERROR", "BUILD FAILURE: `uv` failed to build a package from source. ACTION: Check the `uv` build log for details.")
+                else:
+                    _log_action(action_name, "ERROR", "Failed to add dependencies via `uv add`. See logs for details.")
+
+    # --- Step 5: Handle special cases like editable installs ---
+    if editable_install_needed:
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Skipping editable install.")
+        else:
+            # Safety pre-flight check before running a command we know might fail.
+            can_install_editable = False
+            if pyproject_file_path.exists():
                 try:
-                    _run_command(["uv", "add", spec], f"uv_add_individual_{base}")
-                    successfully_added_specs.append(spec)
-                except Exception:
-                    failed_to_add_specs.append(spec)
-    else:
-        _log_action(action_name, "INFO", "No new dependencies identified for addition based on mode and existing declarations.")
+                    with open(pyproject_file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    if '[project]' in content and 'name' in content:
+                        can_install_editable = True
+                except Exception: pass
 
-    if successfully_added_specs:
-        _log_action(action_name, "SUCCESS", f"Successfully added {len(successfully_added_specs)} packages.", details={"packages": successfully_added_specs})
-    if failed_to_add_specs:
-        _log_action(action_name, "ERROR", f"Failed to add {len(failed_to_add_specs)} packages.", details={"failed_packages": failed_to_add_specs})
-
-    # --- Final Summary and Advice ---
+            if can_install_editable:
+                _log_action(action_name, "INFO", "Performing editable install as requested.")
+                try:
+                    _run_command(["uv", "pip", "install", "-e", "."], "uv_pip_install_editable")
+                except subprocess.CalledProcessError as e:
+                    _log_action(action_name, "ERROR", "Failed to install project in editable mode.", details={"exception": str(e)})
+            else:
+                _log_action(action_name, "ERROR", "Cannot perform editable install: 'pyproject.toml' is missing a `[project]` table with a `name` field. Please add one.")
+    # --- Step 6: Provide Final Summary and Actionable Advice ---
     summary_lines = [
         "\n--- Dependency Management Final Summary ---",
         f"Mode: {migration_mode}",
         f"Total packages from requirements.txt scanned: {len(req_pkgs_from_file)}",
         f"Total packages from code (scripts/notebooks) discovered: {len(project_imported_packages)}",
         f"Total packages declared in pyproject.toml initially: {len(declared_deps_before_management)}",
-        f"Packages Added to {PYPROJECT_TOML_NAME}: {successfully_added_specs if successfully_added_specs else 'None'}",
-        f"Packages Skipped: {[f'{spec} ({reason})' for base, spec, reason in all_skipped_info_for_log] if all_skipped_info_for_log else 'None'}",
-        f"Packages Failed to Add: {failed_to_add_specs if failed_to_add_specs else 'None'}",
+        f"Final requirements passed to `uv`: {final_packages_to_add if final_packages_to_add else 'None'}",
+        f"Skipped unused requirements.txt entries: {sorted(list(packages_to_skip_due_to_mode)) if packages_to_skip_due_to_mode else 'None'}",
     ]
     summary_table = "\n".join(summary_lines)
     _log_action(action_name + "_final_summary", "INFO", summary_table)
 
-    # Actionable advice
-    if failed_to_add_specs:
-        advice = (
-            f"Some dependencies could not be added to '{PYPROJECT_TOML_NAME}'.\n"
-            f"Please review the errors above and try adding them manually, e.g.:\n  uv add <package>\n"
-            f"You may also need to check for typos or unsupported specifiers.\n"
-        )
-        _log_action(action_name + "_advice_failed", "WARN", advice, details={"failed": failed_to_add_specs})
-
-    # Always give advice on requirements.txt if it exists
+    # Provide actionable advice to the user regarding the legacy requirements.txt.
+    # This is crucial for guiding them towards modern practices.
     if req_path.exists():
-        if successfully_added_specs or failed_to_add_specs:
-            advice = (
-                f"The original '{LEGACY_REQUIREMENTS_TXT}' was NOT modified by this script.\n"
-                f"To keep your project modern and reproducible, '{PYPROJECT_TOML_NAME}' is now the primary source of truth.\n"
-                f"If you need '{LEGACY_REQUIREMENTS_TXT}' for other tools (e.g., legacy CI/CD), regenerate it with:\n"
-                f"  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
-            )
-            _log_action(action_name + "_advice_req_txt", "INFO", advice)
-        elif not final_packages_to_add and all_skipped_info_for_log: # reqs.txt exists, but nothing new was added
-            advice = (
-                f"No new dependencies were added from '{LEGACY_REQUIREMENTS_TXT}' as they were either already declared or not applicable to the '{migration_mode}' mode.\n"
-                f"Consider archiving or deleting '{LEGACY_REQUIREMENTS_TXT}' to avoid confusion.\n"
-                f"If you wish to regenerate it from '{PYPROJECT_TOML_NAME}' for legacy tools, run:\n"
-                f"  uv pip compile {PYPROJECT_TOML_NAME} -o {LEGACY_REQUIREMENTS_TXT}"
-            )
-            _log_action(action_name + "_advice_nothing_added_from_req", "INFO", advice)
-    else:
-        _log_action(action_name, "INFO", f"No '{LEGACY_REQUIREMENTS_TXT}' found in the project root. No migration from legacy requirements was attempted.")
+        advice = (
+            f"The original '{LEGACY_REQUIREMENTS_TXT}' was NOT modified by this script.\n"
+            f"To keep your project modern and reproducible, '{PYPROJECT_TOML_NAME}' is now the single source of truth for dependencies.\n"
+            f"Consider archiving or removing '{LEGACY_REQUIREMENTS_TXT}' to avoid future confusion.\n"
+            f"If you need it for legacy tools, you can always regenerate it from the lock file with:\n"
+            f"  uv pip freeze > {LEGACY_REQUIREMENTS_TXT}"
+        )
+        _log_action(action_name + "_advice_req_txt", "INFO", advice)
 
     _log_action(action_name, "SUCCESS", f"Dependency management completed for mode: '{migration_mode}'.")
 
