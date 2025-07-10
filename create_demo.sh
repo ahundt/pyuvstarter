@@ -646,18 +646,31 @@ has_dir() { [ -d "$1" ]; }
 # === SPLASH SCREEN ===
 clear
 echo ""
-echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀✨"
-echo "                                                                           "
+echo ""
+echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨"
+echo "                                                                               "
 echo "  ██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗███████╗████████╗ █████╗ ██████╗ ████████╗███████╗██████╗ "
 echo "  ██╔══██╗╚██╗ ██╔╝██║   ██║██║   ██║██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██╔════╝██╔══██╗"
 echo "  ██████╔╝ ╚████╔╝ ██║   ██║██║   ██║███████╗   ██║   ███████║██████╔╝   ██║   █████╗  ██████╔╝"
 echo "  ██╔═══╝   ╚██╔╝  ██║   ██║╚██╗ ██╔╝╚════██║   ██║   ██╔══██║██╔══██╗   ██║   ██╔══╝  ██╔══██╗"
 echo "  ██║        ██║   ╚██████╔╝ ╚████╔╝ ███████║   ██║   ██║  ██║██║  ██║   ██║   ███████╗██║  ██║"
 echo "  ╚═╝        ╚═╝    ╚═════╝   ╚═══╝  ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝"
-echo "                                                                                               "
-echo "                        🔥 FROM DEPENDENCY CHAOS TO MODERN PYTHON MAGIC 🔥                     "
-echo "                                                                                               "
-echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀✨🚀✨"
+echo "                                                                               "
+echo "                     🎯 FROM BROKEN TO BRILLIANT IN SECONDS! 🎯                "
+echo "                                                                               "
+echo "        � STOP wasting hours on dependency hell & environment setup!         "
+echo "        🚀 START building amazing Python projects immediately!                 "
+echo "                                                                               "
+echo "        ┌─────────────────────────────────────────────────────────────────┐   "
+echo "        │  ⭐ LOVE PYUVSTARTER? Show your support:                        │   "
+echo "        │     🌟 Star us: https://github.com/ahundt/pyuvstarter           │   "
+echo "        │     📚 Learn more & get started today!                          │   "
+echo "        │     🔄 Share with fellow Python developers                      │   "
+echo "        │     💬 Join our community & suggest features                    │   "
+echo "        └─────────────────────────────────────────────────────────────────┘   "
+echo "                                                                               "
+echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨"
+echo ""
 echo ""
 
 # === DEMO SEQUENCE ===
@@ -745,7 +758,7 @@ if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
     echo ""
     sleep 3
 
-
+# === CLOSING SCREEN ===
     echo "🎉 TRANSFORMATION SUCCESSFUL!"
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
@@ -790,35 +803,7 @@ else
     sleep 3
 fi
 
-# === CLOSING SCREEN ===
 clear
-echo ""
-echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨"
-echo "                                                                               "
-echo "  ██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗███████╗████████╗ █████╗ ██████╗ ████████╗███████╗██████╗ "
-echo "  ██╔══██╗╚██╗ ██╔╝██║   ██║██║   ██║██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██╔════╝██╔══██╗"
-echo "  ██████╔╝ ╚████╔╝ ██║   ██║██║   ██║███████╗   ██║   ███████║██████╔╝   ██║   █████╗  ██████╔╝"
-echo "  ██╔═══╝   ╚██╔╝  ██║   ██║╚██╗ ██╔╝╚════██║   ██║   ██╔══██║██╔══██╗   ██║   ██╔══╝  ██╔══██╗"
-echo "  ██║        ██║   ╚██████╔╝ ╚████╔╝ ███████║   ██║   ██║  ██║██║  ██║   ██║   ███████╗██║  ██║"
-echo "  ╚═╝        ╚═╝    ╚═════╝   ╚═══╝  ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝"
-echo "                                                                               "
-echo "                     🎯 FROM BROKEN TO BRILLIANT IN SECONDS! 🎯                "
-echo "                                                                               "
-echo "        � STOP wasting hours on dependency hell & environment setup!         "
-echo "        🚀 START building amazing Python projects immediately!                 "
-echo "                                                                               "
-echo "        ┌─────────────────────────────────────────────────────────────────┐   "
-echo "        │  ⭐ LOVE PYUVSTARTER? Show your support:                        │   "
-echo "        │     🌟 Star us: https://github.com/ahundt/pyuvstarter           │   "
-echo "        │     📚 Learn more & get started today!                          │   "
-echo "        │     🔄 Share with fellow Python developers                      │   "
-echo "        │     💬 Join our community & suggest features                    │   "
-echo "        └─────────────────────────────────────────────────────────────────┘   "
-echo "                                                                               "
-echo "        � PYUVSTARTER: The gift that keeps on giving to Python developers!   "
-echo "                                                                               "
-echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨"
-echo ""
 sleep 4
 
 exit $PYUVSTARTER_EXIT_CODE
