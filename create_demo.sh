@@ -22,15 +22,20 @@
 #   ./create_demo.sh --record-demo             # Show demo AND record GIF
 #
 # PREREQUISITES:
-#   Script will auto-install: asciinema, agg (via brew if available)
+#   Script will auto-install: t-rec (via brew/snap/cargo if available)
 #   chmod +x create_demo.sh
+#
+# TAB COMPLETION:
+#   To enable tab completion for options, run:
+#     source create_demo.sh
+#   Or add to ~/.bashrc:
+#     complete -F _create_demo_completion ./create_demo.sh
 # ==============================================================================
 
 set -e # Exit on any error
 
 # === CONFIGURATION ===
 DEMO_DIR="pyuvstarter_demo_project"
-CAST_FILE="pyuvstarter_demo.cast"
 GIF_FILE="pyuvstarter_demo.gif"
 
 # Default settings
@@ -150,18 +155,56 @@ run_test() {
 
 check_and_install_prerequisites() {
     echo "🔧 Checking prerequisites..."
+    local os_type
+    os_type=$(uname -s)
 
-    # Check for brew - if not found, show manual install message and return
-    if ! has_command "brew"; then
-        echo "⚠️  Homebrew not found. Install asciinema and agg manually:"
-        echo "   https://github.com/asciinema/asciinema"
-        echo "   https://github.com/asciinema/agg"
-        return 1
-    fi
-
-    # Check and install required tools
-    ensure_tool "asciinema" "brew install asciinema"
-    ensure_tool "agg" "brew install agg"
+    # Cross-platform t-rec installation
+    case "$os_type" in
+        Darwin)  # macOS
+            if has_command "brew"; then
+                ensure_tool "t-rec" "brew install t-rec"
+            else
+                echo "⚠️  Homebrew not found. Install t-rec manually:"
+                echo "   brew install t-rec"
+                echo "   or: cargo install t-rec (requires imagemagick)"
+                return 1
+            fi
+            ;;
+        Linux)
+            if has_command "snap"; then
+                echo "📦 Installing t-rec via snap..."
+                sudo snap install t-rec --classic || {
+                    echo "⚠️  Snap install failed. Try manual installation:"
+                    echo "   https://github.com/sassman/t-rec-rs/releases"
+                    return 1
+                }
+            elif has_command "cargo"; then
+                echo "📦 Installing t-rec via cargo..."
+                # Install imagemagick dependency first
+                if has_command "apt"; then
+                    sudo apt-get update && sudo apt-get install -y libx11-dev imagemagick
+                elif has_command "dnf"; then
+                    sudo dnf install -y libX11-devel ImageMagick
+                elif has_command "pacman"; then
+                    sudo pacman -S --noconfirm libx11 imagemagick
+                fi
+                cargo install t-rec || {
+                    echo "⚠️  Cargo install failed. Try manual installation:"
+                    echo "   https://github.com/sassman/t-rec-rs/releases"
+                    return 1
+                }
+            else
+                echo "⚠️  No suitable package manager found. Install t-rec manually:"
+                echo "   https://github.com/sassman/t-rec-rs/releases"
+                return 1
+            fi
+            ;;
+        *)
+            echo "⚠️  Unsupported OS: $os_type. Install t-rec manually:"
+            echo "   https://github.com/sassman/t-rec-rs/releases"
+            return 1
+            ;;
+    esac
 
     echo "✅ All prerequisites ready!"
     echo ""
@@ -369,17 +412,10 @@ cleanup() {
         [ "$cleanup_action" = "remove" ] && rm -rf "$DEMO_DIR"
     fi
 
-    # Handle intermediate files - remove recordings unless no-cleanup is specified
+    # Handle intermediate files - remove any leftover temp files unless no-cleanup is specified
     if ! is_true "$NO_CLEANUP"; then
-        if has_file "$CAST_FILE"; then
-            echo "   🗑️  Removing recording: $CAST_FILE"
-            rm -f "$CAST_FILE"
-        fi
-    fi
-
-    # Clean up failed recordings (only if not keeping artifacts)
-    if has_file "$CAST_FILE" && ! has_file "$GIF_FILE" && ! is_true "$NO_CLEANUP"; then
-        rm -f "$CAST_FILE"
+        # Clean up any t-rec temporary files
+        rm -rf /tmp/trec-* 2>/dev/null || true
     fi
 
     if [ $exit_code -eq 0 ]; then
@@ -696,38 +732,43 @@ exit $PYUVSTARTER_EXIT_CODE
 DEMO_SCRIPT_EOF
 
         chmod +x "$DEMO_DIR/../demo_script.sh"
-        asciinema rec "$CAST_FILE" --overwrite --title="pyuvstarter: ML Project Transformation" --command="$DEMO_DIR/../demo_script.sh"
+
+        echo "🎬 Starting t-rec recording. The demo will run automatically."
+        echo "💡 Press Ctrl+D when the demo completes to stop recording."
+        echo ""
+
+        # Run t-rec with optimized settings for demo GIFs
+        # Remove .gif extension from filename as t-rec adds it automatically
+        GIF_BASE_NAME="${GIF_FILE%.gif}"
+        t-rec \
+            --output "$GIF_BASE_NAME" \
+            --decor shadow \
+            --bg transparent \
+            --end-pause 2s \
+            --start-pause 1s \
+            "$DEMO_DIR/../demo_script.sh"
 
         # Clean up temporary script
         rm -f "$DEMO_DIR/../demo_script.sh"
-        echo "✅ Recording complete: $CAST_FILE"
+        echo "✅ Recording complete: $GIF_FILE"
     else
         # If not recording, just run the demo sequence directly.
         run_the_demo
     fi
 
-    # === GIF GENERATION (only if recording) ===
+    # === VERIFY GIF CREATION (only if recording) ===
     if [ "$RECORD_DEMO" = true ]; then
         echo ""
-        echo "🎨 Generating GitHub-optimized demo GIF..."
+        echo "🎨 Verifying demo GIF creation..."
 
-        # Optimized for comprehensive demo with better readability and smaller file size
-        agg --theme dracula \
-        --speed 1.2 \
-        --font-size 14 \
-        --cols 95 \
-        --rows 35 \
-        --fps-cap 10 \
-        "$CAST_FILE" "$GIF_FILE"
-
-        # Check if GIF was created successfully
+        # Check if GIF was created successfully by t-rec
         if ! has_file "$GIF_FILE"; then
             echo "❌ GIF generation failed!"
             exit 1
         fi
 
         GIF_SIZE=$(du -h "$GIF_FILE" | cut -f1)
-        echo "✅ Demo GIF generated: $GIF_FILE ($GIF_SIZE)"
+        echo "✅ Demo GIF created by t-rec: $GIF_FILE ($GIF_SIZE)"
 
         # Check GitHub file size limits (100MB)
         if [ "$(stat -f%z "$GIF_FILE" 2>/dev/null || wc -c < "$GIF_FILE" | tr -d ' ')" -gt 104857600 ]; then
@@ -747,7 +788,6 @@ DEMO_SCRIPT_EOF
         echo "📁 Generated files (preserved for inspection):"
         if is_true "$RECORD_DEMO"; then
             echo "   • $GIF_FILE - Demo GIF for README"
-            echo "   • $CAST_FILE - asciinema recording"
         fi
         echo "   • $DEMO_DIR/ - Demo project (inspect the transformation!)"
         echo ""
@@ -794,6 +834,30 @@ DEMO_SCRIPT_EOF
         echo ""
         echo "✨ Demo ready! Your pyuvstarter project now has a compelling visual demo."
     fi
+fi
+
+# === BASH TAB COMPLETION ===
+# Enable tab completion for script options
+# Usage: source this script or add to ~/.bashrc:
+#   complete -F _create_demo_completion ./create_demo.sh
+
+_create_demo_completion() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local opts="--no-cleanup --unit-test --record-demo --help -h"
+
+    case "${cur}" in
+        -*)
+            COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
+            ;;
+        *)
+            COMPREPLY=()
+            ;;
+    esac
+}
+
+# Auto-register completion if script is being sourced
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    complete -F _create_demo_completion "$(basename "${BASH_SOURCE[0]}")"
 fi
 
 # The final exit is handled by the `trap`, which uses $PYUVSTARTER_EXIT_CODE
