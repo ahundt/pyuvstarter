@@ -644,7 +644,7 @@ has_file() { [ -f "$1" ]; }
 has_dir() { [ -d "$1" ]; }
 
 # === SPLASH SCREEN ===
-clear
+
 echo ""
 echo ""
 echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨"
@@ -674,7 +674,7 @@ echo ""
 echo ""
 
 # === DEMO SEQUENCE ===
-clear
+
 echo ""
 echo "📊 PROJECT BEFORE PYUVSTARTER (the mess that will be fixed):"
 echo '👋 SCENARIO: You inherited this messy ML project...'
@@ -705,7 +705,7 @@ echo '   😤 This is what everyone experiences with incomplete requirements!'
 echo ''
 sleep 4
 
-clear
+
 echo "🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC..."
 echo "============================================"
 echo ""
@@ -758,41 +758,98 @@ if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
     echo ""
     sleep 3
 
-# === CLOSING SCREEN ===
+# === ACHIEVEMENTS SCREENS ===
     echo "🎉 TRANSFORMATION SUCCESSFUL!"
     echo ""
+
+    # Screen 1: Project Modernization
+
+    echo ""
     echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                           🚀 PYUVSTARTER ACHIEVEMENTS 🚀                        ║"
+    echo "║                           🚀 PYUVSTARTER ACHIEVEMENTS 🚀                         ║"
     echo "╠══════════════════════════════════════════════════════════════════════════════════╣"
     echo "║                                                                                  ║"
-    echo "║  🏗️  PROJECT MODERNIZATION COMPLETE                                             ║"
-    echo "║  ├─ ✅ pyproject.toml: Created modern Python configuration                      ║"
-    echo "║  ├─ ✅ .venv/: Isolated virtual environment ready                               ║"
-    echo "║  ├─ ✅ uv.lock: Reproducible dependency versions locked                         ║"
-    echo "║  └─ ✅ .vscode/: IDE configuration for instant development                      ║"
+    echo "║  🏗️  PROJECT MODERNIZATION COMPLETE                                              ║"
+    echo "║  ├─ ✅ pyproject.toml: Created modern Python configuration                       ║"
+    echo "║  ├─ ✅ .venv/: Isolated virtual environment ready                                ║"
+    echo "║  ├─ ✅ uv.lock: Reproducible dependency versions locked                          ║"
+    echo "║  └─ ✅ .vscode/: IDE configuration for instant development                       ║"
+    echo "║                                                                                  ║"
+    echo "║  🎯 Your project is now using modern Python best practices!                      ║"
+    echo "║                                                                                  ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
+    sleep 2
+
+    # Screen 2: Dependency Discovery
+
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                           🚀 PYUVSTARTER ACHIEVEMENTS 🚀                         ║"
+    echo "╠══════════════════════════════════════════════════════════════════════════════════╣"
     echo "║                                                                                  ║"
     echo "║  🔍 DEPENDENCY DISCOVERY MASTERY                                                 ║"
-    echo "║  ├─ 📄 Scanned all .py files for import statements                              ║"
-    echo "║  ├─ 📓 Analyzed Jupyter notebooks for hidden dependencies                       ║"
-    echo "║  ├─ 🕵️  Detected !pip install commands in notebook cells                        ║"
-    echo "║  └─ 🎯 Found 15+ missing dependencies automatically                             ║"
+    echo "║  ├─ 📄 Scanned all .py files for import statements                               ║"
+    echo "║  ├─ 📓 Analyzed Jupyter notebooks for hidden dependencies                        ║"
+    echo "║  ├─ 🕵️  Detected !pip install commands in notebook cells                         ║"
+    echo "║  └─ 🎯 Found 15+ missing dependencies automatically                              ║"
     echo "║                                                                                  ║"
-    echo "║  ⚡ BLAZING FAST SETUP                                                           ║"
-    echo "║  ├─ 🚀 Used UV for lightning-fast package installation                          ║"
+    echo "║  🎯 No more missing dependencies or import errors!                               ║"
+    echo "║                                                                                  ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
+    sleep 2
+
+    # Screen 3: Blazing Fast Setup
+
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                           🚀 PYUVSTARTER ACHIEVEMENTS 🚀                         ║"
+    echo "╠══════════════════════════════════════════════════════════════════════════════════╣"
+    echo "║                                                                                  ║"
+    echo "║  ⚡ BLAZING FAST SETUP                                                            ║"
+    echo "║  ├─ 🚀 Used UV for lightning-fast package installation                           ║"
     echo "║  ├─ 📦 Created complete dependency manifest                                      ║"
-    echo "║  ├─ 🔒 Generated lockfile for perfect reproducibility                           ║"
-    echo "║  └─ ⚙️  Configured development tools (ruff, VS Code)                            ║"
+    echo "║  ├─ 🔒 Generated lockfile for perfect reproducibility                            ║"
+    echo "║  └─ ⚙️  Configured development tools (ruff, VS Code)                             ║"
     echo "║                                                                                  ║"
-    echo "║  💡 WHAT PYUVSTARTER SAVED YOU FROM:                                            ║"
-    echo "║  ├─ ❌ Hours of manual dependency hunting                                        ║"
-    echo "║  ├─ ❌ Environment setup trial and error                                        ║"
-    echo "║  ├─ ❌ Missing package ModuleNotFoundError hell                                 ║"
-    echo "║  └─ ❌ \"It works on my machine\" debugging sessions                              ║"
+    echo "║  🎯 Setup completed in seconds, not hours!                                       ║"
     echo "║                                                                                  ║"
-    echo "║  🎯 RESULT: Professional Python project in seconds, not hours!                 ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
+    sleep 2
+
+    # Screen 4: What You Were Saved From
+
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                           🚀 PYUVSTARTER ACHIEVEMENTS 🚀                         ║"
+    echo "╠══════════════════════════════════════════════════════════════════════════════════╣"
     echo "║                                                                                  ║"
-    echo "║  📚 Learn more: https://github.com/ahundt/pyuvstarter                          ║"
-    echo "║  ⭐ Star us on GitHub if pyuvstarter saved your day!                           ║"
+    echo "║  💡 WHAT PYUVSTARTER SAVED YOU FROM:                                             ║"
+    echo "║  ├─ ⏰ Hours of manual dependency hunting                                        ║"
+    echo "║  ├─ 🔧 Environment setup trial and error                                         ║"
+    echo "║  ├─ 🐛 Avoid missing package ModuleNotFoundError hell                            ║"
+    echo "║  └─ 💻 \"It works on my machine\" debugging sessions                             ║"
+    echo "║                                                                                  ║"
+    echo "║  🎯 Focus on building, not fighting with dependencies!                           ║"
+    echo "║                                                                                  ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
+    sleep 2
+
+    # Screen 5: Final Result & Call to Action
+
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                           🚀 PYUVSTARTER ACHIEVEMENTS 🚀                         ║"
+    echo "╠══════════════════════════════════════════════════════════════════════════════════╣"
+    echo "║                                                                                  ║"
+    echo "║  🎯 RESULT: Professional Python project in seconds, not hours!                   ║"
+    echo "║                                                                                  ║"
+    echo "║  🌟 LOVE WHAT YOU SAW?                                                           ║"
+    echo "║  ├─ 📚 Learn more: https://github.com/ahundt/pyuvstarter                         ║"
+    echo "║  ├─ ⭐ Star us on GitHub if pyuvstarter saved your day!                          ║"
+    echo "║  ├─ 🔄 Share with fellow Python developers                                       ║"
+    echo "║  └─ 💬 Join our community & suggest features                                     ║"
+    echo "║                                                                                  ║"
+    echo "║  🎁 PYUVSTARTER: Making Python development a joy, not a chore!                   ║"
     echo "║                                                                                  ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
     sleep 3
@@ -803,7 +860,7 @@ else
     sleep 3
 fi
 
-clear
+
 sleep 4
 
 exit $PYUVSTARTER_EXIT_CODE
