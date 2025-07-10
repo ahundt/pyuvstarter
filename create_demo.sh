@@ -643,7 +643,25 @@ DEMO_DIR="pyuvstarter_demo_project"
 has_file() { [ -f "$1" ]; }
 has_dir() { [ -d "$1" ]; }
 
+# === SPLASH SCREEN ===
+clear
+echo ""
+echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀✨"
+echo "                                                                           "
+echo "  ██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗███████╗████████╗ █████╗ ██████╗ ████████╗███████╗██████╗ "
+echo "  ██╔══██╗╚██╗ ██╔╝██║   ██║██║   ██║██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██╔════╝██╔══██╗"
+echo "  ██████╔╝ ╚████╔╝ ██║   ██║██║   ██║███████╗   ██║   ███████║██████╔╝   ██║   █████╗  ██████╔╝"
+echo "  ██╔═══╝   ╚██╔╝  ██║   ██║╚██╗ ██╔╝╚════██║   ██║   ██╔══██║██╔══██╗   ██║   ██╔══╝  ██╔══██╗"
+echo "  ██║        ██║   ╚██████╔╝ ╚████╔╝ ███████║   ██║   ██║  ██║██║  ██║   ██║   ███████╗██║  ██║"
+echo "  ╚═╝        ╚═╝    ╚═════╝   ╚═══╝  ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝"
+echo "                                                                                               "
+echo "                        🔥 FROM DEPENDENCY CHAOS TO MODERN PYTHON MAGIC 🔥                     "
+echo "                                                                                               "
+echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀🚀✨🚀✨🚀✨🚀✨🚀✨"
+echo ""
+
 # === DEMO SEQUENCE ===
+clear
 echo ""
 echo "📊 PROJECT BEFORE PYUVSTARTER (the mess that will be fixed):"
 echo '👋 SCENARIO: You inherited this messy ML project...'
@@ -674,6 +692,7 @@ echo '   😤 This is what everyone experiences with incomplete requirements!'
 echo ''
 sleep 4
 
+clear
 echo "🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC..."
 echo "============================================"
 echo ""
@@ -716,17 +735,91 @@ if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
     (cd "$DEMO_DIR" && source .venv/bin/activate && python scripts/data_analysis.py)
     echo '   ✅ SUCCESS: All dependencies work perfectly!'
     echo ''
+    sleep 1
+
+    # Show the AFTER directory structure again for emphasis
+    echo ""
+    echo "📁 FINAL PROJECT STRUCTURE (compare with the broken version!):"
+    echo "=============================================================="
+    tree "$DEMO_DIR" -I '__pycache__' --dirsfirst 2>/dev/null || find "$DEMO_DIR" -type f | sort
+    echo ""
     sleep 3
-    # --- END BUG FIX ---
+
+
     echo "🎉 TRANSFORMATION SUCCESSFUL!"
-    echo "   ✅ Project transformed from dependency chaos to modern Python project"
-    echo "   ✅ All dependencies discovered and configured"
-    echo "   ✅ Ready for development and deployment"
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                           🚀 PYUVSTARTER ACHIEVEMENTS 🚀                        ║"
+    echo "╠══════════════════════════════════════════════════════════════════════════════════╣"
+    echo "║                                                                                  ║"
+    echo "║  🏗️  PROJECT MODERNIZATION COMPLETE                                             ║"
+    echo "║  ├─ ✅ pyproject.toml: Created modern Python configuration                      ║"
+    echo "║  ├─ ✅ .venv/: Isolated virtual environment ready                               ║"
+    echo "║  ├─ ✅ uv.lock: Reproducible dependency versions locked                         ║"
+    echo "║  └─ ✅ .vscode/: IDE configuration for instant development                      ║"
+    echo "║                                                                                  ║"
+    echo "║  🔍 DEPENDENCY DISCOVERY MASTERY                                                 ║"
+    echo "║  ├─ 📄 Scanned all .py files for import statements                              ║"
+    echo "║  ├─ 📓 Analyzed Jupyter notebooks for hidden dependencies                       ║"
+    echo "║  ├─ 🕵️  Detected !pip install commands in notebook cells                        ║"
+    echo "║  └─ 🎯 Found 15+ missing dependencies automatically                             ║"
+    echo "║                                                                                  ║"
+    echo "║  ⚡ BLAZING FAST SETUP                                                           ║"
+    echo "║  ├─ 🚀 Used UV for lightning-fast package installation                          ║"
+    echo "║  ├─ 📦 Created complete dependency manifest                                      ║"
+    echo "║  ├─ 🔒 Generated lockfile for perfect reproducibility                           ║"
+    echo "║  └─ ⚙️  Configured development tools (ruff, VS Code)                            ║"
+    echo "║                                                                                  ║"
+    echo "║  💡 WHAT PYUVSTARTER SAVED YOU FROM:                                            ║"
+    echo "║  ├─ ❌ Hours of manual dependency hunting                                        ║"
+    echo "║  ├─ ❌ Environment setup trial and error                                        ║"
+    echo "║  ├─ ❌ Missing package ModuleNotFoundError hell                                 ║"
+    echo "║  └─ ❌ \"It works on my machine\" debugging sessions                              ║"
+    echo "║                                                                                  ║"
+    echo "║  🎯 RESULT: Professional Python project in seconds, not hours!                 ║"
+    echo "║                                                                                  ║"
+    echo "║  📚 Learn more: https://github.com/ahundt/pyuvstarter                          ║"
+    echo "║  ⭐ Star us on GitHub if pyuvstarter saved your day!                           ║"
+    echo "║                                                                                  ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════════╝"
+    sleep 3
 else
     echo "❌ TRANSFORMATION FAILED!"
     echo "   💥 pyuvstarter encountered errors during execution"
     echo "   🔍 Check the output above for details"
+    sleep 3
 fi
+
+# === CLOSING SCREEN ===
+clear
+echo ""
+echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨"
+echo "                                                                               "
+echo "  ██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗███████╗████████╗ █████╗ ██████╗ ████████╗███████╗██████╗ "
+echo "  ██╔══██╗╚██╗ ██╔╝██║   ██║██║   ██║██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██╔════╝██╔══██╗"
+echo "  ██████╔╝ ╚████╔╝ ██║   ██║██║   ██║███████╗   ██║   ███████║██████╔╝   ██║   █████╗  ██████╔╝"
+echo "  ██╔═══╝   ╚██╔╝  ██║   ██║╚██╗ ██╔╝╚════██║   ██║   ██╔══██║██╔══██╗   ██║   ██╔══╝  ██╔══██╗"
+echo "  ██║        ██║   ╚██████╔╝ ╚████╔╝ ███████║   ██║   ██║  ██║██║  ██║   ██║   ███████╗██║  ██║"
+echo "  ╚═╝        ╚═╝    ╚═════╝   ╚═══╝  ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝"
+echo "                                                                               "
+echo "                     🎯 FROM BROKEN TO BRILLIANT IN SECONDS! 🎯                "
+echo "                                                                               "
+echo "        � STOP wasting hours on dependency hell & environment setup!         "
+echo "        🚀 START building amazing Python projects immediately!                 "
+echo "                                                                               "
+echo "        ┌─────────────────────────────────────────────────────────────────┐   "
+echo "        │  ⭐ LOVE PYUVSTARTER? Show your support:                        │   "
+echo "        │     🌟 Star us: https://github.com/ahundt/pyuvstarter           │   "
+echo "        │     📚 Learn more & get started today!                          │   "
+echo "        │     🔄 Share with fellow Python developers                      │   "
+echo "        │     💬 Join our community & suggest features                    │   "
+echo "        └─────────────────────────────────────────────────────────────────┘   "
+echo "                                                                               "
+echo "        � PYUVSTARTER: The gift that keeps on giving to Python developers!   "
+echo "                                                                               "
+echo "🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨🚀✨"
+echo ""
+sleep 4
 
 exit $PYUVSTARTER_EXIT_CODE
 DEMO_SCRIPT_EOF
@@ -737,15 +830,16 @@ DEMO_SCRIPT_EOF
         echo "💡 Press Ctrl+D when the demo completes to stop recording."
         echo ""
 
-        # Run t-rec with optimized settings for demo GIFs
+        # Run t-rec with optimized settings for demo GIFs (slower, more readable)
         # Remove .gif extension from filename as t-rec adds it automatically
         GIF_BASE_NAME="${GIF_FILE%.gif}"
         t-rec \
             --output "$GIF_BASE_NAME" \
             --decor shadow \
             --bg transparent \
-            --end-pause 2s \
-            --start-pause 1s \
+            --end-pause 3s \
+            --start-pause 2s \
+            --natural \
             "$DEMO_DIR/../demo_script.sh"
 
         # Clean up temporary script
