@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.0.0",  # Data validation and settings management
     "pydantic-settings>=2.0.0",  # Settings management with Pydantic
     "typing-extensions>=4.0.0",  # Backports of typing features
+    "pip-requirements-parser>=32.0.0",  # For robust requirements.txt parsing
 ]
 
 

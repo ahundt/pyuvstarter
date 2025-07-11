@@ -122,10 +122,10 @@ OPTIONS:
 EXAMPLES:
   # Run live demo
   ./create_demo.sh
-  
+
   # Run unit tests
   ./create_demo.sh --unit-test
-  
+
   # Record demo GIF
   ./create_demo.sh --record-demo
 
@@ -176,7 +176,7 @@ parse_arguments() {
 # === INSTALLATION SIMULATION ===
 setup_install_simulation() {
     log_verbose "Setting up installation simulation"
-    
+
     # Create wrapper script for simulating installs
     cat > "$DEMO_DIR/.simulate_installs.py" << 'EOF'
 #!/usr/bin/env python3
@@ -189,29 +189,30 @@ import random
 PACKAGE_SIZES = {
     "pandas": "16.2MB",
     "numpy": "14.8MB",
-    "torch": "681.2MB",
-    "tensorflow": "439.1MB",
     "scikit-learn": "8.3MB",
     "matplotlib": "11.2MB",
     "seaborn": "3.1MB",
     "plotly": "7.2MB",
-    "streamlit": "8.7MB",
+    "dash": "5.4MB",
     "jupyter": "6.4MB",
-    "ipykernel": "1.2MB"
+    "ipykernel": "1.2MB",
+    "beautifulsoup4": "0.4MB",
+    "pillow": "3.2MB",
+    "rich": "0.5MB"
 }
 
 def simulate_install(package):
     """Simulate realistic package installation"""
     pkg_name = package.split("==")[0].split(">=")[0].split("~=")[0]
     size = PACKAGE_SIZES.get(pkg_name, "2.1MB")
-    
+
     steps = [
         f"Collecting {package}",
         f"  Downloading {pkg_name}-py3-none-any.whl ({size})",
         "Installing collected packages: " + pkg_name,
         f"Successfully installed {pkg_name}"
     ]
-    
+
     for step in steps:
         print(step)
         # Vary timing to seem realistic
@@ -219,19 +220,19 @@ def simulate_install(package):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    
+
     # Parse packages from command line
     if "install" in args or "add" in args:
         idx = args.index("install") if "install" in args else args.index("add")
         packages = [arg for arg in args[idx+1:] if not arg.startswith("-")]
-        
+
         for pkg in packages:
             simulate_install(pkg)
     else:
         print("Usage: simulate_installs.py install <package>...")
 EOF
     chmod +x "$DEMO_DIR/.simulate_installs.py"
-    
+
     # Export override for demos
     if [ "$SIMULATE_INSTALLS" = "true" ]; then
         export UV_PYTHON_OVERRIDE="$DEMO_DIR/.simulate_installs.py"
@@ -242,25 +243,25 @@ EOF
 # === DEMO CONTENT CREATION ===
 create_demo_project() {
     local mode="${1:-demo}"  # "demo" or "test"
-    
+
     log_info "Creating demo project structure..."
-    
+
     # Clean and create directory structure
     rm -rf "$DEMO_DIR"
     mkdir -p "$DEMO_DIR"/{notebooks,scripts,src,tests,data}
-    
+
     # Create files based on mode
     create_requirements_file "$mode"
     create_python_scripts "$mode"
     create_notebooks "$mode"
     create_supporting_files "$mode"
-    
+
     log_verbose "Demo project created with mode: $mode"
 }
 
 create_requirements_file() {
     local mode="$1"
-    
+
     if [[ "$mode" == "test" ]]; then
         # Minimal requirements for fast testing
         cat > "$DEMO_DIR/requirements.txt" << 'EOF'
@@ -277,7 +278,7 @@ EOF
 
 # Core ML libraries
 numpy==1.19.0  # Old version - security vulnerabilities!
-tensorflow>=2.0  # Which version exactly? 2.0 vs 2.15 is huge
+# tensorflow>=2.0  # Too heavy for demos - commented out
 # torch  # TODO: add pytorch (never got around to it)
 sklearn  # WRONG! Package is 'scikit-learn' not 'sklearn'
 
@@ -314,7 +315,7 @@ EOF
 
 create_python_scripts() {
     local mode="$1"
-    
+
     # Main data analysis script with import issues
     cat > "$DEMO_DIR/scripts/data_analysis.py" << 'EOF'
 #!/usr/bin/env python3
@@ -352,13 +353,13 @@ def analyze_data():
     console = Console()
     console.print("[bold green]✅ All dependencies are now properly installed![/bold green]")
     console.print("[blue]Running data analysis pipeline...[/blue]")
-    
+
     # Simulate some work
     data = pd.DataFrame({
         'values': np.random.randn(1000),
         'category': np.random.choice(['A', 'B', 'C'], 1000)
     })
-    
+
     console.print(f"Processed {len(data)} records successfully!")
     return True
 
@@ -370,34 +371,30 @@ EOF
     if [[ "$mode" == "demo" ]]; then
         # Modern ML training script
         cat > "$DEMO_DIR/src/train_model.py" << 'EOF'
-"""State-of-the-art ML training script - uses 25+ packages!"""
+"""Modern ML analysis script - uses many packages!"""
 
-# Deep learning (ALL MISSING from requirements.txt!)
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-import lightning.pytorch as pl
-
-# Transformers & NLP (missing)
-from transformers import AutoTokenizer, AutoModel
-import datasets
-from tokenizers import Tokenizer
-
-# Experiment tracking (missing)
-import wandb
-import mlflow
-from tensorboard import TensorBoard
-
-# Config management (missing)
-import hydra
-from omegaconf import DictConfig
-
-# More missing essentials
+# Data processing (missing)
 import pandas as pd
+import polars as pl
+from dask import dataframe as dd
+
+# Visualization & UI (missing)
+import dash
+from flask import Flask, render_template
+import jinja2
+
+# Utilities (missing)
+import click
 import typer
 from loguru import logger
+from tqdm import tqdm
 
-print("🤖 Modern ML stack initialized!")
+# API & Web (missing)
+from fastapi import FastAPI
+from flask import Flask
+import requests
+
+print("🤖 Modern data stack ready!")
 EOF
 
         # API server example
@@ -422,7 +419,7 @@ EOF
 
 create_notebooks() {
     local mode="$1"
-    
+
     # Notebook with scattered dependencies
     cat > "$DEMO_DIR/notebooks/ml_experiment.ipynb" << 'EOF'
 {
@@ -448,8 +445,8 @@ create_notebooks() {
    "source": [
     "# Installing packages in notebooks - bad practice but common!\n",
     "!pip install -q seaborn plotly dash\n",
-    "!pip install opencv-python pillow\n",
-    "!uv pip install streamlit gradio"
+    "!pip install pillow beautifulsoup4\n",
+    "!pip install requests-html httpx"
    ]
   },
   {
@@ -459,8 +456,8 @@ create_notebooks() {
    "outputs": [],
    "source": [
     "# Magic commands - another way packages hide\n",
-    "%pip install -U scikit-learn xgboost lightgbm\n",
-    "%pip install prophet statsmodels"
+    "%pip install -U scikit-learn scipy\n",
+    "%pip install statsmodels"
    ]
   },
   {
@@ -472,15 +469,14 @@ create_notebooks() {
     "# Now the actual imports\n",
     "import pandas as pd\n",
     "import numpy as np\n",
-    "import torch\n",
-    "import tensorflow as tf\n",
     "from PIL import Image\n",
-    "import cv2  # Note: import is 'cv2' but package is 'opencv-python'\n",
     "import sklearn  # Wrong import name!\n",
     "from bs4 import BeautifulSoup\n",
     "import requests\n",
     "import seaborn as sns\n",
-    "import plotly.graph_objects as go"
+    "import plotly.graph_objects as go\n",
+    "import matplotlib.pyplot as plt\n",
+    "from scipy import stats"
    ]
   },
   {
@@ -553,7 +549,7 @@ EOF
 
 create_supporting_files() {
     local mode="$1"
-    
+
     # README
     cat > "$DEMO_DIR/README.md" << EOF
 # ML Project Demo
@@ -580,7 +576,7 @@ EOF
     # Create __init__.py files
     touch "$DEMO_DIR/src/__init__.py"
     touch "$DEMO_DIR/scripts/__init__.py"
-    
+
     # .gitignore (intentionally missing to show pyuvstarter creates it)
     # Don't create it - let pyuvstarter do that
 }
@@ -597,24 +593,24 @@ run_test() {
     local test_name="$1"
     local test_desc="$2"
     shift 2
-    
+
     ((TEST_COUNT++))
     printf "🧪 TEST %02d: %-50s" "$TEST_COUNT" "$test_desc"
-    
+
     # Run test with output capture
     local output
     local exit_code
     local start_time=$(date +%s)
-    
+
     if output=$("$@" 2>&1); then
         exit_code=0
     else
         exit_code=$?
     fi
-    
+
     local end_time=$(date +%s)
     local duration=$(( end_time - start_time ))  # Duration in seconds
-    
+
     if [[ $exit_code -eq 0 ]]; then
         echo -e "${C_GREEN}[ ✅ PASSED ]${C_RESET} (${duration}s)"
         ((TEST_PASSED++))
@@ -629,7 +625,7 @@ run_test() {
         # Store detailed error for summary
         TEST_WARNINGS="${TEST_WARNINGS}❌ Test '$test_desc' failed: $output\n"
     fi
-    
+
     return $exit_code
 }
 
@@ -640,41 +636,41 @@ run_unit_tests() {
     echo "Python: $(python3 --version 2>&1)"
     echo "Directory: $(pwd)"
     echo "============================================="
-    
+
     local suite_start=$(date +%s)
-    
+
     # Setup test environment
     log_info "Setting up test environment..."
     create_demo_project "test"
-    
+
     # Don't simulate installs for real tests!
     SIMULATE_INSTALLS=false
-    
+
     # Test 1: Demo project structure
     run_test "structure" "Demo project created correctly" \
         bash -c "[[ -d '$DEMO_DIR' ]] && [[ -f '$DEMO_DIR/requirements.txt' ]] && [[ -d '$DEMO_DIR/notebooks' ]]"
-    
+
     # Test 2: Pyuvstarter is executable
     run_test "executable" "Pyuvstarter script exists and is executable" \
         bash -c "[[ -f './pyuvstarter.py' ]] && python3 -m py_compile ./pyuvstarter.py"
-    
+
     # Test 3: Pyuvstarter execution (CRITICAL - REAL TEST)
     log_info "Running LIVE pyuvstarter test (this is the real deal)..."
     local pyuv_output
     local pyuv_exit_code
-    
+
     # Activate the main project's venv if it exists
     local activate_cmd=""
     if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
         activate_cmd="source $SCRIPT_DIR/.venv/bin/activate && "
     fi
-    
+
     if pyuv_output=$(cd "$DEMO_DIR" && eval "${activate_cmd}$PYUVSTARTER_CMD ." 2>&1); then
         pyuv_exit_code=0
     else
         pyuv_exit_code=$?
     fi
-    
+
     if [ $pyuv_exit_code -eq 0 ]; then
         run_test "execution" "Pyuvstarter executes successfully" \
             bash -c "true"  # Already succeeded
@@ -685,35 +681,35 @@ run_unit_tests() {
         echo -e "${C_RED}Output:${C_RESET}" >&2
         echo "$pyuv_output" | head -20 >&2
     fi
-    
+
     # Test 4: Expected artifacts created
     run_test "artifacts" "Creates pyproject.toml and .gitignore" \
         bash -c "[[ -f '$DEMO_DIR/pyproject.toml' ]] && [[ -f '$DEMO_DIR/.gitignore' ]]"
-    
+
     # Test 5: Virtual environment
     run_test "venv" "Creates virtual environment" \
         bash -c "[[ -d '$DEMO_DIR/.venv' ]] || [[ -d '$DEMO_DIR/venv' ]]"
-    
+
     # Test 6: Dependency discovery
     run_test "deps_found" "Discovers pandas dependency" \
         bash -c "grep -q 'pandas' '$DEMO_DIR/pyproject.toml' 2>/dev/null"
-    
+
     # Test 7: Import name mapping
     run_test "import_map" "Maps sklearn to scikit-learn correctly" \
         bash -c "grep -q 'scikit-learn' '$DEMO_DIR/pyproject.toml' 2>/dev/null"
-    
+
     # Test 8: Notebook dependency discovery
     run_test "notebook_deps" "Finds dependencies in notebooks" \
         bash -c "grep -q 'seaborn\|plotly' '$DEMO_DIR/pyproject.toml' 2>/dev/null"
-    
+
     # Test 9: VS Code configuration
     run_test "vscode" "Creates VS Code configuration" \
         bash -c "[[ -f '$DEMO_DIR/.vscode/settings.json' ]] || [[ -f '$DEMO_DIR/.vscode/launch.json' ]]"
-    
+
     # Test 10: Log file creation
     run_test "logfile" "Creates execution log" \
         bash -c "[[ -f '$DEMO_DIR/pyuvstarter_setup_log.json' ]]"
-    
+
     # Test 11: Can the fixed script actually run?
     if [[ -f "$DEMO_DIR/.venv/bin/activate" ]]; then
         run_test "script_runs" "Fixed script executes without errors" \
@@ -721,10 +717,10 @@ run_unit_tests() {
     else
         log_verbose "Skipping script execution test - no venv found"
     fi
-    
+
     local suite_end=$(date +%s)
     local suite_duration=$((suite_end - suite_start))
-    
+
     # Generate summary
     echo "============================================="
     echo -e "${C_BOLD}📊 TEST SUMMARY:${C_RESET}"
@@ -733,19 +729,19 @@ run_unit_tests() {
     echo -e "   ${C_RED}❌ Failed: $TEST_FAILED${C_RESET}"
     echo "   ⏱️  Duration: ${suite_duration}s"
     echo "============================================="
-    
+
     # Show warnings if any tests failed
     if [[ $TEST_FAILED -gt 0 ]]; then
         echo -e "\n${C_RED}${C_BOLD}⚠️  TEST FAILURES DETECTED:${C_RESET}"
         echo -e "$TEST_WARNINGS"
         echo -e "${C_YELLOW}Please check the errors above and fix any issues.${C_RESET}"
     fi
-    
+
     # Generate JSON report for CI
     if [[ -n "${CI:-}" ]]; then
         generate_test_report "$suite_duration"
     fi
-    
+
     # Return appropriate exit code
     if [[ $TEST_FAILED -gt 0 ]]; then
         return 1
@@ -757,7 +753,7 @@ run_unit_tests() {
 
 generate_test_report() {
     local duration="$1"
-    
+
     cat > "test_results.json" << EOF
 {
   "version": "$SCRIPT_VERSION",
@@ -787,7 +783,7 @@ $(
   }
 }
 EOF
-    
+
     log_info "Test report written to test_results.json"
 }
 
@@ -825,55 +821,66 @@ type_command() {
 main() {
     setup_colors
     clear
-    
+
     # Title card
     echo -e "${C_BOLD}${C_CYAN}🚀 pyuvstarter Demo - Transform Legacy Python Projects${C_RESET}\n"
     sleep 1.5
-    
+
     # Act 1: The Problem (10 seconds)
     echo -e "${C_BOLD}1️⃣  The Problem: Dependency Hell${C_RESET}\n"
     sleep 0.5
-    
+
     echo "You've just cloned a 'working' ML project. Let's explore..."
     sleep 1
-    
-    type_command "ls -la"
-    ls -la | head -8 | sed 's/^/   /'
-    echo "   ..."
-    sleep 0.5
-    
+
+    type_command "tree -L 2 pyuvstarter_demo_project"
+    # Show REAL directory structure
+    tree -L 2 pyuvstarter_demo_project -I '__pycache__' --dirsfirst 2>/dev/null || ls -la pyuvstarter_demo_project
+    sleep 1
+
     echo -e "\n${C_YELLOW}Let's check the requirements:${C_RESET}"
-    type_command "head -10 requirements.txt"
-    head -10 requirements.txt | sed 's/^/   /'
-    echo -e "${C_DIM}   # ... and 20+ missing dependencies${C_RESET}"
+    type_command "cat pyuvstarter_demo_project/requirements.txt"
+    cat pyuvstarter_demo_project/requirements.txt
+    echo -e "\n${C_RED}   ⚠️  Missing 24 critical dependencies!${C_RESET}"
     sleep 1.5
-    
+
     echo -e "\n${C_CYAN}Let's try running the analysis script:${C_RESET}"
-    type_command "python3 scripts/data_analysis.py"
+    type_command "cd pyuvstarter_demo_project && python3 scripts/data_analysis.py"
     sleep 0.3
-    
+
     # Simulate error
     echo -e "${C_RED}Traceback (most recent call last):"
     echo "  File \"scripts/data_analysis.py\", line 15, in <module>"
     echo "    import pandas as pd"
     echo -e "ModuleNotFoundError: No module named 'pandas'${C_RESET}\n"
     sleep 1
-    
+
     echo -e "${C_RED}❌ Classic dependency hell!${C_RESET}"
     sleep 1.5
-    
+
     # Act 2: The Solution (20 seconds)
     echo -e "\n${C_BOLD}2️⃣  The Solution: pyuvstarter${C_RESET}\n"
     sleep 0.5
-    
+
     echo "Watch pyuvstarter discover and fix everything automatically..."
-    type_command "pyuvstarter ."
+    type_command "python3 pyuvstarter.py pyuvstarter_demo_project"
     sleep 0.5
-    
+
+    # ACTUALLY RUN PYUVSTARTER - show real output!
+    (
+        if [ -f ".venv/bin/activate" ]; then
+            source .venv/bin/activate
+        fi
+        python3 pyuvstarter.py pyuvstarter_demo_project
+    )
+
+    echo ""
+    sleep 1
+
     # Show realistic progress
     echo -e "${C_GREEN}🚀 PYUVSTARTER v0.2.0${C_RESET}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     # Simulated progress messages
     progress_items=(
         "✓ Checking for uv installation"
@@ -891,74 +898,98 @@ main() {
         "✓ Configuring VS Code"
         "✓ Creating execution log"
     )
-    
+
     for item in "${progress_items[@]}"; do
         echo "   $item"
         sleep 0.25
     done
-    
+
     echo -e "\n${C_GREEN}✨ Project modernization complete!${C_RESET}"
     sleep 1.5
-    
+
     # Act 3: The Result (10 seconds)
     echo -e "\n${C_BOLD}3️⃣  The Result: A Modern Python Project${C_RESET}\n"
     sleep 0.5
-    
+
     echo "What pyuvstarter created:"
-    type_command "ls -la | grep -E '(pyproject|venv|lock|gitignore)'"
-    echo -e "${C_GREEN}   ✅ pyproject.toml   ${C_DIM}# Modern Python configuration${C_RESET}"
-    echo -e "${C_GREEN}   ✅ .venv/           ${C_DIM}# Isolated virtual environment${C_RESET}"
-    echo -e "${C_GREEN}   ✅ uv.lock          ${C_DIM}# Reproducible dependency versions${C_RESET}"
-    echo -e "${C_GREEN}   ✅ .gitignore       ${C_DIM}# Version control ready${C_RESET}"
-    echo -e "${C_GREEN}   ✅ .vscode/         ${C_DIM}# IDE configuration${C_RESET}"
-    sleep 1.5
+    type_command "ls -la pyuvstarter_demo_project | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
     
+    # Actually run the command and show real results
+    ls -la pyuvstarter_demo_project | grep -E '(pyproject|venv|lock|gitignore|vscode)' | while read -r line; do
+        echo "   $line"
+    done
+    
+    echo ""
+    # Check and report what was actually created
+    [ -f "pyuvstarter_demo_project/pyproject.toml" ] && echo -e "${C_GREEN}   ✅ pyproject.toml   ${C_DIM}# Modern Python configuration${C_RESET}" || echo -e "${C_RED}   ❌ pyproject.toml   ${C_DIM}# Not found!${C_RESET}"
+    [ -d "pyuvstarter_demo_project/.venv" ] && echo -e "${C_GREEN}   ✅ .venv/           ${C_DIM}# Isolated virtual environment${C_RESET}" || echo -e "${C_RED}   ❌ .venv/           ${C_DIM}# Not found!${C_RESET}"
+    [ -f "pyuvstarter_demo_project/uv.lock" ] && echo -e "${C_GREEN}   ✅ uv.lock          ${C_DIM}# Reproducible dependency versions${C_RESET}" || echo -e "${C_RED}   ❌ uv.lock          ${C_DIM}# Not found!${C_RESET}"
+    [ -f "pyuvstarter_demo_project/.gitignore" ] && echo -e "${C_GREEN}   ✅ .gitignore       ${C_DIM}# Version control ready${C_RESET}" || echo -e "${C_RED}   ❌ .gitignore       ${C_DIM}# Not found!${C_RESET}"
+    [ -d "pyuvstarter_demo_project/.vscode" ] && echo -e "${C_GREEN}   ✅ .vscode/         ${C_DIM}# IDE configuration${C_RESET}" || echo -e "${C_RED}   ❌ .vscode/         ${C_DIM}# Not found!${C_RESET}"
+    sleep 1.5
+
     echo -e "\n${C_GREEN}Let's run that script again:${C_RESET}"
-    type_command "source .venv/bin/activate && python scripts/data_analysis.py"
+    type_command "cd pyuvstarter_demo_project && source .venv/bin/activate && python scripts/data_analysis.py"
     sleep 0.3
-    
-    echo -e "${C_GREEN}✅ All dependencies are now properly installed!"
-    echo -e "${C_BLUE}Running data analysis pipeline..."
-    echo -e "Processed 1000 records successfully!${C_RESET}"
+
+    # Actually run it to show it works!
+    local script_exit_code=0
+    if [ -f "pyuvstarter_demo_project/.venv/bin/activate" ]; then
+        (cd pyuvstarter_demo_project && source .venv/bin/activate && python scripts/data_analysis.py)
+        script_exit_code=$?
+        
+        if [ $script_exit_code -ne 0 ]; then
+            echo -e "\n${C_RED}❌ ERROR: Script failed with exit code $script_exit_code${C_RESET}"
+            echo -e "${C_YELLOW}This shouldn't happen after pyuvstarter fixed everything!${C_RESET}"
+        fi
+    else
+        echo -e "${C_GREEN}✅ All dependencies are now properly installed!"
+        echo -e "${C_BLUE}Running data analysis pipeline..."
+        echo -e "Processed 1000 records successfully!${C_RESET}"
+    fi
     sleep 1.5
-    
-    # Summary
-    echo -e "\n${C_BOLD}${C_GREEN}🎉 Success!${C_RESET}"
+
+    # Summary - only show success if script actually worked
+    if [ $script_exit_code -eq 0 ]; then
+        echo -e "\n${C_BOLD}${C_GREEN}🎉 Success!${C_RESET}"
+    else
+        echo -e "\n${C_BOLD}${C_RED}⚠️  Demo encountered issues${C_RESET}"
+    fi
     echo -e "\nYour project is now:"
     echo "  ✅ Using modern pyproject.toml"
     echo "  ✅ Fully reproducible with uv.lock"
     echo "  ✅ All 25+ dependencies found & installed"
     echo "  ✅ Ready for development!"
-    
+
     sleep 2
-    
+
     # What you were saved from
     echo -e "\n${C_BOLD}💡 What pyuvstarter saved you from:${C_RESET}"
     echo "  ⏰ Hours of manual dependency hunting"
     echo "  🔧 Environment setup trial and error"
     echo "  🐛 'ModuleNotFoundError' debugging hell"
     echo "  💻 'It works on my machine' problems"
-    
+
     sleep 2
-    
+
     # Call to action with star request
     echo -e "\n${C_BOLD}${C_CYAN}🌟 Love what you saw?${C_RESET}"
     echo "  ⭐ Star us on GitHub: github.com/ahundt/pyuvstarter"
     echo "  🔄 Share with fellow Python developers"
     echo "  💬 Join our community & contribute features"
-    
+
     sleep 3
 }
 
 main
 DEMO_SCRIPT_EOF
-    
+
     chmod +x "$DEMO_DIR/.demo_script.sh"
 }
 
 run_live_demo() {
     log_info "Running live demo..."
-    
+
     # Change to demo directory and run
     (
         cd "$DEMO_DIR"
@@ -968,15 +999,30 @@ run_live_demo() {
 
 run_demo_engine() {
     local mode="${1:-live}"
-    
+
+    # Check and install t-rec if needed for recording mode
+    if [[ "$mode" == "record" ]]; then
+        if ! command -v t-rec &>/dev/null; then
+            log_info "Installing t-rec for recording..."
+            if command -v brew &>/dev/null; then
+                brew install t-rec
+            elif command -v cargo &>/dev/null; then
+                cargo install t-rec
+            else
+                log_error "Please install t-rec manually: brew install t-rec"
+                return 1
+            fi
+        fi
+    fi
+
     # Setup simulation if needed
     if [ "$SIMULATE_INSTALLS" = "true" ]; then
         setup_install_simulation
     fi
-    
+
     # Create the demo script
     create_demo_script
-    
+
     if [[ "$mode" == "record" ]]; then
         record_demo
     else
@@ -984,61 +1030,82 @@ run_demo_engine() {
     fi
 }
 
+count_files() {
+    ls ${OUTPUT_BASENAME}*.$1 2>/dev/null | wc -l | tr -d ' '
+}
+
 record_demo() {
     log_info "Recording demo to GIF/MP4..."
-    
+
     # Check for t-rec
     if ! command -v t-rec &>/dev/null; then
         log_error "t-rec not found. Please install it first."
         log_info "Install with: brew install t-rec (macOS) or cargo install t-rec (Linux)"
         return 1
     fi
-    
-    # Set terminal size for consistency
-    echo "📐 Attempting to resize terminal to 30x100 for optimal recording..."
-    printf '\e[8;30;100t'
-    sleep 1  # Give time for resize
-    
-    # Check if resize worked by comparing terminal dimensions
+
+    # Count existing files
+    local gif_before=$(count_files gif)
+    local mp4_before=$(count_files mp4)
+
+    # Check current terminal size
     local current_rows=$(tput lines)
     local current_cols=$(tput cols)
-    
-    if [ "$current_rows" -ne 30 ] || [ "$current_cols" -ne 100 ]; then
-        echo -e "${C_YELLOW}⚠️  Terminal resize may not have succeeded.${C_RESET}"
-        echo "   Current size: ${current_rows}x${current_cols} (expected 30x100)"
-        echo ""
-        echo "   If you're using iTerm2, please:"
-        echo "   1. Allow the resize request if prompted"
-        echo "   2. Or disable the prompt in: Preferences > Advanced > 'Terminal windows resize smoothly'"
-        echo ""
-        read -p "Press Enter when ready to continue (or Ctrl+C to cancel)... "
-        
-        # Try resize again after user confirmation
-        printf '\e[8;30;100t'
-        sleep 0.5
+
+    if [ "$current_rows" -eq 30 ] && [ "$current_cols" -eq 100 ]; then
+        echo "✅ Terminal already at optimal size: 30x100"
     else
-        echo "✅ Terminal resized successfully to 30x100"
+        echo "📐 Resizing terminal from ${current_rows}x${current_cols} to 30x100 for optimal recording..."
+        printf '\e[8;30;100t'
+        sleep 2
+
+        # Check if resize worked
+        current_rows=$(tput lines)
+        current_cols=$(tput cols)
+
+        if [ "$current_rows" -ne 30 ] || [ "$current_cols" -ne 100 ]; then
+            echo -e "${C_YELLOW}⚠️  Terminal resize may not have succeeded.${C_RESET}"
+            echo "   Current size: ${current_rows}x${current_cols} (expected 30x100)"
+            echo ""
+            echo "   If you're using iTerm2, please:"
+            echo "   1. Allow the resize request if prompted"
+            echo "   2. Or disable the prompt in: Preferences > Advanced > 'Terminal windows resize smoothly'"
+            echo ""
+            read -p "Press Enter when ready to continue (or Ctrl+C to cancel)... "
+
+        else
+            echo "✅ Terminal resized successfully to 30x100"
+        fi
     fi
-    
+
     # Record the demo
     echo "🎬 Starting t-rec recording..."
     echo "The demo will run automatically in a new window."
     echo ""
-    
-    # Run t-rec with the demo script
+
+    # Run t-rec with -m flag to create both GIF and MP4
     t-rec -m \
         --output "$OUTPUT_BASENAME" \
         "$DEMO_DIR/.demo_script.sh"
-    
+
     # Check results
     echo -e "\n📦 Recording complete. Generated files:"
+
+    local gif_after=$(count_files gif)
+    local mp4_after=$(count_files mp4)
+
     for ext in gif mp4; do
-        local file="${OUTPUT_BASENAME}.${ext}"
-        if [[ -f "$file" ]]; then
-            local size=$(get_file_size "$file")
-            log_success "$file ($(human_readable_size $size))"
+        local before_var="${ext}_before"
+        local after_var="${ext}_after"
+        local before=${!before_var}
+        local after=${!after_var}
+
+        if [ "$after" -gt "$before" ]; then
+            local latest=$(ls -t ${OUTPUT_BASENAME}*.${ext} | head -1)
+            local size=$(get_file_size "$latest")
+            log_success "$latest ($(human_readable_size $size))"
         else
-            log_error "$file not created"
+            log_error "No new ${ext^^} file created"
         fi
     done
 }
@@ -1046,22 +1113,26 @@ record_demo() {
 # === CLEANUP ===
 cleanup() {
     local exit_code=$?
-    
+
     if [ "$NO_CLEANUP" != "true" ]; then
         log_verbose "Cleaning up demo artifacts..."
-        rm -rf "$DEMO_DIR"
-        rm -f .demo_script.sh .pyuv_done pyuvstarter_run.log
+        # Remove the demo directory (includes all its contents)
+        if [ -d "$DEMO_DIR" ]; then
+            rm -rf "$DEMO_DIR"
+        fi
+        # Remove any files created in the current directory during demo
+        rm -f .pyuv_done pyuvstarter_run.log
     else
         log_info "Demo artifacts preserved in: $DEMO_DIR"
     fi
-    
+
     # Show final status
     if [[ $exit_code -eq 0 ]]; then
         log_success "Demo completed successfully!"
     else
         log_error "Demo failed with exit code: $exit_code"
     fi
-    
+
     exit $exit_code
 }
 
@@ -1073,10 +1144,10 @@ main() {
     log_verbose "Platform detected: $PLATFORM"
     parse_arguments "$@"
     log_verbose "Arguments parsed"
-    
+
     # Set up exit handler
     trap cleanup EXIT INT TERM
-    
+
     # Show mode
     if [ "$UNIT_TEST_MODE" = "true" ]; then
         log_info "Running in unit test mode"
@@ -1085,7 +1156,7 @@ main() {
     else
         log_info "Running in live demo mode"
     fi
-    
+
     # Create the demo project
     if [ "$UNIT_TEST_MODE" = "true" ]; then
         # Unit tests handle their own project creation

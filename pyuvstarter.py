@@ -1138,6 +1138,25 @@ def _get_dynamic_ignore_set():
 # Initialize the ignore set once at script startup for efficiency.
 _DYNAMIC_IGNORE_SET = _get_dynamic_ignore_set()
 
+def _extract_package_name_from_specifier(specifier: str) -> str:
+    """Extract the base package name from a PEP 508 specifier.
+    
+    Examples:
+        'numpy>=1.19.0' -> 'numpy'
+        'requests[security]>=2.25.0' -> 'requests'
+        'Django>=3.0,<4.0' -> 'django' (lowercase)
+    """
+    from packaging.requirements import Requirement
+    
+    try:
+        req = Requirement(specifier)
+        return req.name.lower()
+    except Exception:
+        # Fallback to simple parsing if packaging fails
+        base_name = specifier.split('[')[0].split('=')[0].split('>')[0].split('<')[0].split('~')[0].split('!')[0].strip()
+        return base_name.lower() if base_name else ""
+
+
 def _canonicalize_pkg_name(name: str) -> str:
     """
     Canonicalize package import names to their PyPI package names for consistency.
@@ -1466,8 +1485,8 @@ def _parse_install_tokens(tokens: list[str]) -> set[tuple[str, str]]:
             continue
         # A basic filter for valid-looking package names/specifiers.
         if re.match(r"^[\w\-\.]+(?:\[.*\])?(?:[=<>!~]=?.*)?$", part):
-            base_pkg = part.split('[')[0].split('=')[0].split('>')[0].split('<')[0].split('~')[0].split('!')[0].strip().lower()
-            if base_pkg not in _DYNAMIC_IGNORE_SET:
+            base_pkg = _extract_package_name_from_specifier(part)
+            if base_pkg and base_pkg not in _DYNAMIC_IGNORE_SET:
                 canonical_name = _canonicalize_pkg_name(base_pkg)
                 # Add the full specifier as found (e.g., 'pandas==1.2.3').
                 discovered.add((canonical_name, part))
@@ -1688,9 +1707,9 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
                         items_to_parse.extend(group_list)
             for dep_str in items_to_parse:
                 if isinstance(dep_str, str):
-                    pkg_name = dep_str.split("[")[0].split("=")[0].split(">")[0].split("<")[0].split("!")[0].split("~")[0].strip()
+                    pkg_name = _extract_package_name_from_specifier(dep_str)
                     if pkg_name:
-                        dependencies.add(pkg_name.lower())
+                        dependencies.add(pkg_name)
 
         _log_action(action_name, "SUCCESS", f"Parsed '{pyproject_path.name}'. Found {len(dependencies)} unique base dependency names declared.", details={"source": tomllib_source, "count": len(dependencies), "found_names": sorted(list(dependencies)) if dependencies else "None"})
         return dependencies
@@ -1704,27 +1723,33 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
     Reads a requirements.txt file and extracts package specifiers.
     Returns a set of (canonical_base_name, full_specifier) tuples.
     """
+    from pip_requirements_parser import RequirementsFile
+    
     action_name = "read_legacy_requirements_txt_content"
     packages_specs = set()
+    
     if not requirements_path.exists():
         _log_action(action_name, "INFO", f"No legacy '{requirements_path.name}' found.")
         return packages_specs
 
     _log_action(action_name, "INFO", f"Reading legacy '{requirements_path.name}'.")
+    
     try:
-        with open(requirements_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or line.startswith("-e"): # Skip comments and editable installs
-                    continue
-                # Extract base package name from specifier for comparison
-                base_pkg_name = line.split("[")[0].split("=")[0].split(">")[0].split("<")[0].split("!")[0].split("~")[0].strip().lower()
-                if base_pkg_name:
-                    canonical_name = _canonicalize_pkg_name(base_pkg_name)
-                    packages_specs.add((canonical_name, line))
+        rf = RequirementsFile.from_file(str(requirements_path))
+        
+        for req in rf.requirements:
+            if req.name:
+                canonical_name = _canonicalize_pkg_name(req.name.lower())
+                # Build the full specifier string with extras
+                extras_str = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+                specifier_str = str(req.specifier) if req.specifier else ""
+                full_spec = f"{req.name}{extras_str}{specifier_str}"
+                packages_specs.add((canonical_name, full_spec))
+        
         _log_action(action_name, "SUCCESS", f"Read {len(packages_specs)} package specifier(s) from '{requirements_path.name}'.")
     except Exception as e:
-        _log_action(action_name, "ERROR", f"Could not read '{requirements_path.name}' for migration. Exception: {e}. Skipping migration.", details={"exception": str(e)})
+        _log_action(action_name, "ERROR", f"Could not parse '{requirements_path.name}': {e}", details={"exception": str(e)})
+    
     return packages_specs
 
 
