@@ -176,6 +176,7 @@ ESSENTIAL_PATTERNS_TO_ENSURE: Dict[str, List[str]] = {
 # Constants still used by deprecated functions - remove after deprecated code is deleted
 VENV_NAME = ".venv"  # DEPRECATED: Use CLICommand.venv_name
 PYPROJECT_TOML_NAME = "pyproject.toml"  # DEPRECATED: Hardcoded in modern code
+GITIGNORE_NAME = ".gitignore"
 JSON_LOG_FILE_NAME = "pyuvstarter_setup_log.json"  # DEPRECATED: Use CLICommand.log_file_name
 
 # Constants that are still in use by modern implementation
@@ -243,6 +244,352 @@ ESSENTIAL_PATTERNS_TO_ENSURE: Dict[str, List[str]] = {
 # such as `discover_dependencies_in_scope`. The .gitignore parsing is now
 # handled by the single, consolidated GitIgnore class.
 
+# ==============================================================================
+#
+# pyuvstarter - A Modern Python Project Setup Tool
+# Copyright (c) 2025 Andrew Hundt
+# Final Version: 30.3 (Definitive, Gold Standard Implementation)
+#
+# This script represents the definitive, production-ready version of the
+# pyuvstarter tool. It has been meticulously revised to fix all previously
+# identified regressions and to meet a "Gold Standard" specification for code
+# quality, documentation, and user experience.
+#
+# It successfully synthesizes:
+#   - The robust, declarative Typer/Pydantic architecture.
+#   - The superior user feedback (banners, summaries) from the legacy version.
+#   - The invaluable, specific error-handling hints from the legacy version.
+#   - The correct, high-performance, and exceptionally documented GitIgnore class.
+#
+# Every function and class has been systematically reviewed to ensure it fulfills
+# its architectural role with no logical or documentation regressions.
+#
+# Required Dependencies:
+# uv add "typer[all]" pydantic pydantic-settings pathspec typing-extensions
+#
+# ==============================================================================
+
+# ==============================================================================
+# SECTION 2: THE DEFINITIVE GITIGNORE CLASS
+# ==============================================================================
+
+class GitIgnore(GitIgnoreSpec):
+    """A high-performance and robust .gitignore file processor.
+
+    NOTE: This is the GitIgnore to keep once regressions are fixed and it has been checked against the other versions.
+
+    This class provides a clean, Pythonic façade over the battle-tested
+    `pathspec` library. Its core purpose is to provide a simple, correct, and
+    efficient way to answer the question "Is this file ignored?" according to
+    the full .gitignore specification.
+
+    It solves this by automatically discovering all `.gitignore` files in a
+    project, correctly handling precedence, negation, and parent directory
+    exclusion rules. It also provides a safe, idempotent API for updating
+    ignore files.
+
+    Motivation:
+        Processing `.gitignore` files correctly is deceptively complex. This class
+        solves that problem by providing a clean, Pythonic façade over the
+        battle-tested `pathspec` library. It adds a crucial layer of
+        convenience and correctness by automatically discovering patterns,
+        implementing spec-critical rules like parent-directory exclusion,
+        providing high-level methods to get file lists, and offering a safe
+        way to update `.gitignore` files.
+
+    Attributes:
+        root_dir (Path): The absolute, resolved root directory for the project.
+
+    Designed Usage Pattern:
+        The class is designed for simple, expressive "one-liner" operations
+        that solve a complete problem. For example, to get a list of all source
+        files that need to be processed, while respecting both the project's
+        `.gitignore` and some temporary ad-hoc rules:
+
+        >>> # In a single, readable line, get all unignored files,
+        >>> # adding a temporary rule to also ignore any 'backups' directory.
+        >>> files_to_process = GitIgnore(
+        ...     '.',
+        ...     manual_patterns=['backups/']
+        ... ).get_unignored_files()
+        >>>
+        >>> print(f"Found {len(files_to_process)} files to process.")
+
+    Relationship with `pathspec` and Inherited API:
+        This class inherits directly from `pathspec.gitignore.GitIgnoreSpec`.
+        This means that in addition to the convenient methods defined here,
+        an instance of `GitIgnore` is also a fully-featured `PathSpec` object.
+
+        Advanced users can directly call the powerful, optimized methods from
+        the underlying library, such as:
+        - `checker.match_file(path)`: The core, low-level matching method.
+        - `checker.match_files(paths)`: Batch match against an iterable of paths.
+        - `checker.match_tree_files(root)`: Walk a directory tree for matches.
+
+        The methods provided by this class (`is_ignored`, `get_*`)
+        are primarily convenient and robust wrappers around these powerful
+        primitives.
+    """
+
+    def __init__(self, root_dir: Path | str, manual_patterns: Optional[List[str]] = None, read_gitignore_files: bool = True):
+        """Initializes the GitIgnore processor.
+
+        Args:
+            root_dir: The root directory of the project to be analyzed. It must
+                      be an existing directory.
+            manual_patterns: An optional list of ad-hoc gitignore patterns to
+                             apply with the highest precedence.
+            read_gitignore_files: If True (default), find and read .gitignore files.
+                                  If False, only use manual_patterns.
+
+        Raises:
+            NotADirectoryError: If the provided `root_dir` does not point to a
+                                valid directory.
+            FileNotFoundError: If the provided `root_dir` does not exist.
+        """
+        # .resolve(strict=True) is a fail-fast mechanism. It ensures the root
+        # directory exists and is accessible, raising an error immediately
+        # rather than during a later method call. This prevents runtime errors.
+        self.root_dir = Path(root_dir).resolve(strict=True)
+        if not self.root_dir.is_dir():
+            raise NotADirectoryError(f"The specified root_dir is not a directory: {self.root_dir}")
+        self._manual_patterns = manual_patterns or []
+        self.read_gitignore_files = read_gitignore_files
+
+    @functools.cached_property
+    def patterns(self) -> List:
+        """A cached property that finds, parses, and compiles all patterns.
+
+        This is a key performance optimization. The expensive work of finding
+        and reading all .gitignore files is deferred until the first time a
+        match is requested and is never repeated for the object's lifetime,
+        unless the cache is explicitly invalidated after a write.
+
+        Returns:
+            List of compiled patterns ready for matching operations.
+        """
+        lines = self._collect_pattern_lines()
+        # Delegate the complex parsing and regex compilation to the robust
+        # parent class from the `pathspec` library.
+        return super().from_lines(lines).patterns
+
+    def invalidate_cache(self) -> None:
+        """Invalidate the cached patterns after a write operation.
+
+        This ensures that subsequent calls to is_ignored() will re-read
+        the .gitignore files and reflect any changes made by save().
+        """
+        # Use the proper way to clear a cached_property
+        if 'patterns' in self.__dict__:
+            del self.__dict__['patterns']
+
+    def _collect_pattern_lines(self) -> List[str]:
+        """A helper to find, read, and normalize all .gitignore patterns."""
+        lines = []
+
+        if self.read_gitignore_files:
+            # According to the gitignore spec, rules from files in subdirectories
+            # take precedence. We sort files by path depth (`len(p.parts)`) to
+            # ensure deeper patterns are added *last*. `pathspec` correctly
+            # honors this "last-match-wins" rule.
+            sorted_ignore_files = sorted(
+                self.root_dir.rglob('.gitignore'),
+                key=lambda p: len(p.parts)
+            )
+
+            for path in sorted_ignore_files:
+                relative_dir = path.parent.relative_to(self.root_dir)
+                try:
+                    # Use `errors='ignore'` for resilience against malformed files.
+                    with path.open(encoding='utf-8', errors='ignore') as f:
+                        for line in f:
+                            pattern = line.strip()
+                            if not pattern or pattern.startswith('#'):
+                                continue
+
+                            # Per the spec, a pattern with a slash is relative to its
+                            # own .gitignore file. We must normalize it to be
+                            # relative to the project root for the unified spec.
+                            if '/' in pattern.strip('/'):
+                                pattern_path = (relative_dir / pattern).as_posix()
+                                # Prepending '/' anchors the pattern to the `root_dir`.
+                                lines.append(f'/{pattern_path}')
+                            else:
+                                # Patterns without a '/' are global and can match anywhere.
+                                lines.append(pattern)
+                except IOError:
+                    # Silently skip files that cannot be read (e.g., due to permissions).
+                    continue
+
+        # Manually provided patterns are added last, giving them the highest precedence.
+        lines.extend(self._manual_patterns)
+        return lines
+
+    def is_ignored(self, path: Union[Path, str]) -> bool:
+        """Checks if a single file path is ignored, respecting all spec rules.
+
+        This method correctly implements the full gitignore specification,
+        including the critical parent directory exclusion rule.
+
+        Args:
+            path: The file or directory path to check.
+
+        Returns:
+            True if the path is ignored, False otherwise.
+        """
+        try:
+            # All matching logic is done on POSIX-style, root-relative paths.
+            path_rel_to_root = Path(path).resolve().relative_to(self.root_dir).as_posix()
+        except ValueError:
+            # The path is not within the project root, so it is not subject to these rules.
+            return False
+
+        # This loop correctly implements the parent directory exclusion rule:
+        # "It is not possible to re-include a file if a parent directory of that file is excluded."
+        current_parent = Path(path_rel_to_root).parent
+        while current_parent and str(current_parent) != '.':
+            # `self.match_file()` is inherited and returns True if a path is
+            # *included* (i.e., NOT ignored). If any parent is not included,
+            # this path is definitively ignored.
+            if not self.match_file(str(current_parent)):
+                return True
+            current_parent = current_parent.parent
+
+        # If no parents were ignored, check the file itself. The result is the
+        # logical opposite of inclusion.
+        return not self.match_file(path_rel_to_root)
+
+    def get_ignored_files(self) -> List[Path]:
+        """Scans the project and returns a list of all IGNORED files using
+        pathspec's own optimized tree walker.
+
+        Returns:
+            List of absolute Path objects for all files that ARE ignored.
+        """
+        return [self.root_dir / p for p in self.match_tree_files(self.root_dir)]
+
+    def get_unignored_files(self) -> List[Path]:
+        """Scans the project and returns a list of all UNIGNORED files.
+
+        This maximally offloads the work to `pathspec`'s optimized tree walker.
+
+        Returns:
+            List of absolute Path objects for all files that are NOT ignored.
+        """
+        # The `negate=True` flag tells pathspec to return all files that DO NOT
+        # match the final spec, which is exactly what we want.
+        return [self.root_dir / p for p in self.match_tree_files(self.root_dir, negate=True)]
+
+    def save(self, patterns: List[str], comment: str = "Patterns added by tool"):
+        """Safely and idempotently appends a commented block of patterns.
+
+        This method is non-destructive. It reads the existing file, checks which
+        of the provided patterns are new, and appends only the new ones under
+        a formatted, commented block. If all patterns already exist, the file
+        is not touched.
+
+        Args:
+            patterns: List of gitignore patterns to add.
+            comment: Comment text to describe this block of patterns.
+
+        Raises:
+            IOError: If the file cannot be read or written.
+        """
+        target_path = self.root_dir / '.gitignore'
+        try:
+            content = target_path.read_text(encoding='utf-8') if target_path.exists() else ""
+        except IOError as e:
+            raise IOError(f"Could not read .gitignore file at {target_path}: {e}")
+
+        # This is a key performance optimization. By building a set of existing
+        # lines, we can check for a pattern's existence in O(1) time on average.
+        existing_lines = {line.strip() for line in content.splitlines()}
+        active_patterns = {p for p in existing_lines if p and not p.startswith('#')}
+        patterns_to_add = [p for p in patterns if p.strip() and p.strip() not in active_patterns]
+
+        if not patterns_to_add:
+            return  # All patterns already exist; do nothing to preserve the file.
+
+        # Build the new content block, ensuring proper spacing for readability.
+        if content and not content.endswith('\n'):
+            content += '\n'
+        if content and not content.endswith('\n\n'):
+            content += '\n'
+
+        content += f"# {comment}\n"
+        content += '\n'.join(patterns_to_add) + '\n'
+
+        try:
+            target_path.write_text(content, encoding='utf-8')
+        except IOError as e:
+            raise IOError(f"Could not write to .gitignore file at {target_path}: {e}")
+
+        # CRITICAL: Invalidate the cached patterns. The on-disk file has changed,
+        # so the next call to `is_ignored` must re-read and re-compile the spec.
+        self.invalidate_cache()
+
+    def get_allowed_files_by_pattern(self, include_pattern: str) -> List[Path]:
+        """
+        Scans the project and returns a list of files that match the given
+        `include_pattern`, while also respecting the project's .gitignore rules.
+
+        Args:
+            include_pattern: The pattern (e.g., "*.ipynb", "*.py", "data/*.csv")
+                             to match for inclusion. This pattern should follow
+                             Git wildmatch syntax.
+
+        Returns:
+            A list of Path objects for files that match the `include_pattern`
+            and are NOT ignored by .gitignore rules.
+        """
+        # 1. Get all files that are NOT ignored by .gitignore rules.
+        # This already handles the parent directory exclusion logic.
+        unignored_files = self.get_unignored_files()
+
+        # 2. Create a PathSpec specifically for the desired inclusion pattern.
+        # We ensure it's treated as an inclusion pattern.
+        # Using a list to pass to PathSpec constructor for consistency, even if it's one pattern.
+        include_spec_patterns = [GitWildMatchPattern(include_pattern, include=True)]
+        include_spec = PathSpec(include_spec_patterns)
+
+        # 3. Filter the unignored files using the `include_spec`.
+        # `match_files` yields files that match the spec.
+        # It expects relative paths (posix style).
+        matched_relative_paths = include_spec.match_files(
+            [p.relative_to(self.root_dir).as_posix() for p in unignored_files]
+        )
+
+        # 4. Convert relative paths back to absolute Path objects and return.
+        return [self.root_dir / p for p in matched_relative_paths]
+
+    def is_allowed_by_pattern(self, path: Union[Path, str], include_pattern: str) -> bool:
+        """
+        Checks if a single file path matches the `include_pattern` AND is not
+        ignored by the project's .gitignore rules.
+
+        Args:
+            path: The file path to check.
+            include_pattern: The pattern (e.g., "*.ipynb", "*.py", "data/*.csv")
+                             to match for inclusion.
+
+        Returns:
+            True if the file matches the pattern AND is not ignored; False otherwise.
+        """
+        # First, ensure the file is within the root_dir and get its relative path.
+        try:
+            path_rel_to_root = Path(path).resolve().relative_to(self.root_dir).as_posix()
+        except ValueError:
+            # Path is not within the project root, so it cannot be "allowed" by project rules.
+            return False
+
+        # 1. Check if the file is ignored by .gitignore rules.
+        if self.is_ignored(path):
+            return False
+
+        # 2. Check if the file matches the specific include pattern.
+        # Create a temporary PathSpec for this single pattern.
+        single_pattern_spec = PathSpec([GitWildMatchPattern(include_pattern, include=True)])
+        return single_pattern_spec.match_file(path_rel_to_root)
 
 # ==============================================================================
 # SECTION: DEMONSTRATION
@@ -338,7 +685,7 @@ ignored_*.ipynb
 
         print(f"    ✓ .gitignore test PASSED: {len(deps_with_gitignore)} deps with gitignore, {len(deps_without_gitignore)} without")
 
-        
+
 
         print("\n\n--- Demonstration Complete ---")
 
@@ -862,7 +1209,7 @@ def _find_all_notebooks(scan_path: Path, ignore_manager: Optional[GitIgnore]) ->
         # Use the GitIgnore's specialized method to get files matching '.ipynb'
         # that are also not ignored by any .gitignore rule.
         notebook_paths = ignore_manager.get_allowed_files_by_pattern("*.ipynb")
-        
+
         # Filter to ensure paths are within the original scan_path, as get_allowed_files_by_pattern
         # operates on the GitIgnore's root_dir, which might be broader.
         # This also ensures we return only files, not directories that might match a pattern.
@@ -2345,354 +2692,6 @@ def _get_explicit_summary_text(project_root: Path, venv_name: str, pyproject_fil
     return "\n".join(summary_lines)
 
 # ==============================================================================
-#
-# pyuvstarter - A Modern Python Project Setup Tool
-# Copyright (c) 2025 Andrew Hundt
-# Final Version: 30.3 (Definitive, Gold Standard Implementation)
-#
-# This script represents the definitive, production-ready version of the
-# pyuvstarter tool. It has been meticulously revised to fix all previously
-# identified regressions and to meet a "Gold Standard" specification for code
-# quality, documentation, and user experience.
-#
-# It successfully synthesizes:
-#   - The robust, declarative Typer/Pydantic architecture.
-#   - The superior user feedback (banners, summaries) from the legacy version.
-#   - The invaluable, specific error-handling hints from the legacy version.
-#   - The correct, high-performance, and exceptionally documented GitIgnore class.
-#
-# Every function and class has been systematically reviewed to ensure it fulfills
-# its architectural role with no logical or documentation regressions.
-#
-# Required Dependencies:
-# uv add "typer[all]" pydantic pydantic-settings pathspec typing-extensions
-#
-# ==============================================================================
-
-# ==============================================================================
-# SECTION 2: THE DEFINITIVE GITIGNORE CLASS
-# ==============================================================================
-
-class GitIgnore(GitIgnoreSpec):
-    """A high-performance and robust .gitignore file processor.
-
-    NOTE: This is the GitIgnore to keep once regressions are fixed and it has been checked against the other versions.
-
-    This class provides a clean, Pythonic façade over the battle-tested
-    `pathspec` library. Its core purpose is to provide a simple, correct, and
-    efficient way to answer the question "Is this file ignored?" according to
-    the full .gitignore specification.
-
-    It solves this by automatically discovering all `.gitignore` files in a
-    project, correctly handling precedence, negation, and parent directory
-    exclusion rules. It also provides a safe, idempotent API for updating
-    ignore files.
-
-    Motivation:
-        Processing `.gitignore` files correctly is deceptively complex. This class
-        solves that problem by providing a clean, Pythonic façade over the
-        battle-tested `pathspec` library. It adds a crucial layer of
-        convenience and correctness by automatically discovering patterns,
-        implementing spec-critical rules like parent-directory exclusion,
-        providing high-level methods to get file lists, and offering a safe
-        way to update `.gitignore` files.
-
-    Attributes:
-        root_dir (Path): The absolute, resolved root directory for the project.
-
-    Designed Usage Pattern:
-        The class is designed for simple, expressive "one-liner" operations
-        that solve a complete problem. For example, to get a list of all source
-        files that need to be processed, while respecting both the project's
-        `.gitignore` and some temporary ad-hoc rules:
-
-        >>> # In a single, readable line, get all unignored files,
-        >>> # adding a temporary rule to also ignore any 'backups' directory.
-        >>> files_to_process = GitIgnore(
-        ...     '.',
-        ...     manual_patterns=['backups/']
-        ... ).get_unignored_files()
-        >>>
-        >>> print(f"Found {len(files_to_process)} files to process.")
-
-    Relationship with `pathspec` and Inherited API:
-        This class inherits directly from `pathspec.gitignore.GitIgnoreSpec`.
-        This means that in addition to the convenient methods defined here,
-        an instance of `GitIgnore` is also a fully-featured `PathSpec` object.
-
-        Advanced users can directly call the powerful, optimized methods from
-        the underlying library, such as:
-        - `checker.match_file(path)`: The core, low-level matching method.
-        - `checker.match_files(paths)`: Batch match against an iterable of paths.
-        - `checker.match_tree_files(root)`: Walk a directory tree for matches.
-
-        The methods provided by this class (`is_ignored`, `get_*`)
-        are primarily convenient and robust wrappers around these powerful
-        primitives.
-    """
-
-    def __init__(self, root_dir: Path | str, manual_patterns: Optional[List[str]] = None, read_gitignore_files: bool = True):
-        """Initializes the GitIgnore processor.
-
-        Args:
-            root_dir: The root directory of the project to be analyzed. It must
-                      be an existing directory.
-            manual_patterns: An optional list of ad-hoc gitignore patterns to
-                             apply with the highest precedence.
-            read_gitignore_files: If True (default), find and read .gitignore files.
-                                  If False, only use manual_patterns.
-
-        Raises:
-            NotADirectoryError: If the provided `root_dir` does not point to a
-                                valid directory.
-            FileNotFoundError: If the provided `root_dir` does not exist.
-        """
-        # .resolve(strict=True) is a fail-fast mechanism. It ensures the root
-        # directory exists and is accessible, raising an error immediately
-        # rather than during a later method call. This prevents runtime errors.
-        self.root_dir = Path(root_dir).resolve(strict=True)
-        if not self.root_dir.is_dir():
-            raise NotADirectoryError(f"The specified root_dir is not a directory: {self.root_dir}")
-        self._manual_patterns = manual_patterns or []
-        self.read_gitignore_files = read_gitignore_files
-
-    @functools.cached_property
-    def patterns(self) -> List:
-        """A cached property that finds, parses, and compiles all patterns.
-
-        This is a key performance optimization. The expensive work of finding
-        and reading all .gitignore files is deferred until the first time a
-        match is requested and is never repeated for the object's lifetime,
-        unless the cache is explicitly invalidated after a write.
-        
-        Returns:
-            List of compiled patterns ready for matching operations.
-        """
-        lines = self._collect_pattern_lines()
-        # Delegate the complex parsing and regex compilation to the robust
-        # parent class from the `pathspec` library.
-        return super().from_lines(lines).patterns
-
-    def invalidate_cache(self) -> None:
-        """Invalidate the cached patterns after a write operation.
-        
-        This ensures that subsequent calls to is_ignored() will re-read
-        the .gitignore files and reflect any changes made by save().
-        """
-        # Use the proper way to clear a cached_property
-        if 'patterns' in self.__dict__:
-            del self.__dict__['patterns']
-    
-    def _collect_pattern_lines(self) -> List[str]:
-        """A helper to find, read, and normalize all .gitignore patterns."""
-        lines = []
-        
-        if self.read_gitignore_files:
-            # According to the gitignore spec, rules from files in subdirectories
-            # take precedence. We sort files by path depth (`len(p.parts)`) to
-            # ensure deeper patterns are added *last*. `pathspec` correctly
-            # honors this "last-match-wins" rule.
-            sorted_ignore_files = sorted(
-                self.root_dir.rglob('.gitignore'),
-                key=lambda p: len(p.parts)
-            )
-
-            for path in sorted_ignore_files:
-                relative_dir = path.parent.relative_to(self.root_dir)
-                try:
-                    # Use `errors='ignore'` for resilience against malformed files.
-                    with path.open(encoding='utf-8', errors='ignore') as f:
-                        for line in f:
-                            pattern = line.strip()
-                            if not pattern or pattern.startswith('#'):
-                                continue
-
-                            # Per the spec, a pattern with a slash is relative to its
-                            # own .gitignore file. We must normalize it to be
-                            # relative to the project root for the unified spec.
-                            if '/' in pattern.strip('/'):
-                                pattern_path = (relative_dir / pattern).as_posix()
-                                # Prepending '/' anchors the pattern to the `root_dir`.
-                                lines.append(f'/{pattern_path}')
-                            else:
-                                # Patterns without a '/' are global and can match anywhere.
-                                lines.append(pattern)
-                except IOError:
-                    # Silently skip files that cannot be read (e.g., due to permissions).
-                    continue
-
-        # Manually provided patterns are added last, giving them the highest precedence.
-        lines.extend(self._manual_patterns)
-        return lines
-
-    def is_ignored(self, path: Union[Path, str]) -> bool:
-        """Checks if a single file path is ignored, respecting all spec rules.
-
-        This method correctly implements the full gitignore specification,
-        including the critical parent directory exclusion rule.
-        
-        Args:
-            path: The file or directory path to check.
-            
-        Returns:
-            True if the path is ignored, False otherwise.
-        """
-        try:
-            # All matching logic is done on POSIX-style, root-relative paths.
-            path_rel_to_root = Path(path).resolve().relative_to(self.root_dir).as_posix()
-        except ValueError:
-            # The path is not within the project root, so it is not subject to these rules.
-            return False
-
-        # This loop correctly implements the parent directory exclusion rule:
-        # "It is not possible to re-include a file if a parent directory of that file is excluded."
-        current_parent = Path(path_rel_to_root).parent
-        while current_parent and str(current_parent) != '.':
-            # `self.match_file()` is inherited and returns True if a path is
-            # *included* (i.e., NOT ignored). If any parent is not included,
-            # this path is definitively ignored.
-            if not self.match_file(str(current_parent)):
-                return True
-            current_parent = current_parent.parent
-
-        # If no parents were ignored, check the file itself. The result is the
-        # logical opposite of inclusion.
-        return not self.match_file(path_rel_to_root)
-
-    def get_ignored_files(self) -> List[Path]:
-        """Scans the project and returns a list of all IGNORED files using
-        pathspec's own optimized tree walker.
-        
-        Returns:
-            List of absolute Path objects for all files that ARE ignored.
-        """
-        return [self.root_dir / p for p in self.match_tree_files(self.root_dir)]
-
-    def get_unignored_files(self) -> List[Path]:
-        """Scans the project and returns a list of all UNIGNORED files.
-        
-        This maximally offloads the work to `pathspec`'s optimized tree walker.
-        
-        Returns:
-            List of absolute Path objects for all files that are NOT ignored.
-        """
-        # The `negate=True` flag tells pathspec to return all files that DO NOT
-        # match the final spec, which is exactly what we want.
-        return [self.root_dir / p for p in self.match_tree_files(self.root_dir, negate=True)]
-
-    def save(self, patterns: List[str], comment: str = "Patterns added by tool"):
-        """Safely and idempotently appends a commented block of patterns.
-
-        This method is non-destructive. It reads the existing file, checks which
-        of the provided patterns are new, and appends only the new ones under
-        a formatted, commented block. If all patterns already exist, the file
-        is not touched.
-        
-        Args:
-            patterns: List of gitignore patterns to add.
-            comment: Comment text to describe this block of patterns.
-        
-        Raises:
-            IOError: If the file cannot be read or written.
-        """
-        target_path = self.root_dir / '.gitignore'
-        try:
-            content = target_path.read_text(encoding='utf-8') if target_path.exists() else ""
-        except IOError as e:
-            raise IOError(f"Could not read .gitignore file at {target_path}: {e}")
-
-        # This is a key performance optimization. By building a set of existing
-        # lines, we can check for a pattern's existence in O(1) time on average.
-        existing_lines = {line.strip() for line in content.splitlines()}
-        active_patterns = {p for p in existing_lines if p and not p.startswith('#')}
-        patterns_to_add = [p for p in patterns if p.strip() and p.strip() not in active_patterns]
-
-        if not patterns_to_add:
-            return  # All patterns already exist; do nothing to preserve the file.
-
-        # Build the new content block, ensuring proper spacing for readability.
-        if content and not content.endswith('\n'):
-            content += '\n'
-        if content and not content.endswith('\n\n'):
-            content += '\n'
-
-        content += f"# {comment}\n"
-        content += '\n'.join(patterns_to_add) + '\n'
-
-        try:
-            target_path.write_text(content, encoding='utf-8')
-        except IOError as e:
-            raise IOError(f"Could not write to .gitignore file at {target_path}: {e}")
-
-        # CRITICAL: Invalidate the cached patterns. The on-disk file has changed,
-        # so the next call to `is_ignored` must re-read and re-compile the spec.
-        self.invalidate_cache()
-
-    def get_allowed_files_by_pattern(self, include_pattern: str) -> List[Path]:
-        """
-        Scans the project and returns a list of files that match the given
-        `include_pattern`, while also respecting the project's .gitignore rules.
-
-        Args:
-            include_pattern: The pattern (e.g., "*.ipynb", "*.py", "data/*.csv")
-                             to match for inclusion. This pattern should follow
-                             Git wildmatch syntax.
-
-        Returns:
-            A list of Path objects for files that match the `include_pattern`
-            and are NOT ignored by .gitignore rules.
-        """
-        # 1. Get all files that are NOT ignored by .gitignore rules.
-        # This already handles the parent directory exclusion logic.
-        unignored_files = self.get_unignored_files()
-
-        # 2. Create a PathSpec specifically for the desired inclusion pattern.
-        # We ensure it's treated as an inclusion pattern.
-        # Using a list to pass to PathSpec constructor for consistency, even if it's one pattern.
-        include_spec_patterns = [GitWildMatchPattern(include_pattern, include=True)]
-        include_spec = PathSpec(include_spec_patterns)
-
-        # 3. Filter the unignored files using the `include_spec`.
-        # `match_files` yields files that match the spec.
-        # It expects relative paths (posix style).
-        matched_relative_paths = include_spec.match_files(
-            [p.relative_to(self.root_dir).as_posix() for p in unignored_files]
-        )
-
-        # 4. Convert relative paths back to absolute Path objects and return.
-        return [self.root_dir / p for p in matched_relative_paths]
-
-    def is_allowed_by_pattern(self, path: Union[Path, str], include_pattern: str) -> bool:
-        """
-        Checks if a single file path matches the `include_pattern` AND is not
-        ignored by the project's .gitignore rules.
-
-        Args:
-            path: The file path to check.
-            include_pattern: The pattern (e.g., "*.ipynb", "*.py", "data/*.csv")
-                             to match for inclusion.
-
-        Returns:
-            True if the file matches the pattern AND is not ignored; False otherwise.
-        """
-        # First, ensure the file is within the root_dir and get its relative path.
-        try:
-            path_rel_to_root = Path(path).resolve().relative_to(self.root_dir).as_posix()
-        except ValueError:
-            # Path is not within the project root, so it cannot be "allowed" by project rules.
-            return False
-
-        # 1. Check if the file is ignored by .gitignore rules.
-        if self.is_ignored(path):
-            return False
-
-        # 2. Check if the file matches the specific include pattern.
-        # Create a temporary PathSpec for this single pattern.
-        single_pattern_spec = PathSpec([GitWildMatchPattern(include_pattern, include=True)])
-        return single_pattern_spec.match_file(path_rel_to_root)
-
-
-# ==============================================================================
 # SECTION 4: CLI DEFINITION & APPLICATION ENTRY POINT - new functionality to repair and keep
 # ==============================================================================
 
@@ -2737,7 +2736,7 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
                     _log_action(action_name, "INFO", f"Created backup of existing '{config.gitignore_name}' at '{backup_path}'.")
                 except Exception as e:
                     _log_action(action_name, "WARN", f"Could not create backup of '{config.gitignore_name}': {e}")
-                
+
                 # Now delete the original to ensure a clean slate
                 gitignore_path.unlink()
 
@@ -2827,7 +2826,7 @@ class CLICommand(BaseSettings):
             "--version",
             help="Show the application version and exit.",
             is_eager=True, # Process immediately, short-circuiting other logic.
-            is_expose=False # Don't show in basic help, only with --help --all.
+            hidden=True # Don't show in basic help
         )
     ] = None # No default, as it's typically only present if explicitly passed.
 
@@ -3001,7 +3000,7 @@ class CLICommand(BaseSettings):
         """
         # Save the original working directory to restore it in finally block
         original_cwd = Path.cwd()
-        
+
         # Ensure project_dir is the current working directory for all subsequent operations.
         # This is a critical safety measure for consistent path handling.
         os.chdir(self.project_dir)
@@ -3067,7 +3066,7 @@ class CLICommand(BaseSettings):
                     manual_patterns=list(self.ignore_patterns),
                     read_gitignore_files=self.use_gitignore  # Only read .gitignore files if enabled
                 )
-                
+
                 if self.use_gitignore:
                     _log_action("gitignore_manager_init", "INFO", "Initialized GitIgnore manager with .gitignore file support.")
                     if self.ignore_patterns:
@@ -3263,7 +3262,7 @@ class CLICommand(BaseSettings):
                 _log_data_global["vscode_settings_json_status"] = vscode_settings_status
                 _log_data_global["vscode_launch_json_status"] = vscode_launch_status
                 _save_log(self)
-            
+
             # Restore the original working directory
             try:
                 os.chdir(original_cwd)
