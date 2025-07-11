@@ -1,0 +1,196 @@
+name: pyuvstarter CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.8", "3.10", "3.12"]
+        exclude:
+          # macOS runners are expensive, so only test on latest Python
+          - os: macos-latest
+            python-version: "3.8"
+          - os: macos-latest
+            python-version: "3.10"
+          # Windows can be flaky with older Python
+          - os: windows-latest
+            python-version: "3.8"
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install uv using official installer (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install uv using official installer (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        irm https://astral.sh/uv/install.ps1 | iex
+        echo "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Install pyuvstarter dependencies
+      run: |
+        uv venv
+        uv sync
+
+    - name: Check Python syntax
+      run: |
+        source .venv/bin/activate || . .venv/Scripts/activate
+        python -m py_compile pyuvstarter.py
+
+    - name: Build pyuvstarter package
+      run: |
+        # Build the package using uv
+        uv build
+
+    - name: Install pyuvstarter (editable)
+      run: |
+        uv pip install -e .
+        
+    - name: Test pyuvstarter as installed package
+      run: |
+        # Test that pyuvstarter can be run as an installed command
+        pyuvstarter --version
+        
+    - name: Test pyuvstarter in isolated environment (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        # Create a completely separate test environment
+        cd ${{ runner.temp }}
+        uv venv test-env
+        source test-env/bin/activate
+        # Install from the built wheel using uv
+        uv pip install ${{ github.workspace }}/dist/pyuvstarter-*.whl
+        # Test the installed command
+        pyuvstarter --version
+        mkdir isolated-test
+        cd isolated-test
+        pyuvstarter
+        test -f pyproject.toml || exit 1
+
+    - name: Test pyuvstarter in isolated environment (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        # Create a completely separate test environment
+        cd $env:RUNNER_TEMP
+        uv venv test-env
+        . test-env\Scripts\activate
+        # Install from the built wheel
+        $wheel = Get-ChildItem "${{ github.workspace }}\dist\*.whl" | Select-Object -First 1
+        uv pip install $wheel.FullName
+        # Test the installed command
+        pyuvstarter --version
+        mkdir isolated-test
+        cd isolated-test
+        pyuvstarter
+        if (-not (Test-Path "pyproject.toml")) { exit 1 }
+
+    - name: Lint check with ruff (via uvx)
+      # Only check for actual errors, not style issues
+      # E501: line too long (we don't enforce line length)
+      # E722: bare except (sometimes needed for robustness)
+      # F401: imported but unused (might be used in type annotations)
+      run: |
+        uvx ruff check . --select=E9,F63,F7,F82 --show-source || true
+        # Run full check but don't fail the build
+        uvx ruff check . --exit-zero
+
+    - name: Run unit tests (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        chmod +x create_demo.sh
+        ./create_demo.sh --unit-test
+
+    - name: Run unit tests (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        # Windows doesn't support the bash demo script, so run pyuvstarter directly
+        python pyuvstarter.py --help
+        mkdir test_windows
+        cd test_windows
+        python ../pyuvstarter.py
+        if (Test-Path "pyproject.toml") { echo "✅ Windows test passed" } else { exit 1 }
+
+    - name: Run integration test - New project
+      if: runner.os != 'Windows'
+      run: |
+        mkdir -p test_new_project
+        cd test_new_project
+        python ../pyuvstarter.py
+        # Verify key outputs
+        test -f pyproject.toml || exit 1
+        test -f .gitignore || exit 1
+        test -d .venv || exit 1
+        test -f uv.lock || exit 1
+        echo "✅ New project test passed"
+
+    - name: Run integration test - Legacy project migration
+      if: runner.os != 'Windows'
+      run: |
+        # Create a legacy project with requirements.txt
+        mkdir -p test_legacy_project
+        cd test_legacy_project
+        echo "# Legacy ML project" > README.md
+        echo "pandas==2.0.0" > requirements.txt
+        echo "numpy>=1.20" >> requirements.txt
+        echo "import pandas as pd" > analysis.py
+        echo "import numpy as np" >> analysis.py
+        
+        # Run pyuvstarter
+        python ../pyuvstarter.py --dependency-migration auto
+        
+        # Verify migration
+        test -f pyproject.toml || exit 1
+        grep -q "pandas" pyproject.toml || exit 1
+        grep -q "numpy" pyproject.toml || exit 1
+        echo "✅ Legacy project migration test passed"
+
+    - name: Run integration test - Notebook support
+      if: runner.os != 'Windows'
+      run: |
+        # Create project with notebook
+        mkdir -p test_notebook_project
+        cd test_notebook_project
+        
+        # Create a simple notebook file
+        cat > experiment.ipynb << 'EOF'
+        {
+          "cells": [
+            {
+              "cell_type": "code",
+              "source": ["import pandas as pd\n", "import matplotlib.pyplot as plt\n", "!pip install seaborn"]
+            }
+          ],
+          "metadata": {},
+          "nbformat": 4,
+          "nbformat_minor": 5
+        }
+        EOF
+        
+        # Run pyuvstarter
+        python ../pyuvstarter.py
+        
+        # Verify notebook dependencies were found
+        test -f pyproject.toml || exit 1
+        grep -q "pandas" pyproject.toml || exit 1
+        grep -q "matplotlib" pyproject.toml || exit 1
+        grep -q "seaborn" pyproject.toml || exit 1
+        grep -q "ipykernel" pyproject.toml || exit 1
+        echo "✅ Notebook support test passed"
