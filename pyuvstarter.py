@@ -1150,6 +1150,8 @@ def _canonicalize_pkg_name(name: str) -> str:
         # Machine Learning & Data Science
         "sklearn": "scikit-learn",
         "cv2": "opencv-python",
+        "cv": "opencv-python",  # Some old code uses cv
+        "skimage": "scikit-image",
 
         # Image Processing
         "pil": "pillow",
@@ -1157,42 +1159,105 @@ def _canonicalize_pkg_name(name: str) -> str:
 
         # Configuration & Serialization
         "yaml": "pyyaml",
-        "toml": "toml",
+        "toml": "toml",  # Keep this - even though names match, good documentation
 
         # Web & APIs
         "requests_oauthlib": "requests-oauthlib",
         "google.cloud": "google-cloud",
         "bs4": "beautifulsoup4",
+        "flask_cors": "flask-cors",
+        "flask_sqlalchemy": "flask-sqlalchemy",
+        "flask_migrate": "flask-migrate",
+        "flask_login": "flask-login",
+        "flask_wtf": "flask-wtforms",
+        "rest_framework": "djangorestframework",
 
         # Database & ORM
         "psycopg2": "psycopg2-binary",
         "MySQLdb": "mysqlclient",
         "mysqldb": "mysqlclient",
+        "_mysql": "mysqlclient",
 
         # Development Tools
         "dotenv": "python-dotenv",
         "dateutil": "python-dateutil",
+        "jose": "python-jose",
+        "magic": "python-magic",
+        "dns": "dnspython",
 
         # GUI & Graphics
         "tkinter": "",  # Built-in, should be filtered out elsewhere
+        "PyQt5": "pyqt5",
+        "PyQt6": "pyqt6",
+        "wx": "wxpython",
 
         # System & OS
         "win32api": "pywin32",
         "win32com": "pywin32",
+        "pywintypes": "pywin32",
+        "pythoncom": "pywin32",
 
         # Testing & Mocking
         "mock": "mock",  # Built into unittest in Python 3.3+
+        "_pytest": "pytest",  # Internal pytest imports
 
         # Async & Concurrency
         "asyncio": "",  # Built-in
 
         # Typing
         "typing_extensions": "typing-extensions",
+
+        # Additional common mismatches
+        "Crypto": "pycryptodome",  # Or pycrypto
+        "Cryptodome": "pycryptodomex",
+        "jwt": "pyjwt",
+        "git": "gitpython",
+        "serial": "pyserial",
+        "usb": "pyusb",
+        "docx": "python-docx",
+        "pptx": "python-pptx",
+        "fitz": "pymupdf",
+        "PyPDF2": "pypdf2",
+        "websocket": "websocket-client",  # Different from 'websockets'
+        "Levenshtein": "python-levenshtein",
+        "slugify": "python-slugify",
+        "multipart": "python-multipart",
+        "memcache": "python-memcached",
+        "ldap": "python-ldap",
+        "nacl": "pynacl",
+        "etree": "lxml",  # ElementTree from lxml
+        "_cffi_backend": "cffi",
+        "googleapiclient": "google-api-python-client",
+        "apiclient": "google-api-python-client",
     }
 
-    canonical = mapping.get(name.lower(), name.lower())
-    # Handle empty string mappings (built-in modules that shouldn't be installed)
-    return canonical if canonical else name.lower()
+    name_lower = name.lower()
+    
+    # Step 1: Check our curated mapping for known discrepancies
+    if name_lower in mapping:
+        canonical = mapping[name_lower]
+        # Empty string means built-in module that shouldn't be installed
+        return canonical if canonical else name_lower
+    
+    # Step 2: Check if it's a known built-in module
+    # This prevents trying to install built-in modules
+    import sys
+    if name_lower in sys.builtin_module_names:
+        return ""
+    
+    # Step 3: Skip any importlib.metadata lookup!
+    # Why? Because:
+    # - It only works for already-installed packages (defeats our purpose)
+    # - It's slow even for simple lookups
+    # - Most packages have import name == package name anyway
+    # - Our static mapping handles the known exceptions
+    
+    # Default: Assume import name == package name (lowercased)
+    # This is correct for 95%+ of packages:
+    # requests -> requests, numpy -> numpy, flask -> flask, etc.
+    # If this assumption is wrong, the user will see a clear error from uv/pip
+    # and we can add it to our mapping for future users
+    return name_lower
 
 
 def _find_all_notebooks(scan_path: Path, ignore_manager: Optional[GitIgnore]) -> List[Path]:
@@ -1944,6 +2009,9 @@ def _manage_project_dependencies(
     all_requests: dict[str, list[str]] = {}
 
     def add_request(canonical_name: str, specifier: str):
+        # Skip empty canonical names (built-in modules)
+        if not canonical_name:
+            return
         if canonical_name not in all_requests:
             all_requests[canonical_name] = []
         all_requests[canonical_name].append(specifier)
