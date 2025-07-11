@@ -135,6 +135,7 @@ from pydantic import Field, BaseModel, ConfigDict, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathspec.gitignore import GitIgnoreSpec
 from pathspec.patterns.gitwildmatch import GitWildMatchPattern
+from pathspec import PathSpec
 from typing_extensions import Annotated, override
 
 import functools
@@ -369,9 +370,14 @@ class GitIgnore(GitIgnoreSpec):
             List of compiled patterns ready for matching operations.
         """
         lines = self._collect_pattern_lines()
-        # Delegate the complex parsing and regex compilation to the robust
-        # parent class from the `pathspec` library.
-        return super().from_lines(lines).patterns
+        # Parse the lines and create pattern objects directly
+        pattern_factory = GitWildMatchPattern
+        patterns = []
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                patterns.append(pattern_factory(line))
+        return patterns
 
     def invalidate_cache(self) -> None:
         """Invalidate the cached patterns after a write operation.
@@ -549,7 +555,7 @@ class GitIgnore(GitIgnoreSpec):
         # 2. Create a PathSpec specifically for the desired inclusion pattern.
         # We ensure it's treated as an inclusion pattern.
         # Using a list to pass to PathSpec constructor for consistency, even if it's one pattern.
-        include_spec_patterns = [GitWildMatchPattern(include_pattern, include=True)]
+        include_spec_patterns = [GitWildMatchPattern(include_pattern)]
         include_spec = PathSpec(include_spec_patterns)
 
         # 3. Filter the unignored files using the `include_spec`.
@@ -2786,6 +2792,7 @@ app = typer.Typer(
     add_completion=False, # Disable default completion, often handled by shell scripts.
     rich_markup_mode="markdown", # Allow rich text formatting in help messages.
     help="🚀 **A Modern Python Project Setup Tool**", # Overall help message.
+    invoke_without_command=True, # Allow running without subcommands
 )
 
 # CLICOMMAND: new functionality to repair and keep
@@ -2960,7 +2967,14 @@ class CLICommand(BaseSettings):
 
         # Check if a config file path was provided (from CLI or env).
         # We need to load it here so its values can be layered.
-        config_file_path = init_settings.get('config_file')
+        # In Pydantic v2, init_settings is a source object, not a dict
+        config_file_path = None
+        if hasattr(init_settings, '__call__'):
+            # init_settings is a callable source
+            init_dict = init_settings()
+            config_file_path = init_dict.get('config_file') if init_dict else None
+        elif isinstance(init_settings, dict):
+            config_file_path = init_settings.get('config_file')
         if config_file_path:
             p = Path(config_file_path).resolve()
             if p.exists() and p.is_file():
@@ -3278,30 +3292,52 @@ class CLICommand(BaseSettings):
 # 2. Automatically parse CLI input and instantiate `CLICommand`.
 # 3. Call `CLICommand.model_post_init` (or `__post_init__` for Pydantic V1)
 #    as the primary entry point for the command's logic.
-@app.callback(cls=CLICommand)
-def main(ctx: typer.Context):
-    """The 'Chassis' of the application.
-
-    This function is the main entry point as seen by Typer. Its primary
-    responsibilities are minimal due to the `cls=CLICommand` pattern:
-    1. Handle pre-instantiation checks (like the `--version` flag).
-    2. Catch any `ValidationError` that occurs during Typer's initial parsing
-       of CLI arguments (before `CLICommand` is even fully constructed).
-    3. The actual orchestration logic is delegated to `CLICommand.model_post_init`.
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    config_file: Annotated[Optional[Path], typer.Option("--config-file", "-c", help="Path to a JSON config file.")] = None,
+    version: Annotated[Optional[bool], typer.Option("--version", help="Show version and exit.", is_eager=True)] = None,
+    project_dir: Annotated[Path, typer.Argument(help="Project directory to operate on (default: current directory).")] = Path.cwd(),
+    venv_name: Annotated[str, typer.Option("--venv-name", help="Name of the virtual environment directory.")] = ".venv",
+    gitignore_name: Annotated[str, typer.Option("--gitignore-name", help="Name of the gitignore file.")] = ".gitignore",
+    log_file_name: Annotated[str, typer.Option("--log-file-name", help="Name of the JSON log file.")] = "pyuvstarter_setup_log.json",
+    dependency_migration: Annotated[str, typer.Option("--dependency-migration", help="Dependency migration mode.")] = "auto",
+    dry_run: Annotated[bool, typer.Option("--dry-run", "-d", help="Preview actions without making changes.")] = False,
+    full_gitignore_overwrite: Annotated[bool, typer.Option("--full-gitignore-overwrite", help="Overwrite existing .gitignore completely.")] = False,
+    no_gitignore: Annotated[bool, typer.Option("--no-gitignore", help="Disable all .gitignore operations.")] = False,
+    ignore_patterns: Annotated[List[str], typer.Option("--ignore-pattern", "-i", help="Additional gitignore patterns.")] = None,
+):
+    """The main entry point for pyuvstarter.
+    
+    This function handles CLI parsing via Typer and then instantiates
+    the CLICommand Pydantic model for validation and execution.
     """
     if ctx.resilient_parsing:
         # Typer's internal flag for handling shell completion.
         return
 
-    # Handle the --version flag. This short-circuits execution before the
-    # full Pydantic model construction, which is efficient for simple info calls.
+    # Handle the --version flag early
     if ctx.params.get("version"):
         typer.echo(f"pyuvstarter version: {_get_project_version()}")
         raise typer.Exit()
 
-    # No other logic is directly in `main`'s body. The `CLICommand` class
-    # handles all parsing, validation, and triggers the `_run_orchestration`
-    # logic via its `model_post_init` method.
+    # Use ctx.params which has all parsed values as a dictionary
+    # Filter out None values to allow defaults and env vars to work
+    cli_kwargs = {k: v for k, v in ctx.params.items() if v is not None and k != "version"}
+    
+    # Create CLICommand instance - this will trigger model_post_init
+    try:
+        command = CLICommand(**cli_kwargs)
+    except ValidationError as e:
+        typer.secho("❌ Configuration validation error:", fg=typer.colors.RED, bold=True)
+        for error in e.errors():
+            field = " -> ".join(str(loc) for loc in error['loc'])
+            typer.secho(f"  • {field}: {error['msg']}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True)
+        typer.secho(traceback.format_exc(), fg=typer.colors.RED)
+        raise typer.Exit(code=1)
 
 # new main with app() is new functionality to repair and keep
 
