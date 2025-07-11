@@ -123,6 +123,11 @@ import time
 from pathlib import Path
 from typing import Set, Tuple, List, Union, Dict, Optional, Any
 
+try:
+    import pathspec
+except ImportError:
+    pathspec = None
+
 # ==============================================================================
 # SECTION: CORE CONFIGURATION & CONSTANTS
 # ==============================================================================
@@ -172,6 +177,115 @@ DEFAULT_IGNORE_DIRS = {
 
 
 # ==============================================================================
+# SECTION: IGNORE MANAGEMENT (GITIGNORE + DIRECTORY PATTERNS)
+# ==============================================================================
+
+class IgnoreManager:
+    """
+    Manages file and directory exclusion patterns combining:
+    1. DEFAULT_IGNORE_DIRS (hardcoded common patterns)
+    2. --ignore-dirs (user-specified additional directory names)
+    3. .gitignore patterns (if enabled and pathspec is available)
+    
+    Provides a unified interface for checking if a path should be ignored.
+    """
+    
+    def __init__(self, project_root: Path, ignore_dirs: Optional[Set[str]] = None, use_gitignore: bool = True):
+        """
+        Initialize the ignore manager.
+        
+        Args:
+            project_root: Root directory of the project
+            ignore_dirs: Additional directory names to ignore (combined with DEFAULT_IGNORE_DIRS)
+            use_gitignore: Whether to load and apply .gitignore patterns
+        """
+        self.project_root = project_root
+        self.ignore_dirs = set(DEFAULT_IGNORE_DIRS)
+        if ignore_dirs:
+            self.ignore_dirs.update(ignore_dirs)
+        
+        self.gitignore_spec = None
+        if use_gitignore and pathspec is not None:
+            self._load_gitignore()
+        elif use_gitignore and pathspec is None:
+            _log_action("ignore_manager_init", "WARNING", 
+                       "pathspec library not available, .gitignore patterns will be ignored. "
+                       "Install pathspec with: uv add pathspec")
+    
+    def _load_gitignore(self):
+        """Load .gitignore patterns using pathspec."""
+        gitignore_path = self.project_root / ".gitignore"
+        if not gitignore_path.exists():
+            _log_action("ignore_manager_gitignore", "INFO", 
+                       f"No .gitignore found at {gitignore_path}, using only directory patterns")
+            return
+        
+        try:
+            with open(gitignore_path, 'r', encoding='utf-8') as f:
+                gitignore_lines = f.readlines()
+            
+            self.gitignore_spec = pathspec.PathSpec.from_lines('gitwildmatch', gitignore_lines)
+            _log_action("ignore_manager_gitignore", "SUCCESS", 
+                       f"Loaded .gitignore patterns from {gitignore_path}")
+            
+        except Exception as e:
+            _log_action("ignore_manager_gitignore", "ERROR", 
+                       f"Failed to load .gitignore from {gitignore_path}", 
+                       details={"exception": str(e)})
+            self.gitignore_spec = None
+    
+    def should_ignore(self, path: Path) -> bool:
+        """
+        Check if a path should be ignored based on directory patterns and .gitignore.
+        
+        Args:
+            path: Absolute or relative path to check
+            
+        Returns:
+            True if the path should be ignored, False otherwise
+        """
+        # Convert to relative path from project root for consistent checking
+        try:
+            if path.is_absolute():
+                rel_path = path.relative_to(self.project_root)
+            else:
+                rel_path = path
+        except ValueError:
+            # Path is outside project root, don't ignore it
+            return False
+        
+        # Check directory name patterns (existing logic)
+        for ignored_dir in self.ignore_dirs:
+            if ignored_dir in rel_path.parts:
+                return True
+        
+        # Check .gitignore patterns if available
+        if self.gitignore_spec:
+            # pathspec expects forward slashes and works with both files and directories
+            path_str = str(rel_path).replace('\\', '/')
+            if self.gitignore_spec.match_file(path_str):
+                return True
+            
+            # Also check if any parent directory would be ignored
+            # This handles cases where .gitignore ignores a directory and we're checking a file inside it
+            for parent in rel_path.parents:
+                parent_str = str(parent).replace('\\', '/')
+                if parent_str and self.gitignore_spec.match_file(parent_str):
+                    return True
+        
+        return False
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """Get a summary of ignore settings for logging."""
+        return {
+            "ignore_dirs": sorted(self.ignore_dirs),
+            "gitignore_enabled": self.gitignore_spec is not None,
+            "gitignore_path": str(self.project_root / ".gitignore") if self.gitignore_spec else None,
+            "pathspec_available": pathspec is not None
+        }
+
+
+# ==============================================================================
 # SECTION: DEMONSTRATION
 # ==============================================================================
 def test():
@@ -208,7 +322,63 @@ def test():
         deps_b = {dep[0] for dep in result_b.all_unique_dependencies}
         assert deps_b == {"django"}
 
-        print("\n\n--- 3. ACTION: Testing Backward Compatibility Shim ---")
+        print("\n\n--- 3. ACTION: Testing .gitignore Integration ---")
+        
+        # Create a test project with .gitignore
+        gitignore_test_root = root / "gitignore_test"
+        gitignore_test_root.mkdir()
+        
+        # Create test .gitignore file
+        gitignore_content = """# Test patterns for pyuvstarter
+*.pyc
+__pycache__/
+test_ignore/
+ignored_*.py
+ignored_*.ipynb
+**/deep_ignore/**
+"""
+        (gitignore_test_root / ".gitignore").write_text(gitignore_content)
+        
+        # Create files that should be ignored by .gitignore
+        test_ignore_dir = gitignore_test_root / "test_ignore"
+        test_ignore_dir.mkdir()
+        (test_ignore_dir / "should_be_ignored.py").write_text("import pandas\nprint('ignored')")
+        (gitignore_test_root / "ignored_notebook.ipynb").write_text(json.dumps({
+            "cells": [{"cell_type": "code", "source": ["import tensorflow as tf"]}]
+        }))
+        
+        # Create files that should NOT be ignored
+        (gitignore_test_root / "main.py").write_text("import requests\nprint('not ignored')")
+        (gitignore_test_root / "valid_notebook.ipynb").write_text(json.dumps({
+            "cells": [{"cell_type": "code", "source": ["import numpy as np"]}]
+        }))
+        
+        # Test with .gitignore enabled (default)
+        print("    Testing WITH .gitignore patterns...")
+        result_with_gitignore = discover_dependencies_in_scope(scan_path=gitignore_test_root, use_gitignore=True)
+        deps_with_gitignore = {dep[0] for dep in result_with_gitignore.all_unique_dependencies}
+        print(f"    Found dependencies: {sorted(deps_with_gitignore)}")
+        
+        # Test with .gitignore disabled
+        print("    Testing WITHOUT .gitignore patterns...")
+        result_without_gitignore = discover_dependencies_in_scope(scan_path=gitignore_test_root, use_gitignore=False)
+        deps_without_gitignore = {dep[0] for dep in result_without_gitignore.all_unique_dependencies}
+        print(f"    Found dependencies: {sorted(deps_without_gitignore)}")
+        
+        # Validate .gitignore functionality
+        assert "requests" in deps_with_gitignore, "requests should be found (not ignored)"
+        assert "numpy" in deps_with_gitignore, "numpy should be found (not ignored)"
+        assert "pandas" not in deps_with_gitignore, "pandas should be ignored by .gitignore"
+        assert "tensorflow" not in deps_with_gitignore, "tensorflow should be ignored by .gitignore"
+        
+        # Should find more dependencies without .gitignore
+        assert len(deps_without_gitignore) >= len(deps_with_gitignore), "Should find same or more deps without .gitignore"
+        assert "pandas" in deps_without_gitignore, "pandas should be found when .gitignore disabled"
+        assert "tensorflow" in deps_without_gitignore, "tensorflow should be found when .gitignore disabled"
+        
+        print(f"    ✓ .gitignore test PASSED: {len(deps_with_gitignore)} deps with gitignore, {len(deps_without_gitignore)} without")
+
+        print("\n\n--- 4. ACTION: Testing Backward Compatibility Shim ---")
         print("    (NOTE: A DeprecationWarning is expected below)")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -222,7 +392,8 @@ def test():
 # --- Argument Parsing ---
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Automate Python project setup with uv, VS Code config, and dependency management for scripts and notebooks."
+        description="Automate Python project setup with uv, VS Code config, and dependency management for scripts and notebooks. "
+                   "Respects .gitignore patterns by default for intelligent file discovery."
     )
     parser.add_argument(
         "project_dir",
@@ -250,6 +421,11 @@ def parse_args():
         "--ignore-dirs",
         nargs="*",
         help="Additional directories to ignore during dependency discovery (beyond defaults like .venv, __pycache__, etc.)"
+    )
+    parser.add_argument(
+        "--no-gitignore",
+        action="store_true",
+        help="Disable automatic .gitignore pattern exclusion during dependency discovery"
     )
     return parser.parse_args()
 
@@ -747,10 +923,10 @@ def _canonicalize_pkg_name(name: str) -> str:
     return canonical if canonical else name.lower()
 
 
-def _find_all_notebooks(scan_path: Path, ignore_dirs: Set[str]) -> List[Path]:
+def _find_all_notebooks(scan_path: Path, ignore_manager: IgnoreManager) -> List[Path]:
     """Finds all .ipynb files within a scope while respecting ignore patterns."""
     all_files = list(scan_path.rglob("*.ipynb"))
-    valid_files = [p for p in all_files if not any(ignored in p.parts for ignored in ignore_dirs)]
+    valid_files = [p for p in all_files if not ignore_manager.should_ignore(p)]
     return valid_files
 
 
@@ -966,22 +1142,26 @@ class DiscoveryResult:
                 f"  - Total Unique Dependencies: {len(self.all_unique_dependencies)}")
 
 
-def discover_dependencies_in_scope(scan_path: Path, ignore_dirs: Optional[Set[str]] = None, scan_notebooks: bool = True, dry_run: bool = False) -> DiscoveryResult:
+def discover_dependencies_in_scope(scan_path: Path, ignore_dirs: Optional[Set[str]] = None, scan_notebooks: bool = True, dry_run: bool = False, use_gitignore: bool = True) -> DiscoveryResult:
     """The primary, user-facing function to discover all dependencies within a specific scope."""
     action_name = f"discover_deps_{scan_path.name}"
     _log_action(action_name, "INFO", f"Starting scope-aware discovery in '{scan_path}'.")
     result = DiscoveryResult()
     result.scan_path = scan_path
-    effective_ignore_dirs = DEFAULT_IGNORE_DIRS if ignore_dirs is None else ignore_dirs
+    
+    # Create IgnoreManager to handle all ignore logic
+    ignore_manager = IgnoreManager(scan_path, ignore_dirs, use_gitignore)
+    ignore_summary = ignore_manager.get_summary()
+    _log_action(action_name, "INFO", f"Ignore configuration: {ignore_summary}")
 
-    _log_action(action_name, "INFO", f"Phase 1: Analyzing Python scripts...")
-    result.from_scripts = _get_packages_from_pipreqs(scan_path, effective_ignore_dirs, dry_run)
+    _log_action(action_name, "INFO", "Phase 1: Analyzing Python scripts...")
+    result.from_scripts = _get_packages_from_pipreqs(scan_path, ignore_manager, dry_run)
 
     if not scan_notebooks:
         _log_action(action_name, "INFO", "Phase 2 skipped: notebook scanning is disabled.")
         return result
 
-    notebook_paths = _find_all_notebooks(scan_path, ignore_dirs=effective_ignore_dirs)
+    notebook_paths = _find_all_notebooks(scan_path, ignore_manager)
     result.notebooks_found_count = len(notebook_paths)
     if not notebook_paths:
         _log_action(action_name, "INFO", "Phase 2 complete: no notebooks found in scope.")
@@ -999,7 +1179,9 @@ def discover_dependencies_in_scope(scan_path: Path, ignore_dirs: Optional[Set[st
                 conversion_map[nb_path] = py_path
         if conversion_map:
              _log_action(action_name, "INFO", f"Analyzing {len(conversion_map)} converted notebook(s)...")
-             result.from_converted_notebooks = _get_packages_from_pipreqs(temp_dir, set(), dry_run)
+             # For temp directory scanning, create a simple ignore manager without gitignore
+             temp_ignore_manager = IgnoreManager(temp_dir, set(), use_gitignore=False)
+             result.from_converted_notebooks = _get_packages_from_pipreqs(temp_dir, temp_ignore_manager, dry_run)
 
     result.notebooks_converted_count = len(conversion_map)
     failed_primary_notebooks = set(notebook_paths) - set(conversion_map.keys())
@@ -1044,7 +1226,7 @@ def _discover_all_code_dependencies(project_root: Path, venv_name: str = "", dry
     """ Discovers all code dependencies in a project scope, including Python scripts and Jupyter Notebooks."""
     # warnings.warn("`_discover_all_code_dependencies` is deprecated. Use `discover_dependencies_in_scope`.", DeprecationWarning, stacklevel=2)
     ignore_dirs = {venv_name} if venv_name else None
-    result_obj = discover_dependencies_in_scope(scan_path=project_root, ignore_dirs=ignore_dirs, scan_notebooks=True, dry_run=dry_run)
+    result_obj = discover_dependencies_in_scope(scan_path=project_root, ignore_dirs=ignore_dirs, scan_notebooks=True, dry_run=dry_run, use_gitignore=True)
     return result_obj.all_unique_dependencies
 
 # --- Project and Dependency Handling ---
@@ -1270,14 +1452,14 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
     return packages_specs
 
 
-def _get_packages_from_pipreqs(scan_path: Path, ignore_dirs: Set[str], dry_run: bool) -> Set[Tuple[str, str]]:
+def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: IgnoreManager, dry_run: bool) -> Set[Tuple[str, str]]:
     """
     Runs the `pipreqs` tool safely and parses its output. This function represents
     the synthesis of the best features from multiple versions.
 
     Args:
         scan_path: The directory to scan for dependencies.
-        ignore_dirs: A set of directory names within the scan_path to ignore.
+        ignore_manager: IgnoreManager instance to handle file/directory exclusions.
         dry_run: If True, the command will be logged but not executed.
 
     Returns:
@@ -1292,9 +1474,9 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_dirs: Set[str], dry_run: 
     # MOTIVATION (from vb): The --ignore flag of pipreqs requires a path. By constructing
     # the full path, we ensure this command works correctly regardless of the
     # current working directory from which this script is executed. This is the most robust method.
-    # Note: pipreqs only supports directory names, not glob patterns, so filter those out
+    # Note: pipreqs only supports directory names, not glob patterns, so extract simple directory names
     filtered_ignore_dirs = []
-    for d in ignore_dirs:
+    for d in ignore_manager.ignore_dirs:
         if not ('*' in d or '?' in d):  # Skip glob patterns - pipreqs doesn't support them
             filtered_ignore_dirs.append(str(scan_path / d))
 
@@ -1850,7 +2032,7 @@ def _detect_notebook_systems(nb_path: Path) -> set[str]:
 
     return systems
 
-def _ensure_notebook_execution_support(project_root: Path, ignore_dirs: Set[str], dry_run: bool) -> bool:
+def _ensure_notebook_execution_support(project_root: Path, ignore_manager: IgnoreManager, dry_run: bool) -> bool:
     """
     Ensures dependencies for running notebooks (like `ipykernel`) are installed.
     This is separate from code dependencies (like `pandas`). It detects the
@@ -1860,7 +2042,7 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_dirs: Set[str]
         True if successful or no action needed, False if errors occurred.
     """
     action_name = "ensure_notebook_execution_support"
-    notebook_paths = _find_all_notebooks(project_root, ignore_dirs)
+    notebook_paths = _find_all_notebooks(project_root, ignore_manager)
     if not notebook_paths:
         # No notebooks, nothing to do.
         return True
@@ -1939,6 +2121,7 @@ def main():
         f"Dependency File: {PYPROJECT_TOML_NAME}",
         f"Migration Mode: {args.dependency_migration}",
         f"Dry Run: {'Yes - Preview Only' if args.dry_run else 'No - Making Changes'}",
+        f"GitIgnore Support: {'Disabled' if args.no_gitignore else 'Enabled'}",
         f"Execution Log: {log_file_path.name}",
         "─" * 60,
         "This tool will automate your Python project setup using the modern uv ecosystem.",
@@ -2010,12 +2193,18 @@ def main():
         if args.ignore_dirs:
             ignore_dirs.update(args.ignore_dirs)
 
+        # Create IgnoreManager for consistent ignore behavior throughout the application
+        ignore_manager = IgnoreManager(project_root, ignore_dirs, use_gitignore=not args.no_gitignore)
+        ignore_summary = ignore_manager.get_summary()
+        _log_action("ignore_setup", "INFO", f"Ignore configuration: {ignore_summary}")
+
         # Use the new discovery system instead of the deprecated function
         discovery_result = discover_dependencies_in_scope(
             scan_path=project_root,
             ignore_dirs=ignore_dirs,
             scan_notebooks=True,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            use_gitignore=not args.no_gitignore  # Invert the --no-gitignore flag
         )
         all_discovered_packages = discovery_result.all_unique_dependencies
         major_action_results.append(("code_dep_discovery", "SUCCESS"))
@@ -2034,7 +2223,7 @@ def main():
 
         # 9. Notebook Execution Support (Orthogonal Concern)
         # This runs after dependency management to ensure support packages are also added.
-        notebook_exec_success = _ensure_notebook_execution_support(project_root, ignore_dirs, args.dry_run)
+        notebook_exec_success = _ensure_notebook_execution_support(project_root, ignore_manager, args.dry_run)
         if notebook_exec_success:
             major_action_results.append(("notebook_exec_support", "SUCCESS"))
         else:
