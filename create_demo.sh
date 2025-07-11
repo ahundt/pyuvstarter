@@ -36,7 +36,7 @@ set -e # Exit on any error
 
 # === CONFIGURATION ===
 DEMO_DIR="pyuvstarter_demo_project"
-GIF_FILE="pyuvstarter_demo.gif"
+GIF_FILE="pyuvstarter_demo"
 
 # Default settings
 UNIT_TEST_MODE=false
@@ -874,8 +874,8 @@ DEMO_SCRIPT_EOF
 
         # Run t-rec with optimized settings for demo GIFs (slower, more readable)
         # Remove .gif extension from filename as t-rec adds it automatically
-        GIF_BASE_NAME="${GIF_FILE%.gif}"
-        t-rec \
+        GIF_BASE_NAME="${GIF_FILE}"
+        t-rec -m \
             --output "$GIF_BASE_NAME" \
             --decor shadow \
             --bg transparent \
