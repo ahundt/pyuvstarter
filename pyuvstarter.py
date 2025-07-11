@@ -338,65 +338,12 @@ ignored_*.ipynb
 
         print(f"    ✓ .gitignore test PASSED: {len(deps_with_gitignore)} deps with gitignore, {len(deps_without_gitignore)} without")
 
-        print("\n\n--- 4. ACTION: Testing Backward Compatibility Shim ---")
-        print("    (NOTE: A DeprecationWarning is expected below)")
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            old_api_result = _discover_all_code_dependencies(project_root=service_a)
-            assert len(w) == 1
-        assert len(old_api_result) == 5
-        print("    Shim test PASSED.")
+        
 
         print("\n\n--- Demonstration Complete ---")
 
 
-# ------------------------------------------------------------------------------
-# Deprecated: parse_args is deprecated in favor of CliCommand check if there are regressions or missing documentation in _perform_gitignore_setup or misisng comments or bugs then once confirmed, remove parse_args function
-# ------------------------------------------------------------------------------
-# --- Argument Parsing --- DEPRECATED - REMOVE AFTER MIGRATION
-# TODO: This function is deprecated. The CLICommand Pydantic class with Typer
-# should be used instead. This old argparse implementation will be removed.
-def parse_args():
-    # DEPRECATED: Use CLICommand Pydantic class instead
-    raise DeprecationWarning(
-        "parse_args() is deprecated. Use CLICommand Pydantic class with Typer instead."
-    )
-        description="Automate Python project setup with uv, VS Code config, and dependency management for scripts and notebooks. "
-                   "Respects .gitignore patterns by default for intelligent file discovery."
-    )
-    parser.add_argument(
-        "project_dir",
-        nargs="?",
-        default=".",
-        help="Project directory to operate on (default: current directory)"
-    )
-    parser.add_argument(
-        "-v", "--version",
-        action="store_true",
-        help="Show pyuvstarter version and exit"
-    )
-    parser.add_argument(
-        "--dependency-migration",
-        choices=["auto", "all-requirements", "only-imported", "skip-requirements"],
-        default="auto",
-        help="Dependency migration mode: 'auto' (default, intelligent), 'all-requirements' (migrate all requirements.txt and discover imports), 'only-imported' (only migrate imported entries from requirements.txt, and discover other imports), 'skip-requirements' (ignore requirements.txt, rely only on imports)."
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview actions without making changes."
-    )
-    parser.add_argument(
-        "--ignore-dirs",
-        nargs="*",
-        help="Additional directories to ignore during dependency discovery (beyond defaults like .venv, __pycache__, etc.)"
-    )
-    parser.add_argument(
-        "--no-gitignore",
-        action="store_true",
-        help="Disable automatic .gitignore pattern exclusion during dependency discovery"
-    )
-    return parser.parse_args()
+
 
 # --- Project Version Extraction ---
 def _get_project_version(pyproject_path: Path = Path(__file__), project_name: str = "pyuvstarter") -> str:
@@ -1217,14 +1164,7 @@ def generate_discovery_summary(result: DiscoveryResult) -> str:
         summary_lines.append("  - No dependencies discovered in this scope.")
     return "\n".join(summary_lines)
 
-def _discover_all_code_dependencies(project_root: Path, venv_name: str = "", dry_run: bool = False) -> Set[Tuple[str, str]]:
-    """ Discovers all code dependencies in a project scope, including Python scripts and Jupyter Notebooks."""
-    # warnings.warn("`_discover_all_code_dependencies` is deprecated. Use `discover_dependencies_in_scope`.", DeprecationWarning, stacklevel=2)
-    ignore_dirs = {venv_name} if venv_name else None
-    # Create GitIgnore manager if needed
-    ignore_manager = GitIgnore(project_root) if project_root.exists() else None
-    result_obj = discover_dependencies_in_scope(scan_path=project_root, ignore_manager=ignore_manager, scan_notebooks=True, dry_run=dry_run)
-    return result_obj.all_unique_dependencies
+
 
 # --- Project and Dependency Handling ---
 
@@ -1284,69 +1224,10 @@ def _ensure_project_initialized(project_root: Path, dry_run: bool):
         _log_action(action_name, "ERROR", "Failed to initialize project with `uv init`. See command execution log.\nManual `pyproject.toml` creation or `uv init` troubleshooting needed.")
         return False
 
-# ------------------------------------------------------------------------------
-# Deprecated: _ensure_gitignore_exists is deprecated in favor of _perform_gitignore_setup check if there are regressions or missing documentation in _perform_gitignore_setup or misisng comments or bugs then once confirmed, remove _ensure_gitignore_exists function
-# ------------------------------------------------------------------------------
-def _ensure_gitignore_exists(project_root: Path, venv_name: str, dry_run: bool):
-    """Ensures a .gitignore file exists and contains essential Python ignores.
-
-    This function is a production-ready, drop-in replacement for the original,
-    using the robust GitIgnore class for all file operations. It correctly
-    handles dry runs, logging, and both creation and updating scenarios.
-
-    Args:
-        project_root: The root directory of the project.
-        venv_name: The name of the virtual environment directory.
-        dry_run: If True, log actions but do not modify any files.
-    """
-    action_name = "ensure_gitignore"
-    gitignore_path = project_root / ".gitignore"
-    # Using module-level constant
-
-    _log_action(action_name, "INFO", f"Checking for '{gitignore_path}'.")
-
-    if gitignore_path.exists():
-        _log_action(action_name, "INFO", "'.gitignore' exists. Ensuring essential patterns are present.")
-        patterns_to_ensure = ESSENTIAL_PATTERNS_TO_ENSURE.copy()
-        patterns_to_ensure["Project Specific"] = [f"{venv_name}/", JSON_LOG_FILE_NAME]
-
-        for comment, patterns in patterns_to_ensure.items():
-            if dry_run:
-                _log_action(action_name, "INFO", f"DRY RUN: Would ensure patterns for '{comment}'.", details={"patterns": patterns})
-            else:
-                try:
-                    ignore_manager = GitIgnore(project_root)
-                    ignore_manager.save(patterns, comment=f"Essential patterns by pyuvstarter: {comment}")
-                    _log_action(action_name, "SUCCESS", f"Ensured patterns for '{comment}'.")
-                except (IOError, NotADirectoryError) as e:
-                    _log_action(action_name, "ERROR", f"Could not update '{gitignore_path}': {e}", details={"exception": str(e)})
-                    return
-    else:
-        _log_action(action_name, "INFO", "'.gitignore' not found. Creating a comprehensive default.")
-        full_pattern_set = COMPREHENSIVE_PYTHON_GITIGNORE.copy()
-        full_pattern_set["Python Virtual Environments"].insert(0, f"{venv_name}/")
-        full_pattern_set["Pyuvstarter Specific"] = [JSON_LOG_FILE_NAME]
-
-        if dry_run:
-            _log_action(action_name, "INFO", "DRY RUN: Would create a new '.gitignore' with comprehensive patterns.")
-        else:
-            try:
-                ignore_manager = GitIgnore(project_root)
-                for comment, patterns in full_pattern_set.items():
-                    ignore_manager.save(patterns, comment=comment)
-                _log_action(action_name, "SUCCESS", f"Successfully created '{gitignore_path}'.")
-            except (IOError, NotADirectoryError) as e:
-                _log_action(action_name, "ERROR", f"Failed to create '{gitignore_path}': {e}", details={"exception": str(e)})
 
 
-# ------------------------------------------------------------------------------
-# Deprecated: _ensure_gitignore_exists is deprecated in favor of _perform_gitignore_setup check if there are regressions or missing documentation in _perform_gitignore_setup or misisng comments or bugs then once confirmed, remove _ensure_gitignore_exists function
-# ------------------------------------------------------------------------------
-def _ensure_gitignore_exists(project_root: Path, venv_name: str, dry_run: bool):
-    """Ensures a .gitignore file exists and contains essential Python/venv ignores."""
-    action_name = "ensure_gitignore"
-    gitignore_path = project_root / GITIGNORE_NAME
-    _log_action(action_name, "INFO", f"Checking for '{GITIGNORE_NAME}' file.")
+
+
 
     essential_ignore_map = {
         "Python Virtual Environments": [f"{venv_name}/", "venv/", "ENV/", "env/", "*/.venv/", "*/venv/"],
