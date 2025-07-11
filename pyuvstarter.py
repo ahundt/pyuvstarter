@@ -122,7 +122,7 @@ import time
 import traceback
 
 from pathlib import Path
-from typing import Set, Tuple, List, Union, Dict, Optional, Any
+from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type, Never
 
 # --- Third-Party Imports ---
 try:
@@ -131,13 +131,12 @@ except ImportError:
     pathspec = None
 
 import typer
-from pydantic import Field, BaseModel, ConfigDict
-from pydantic_settings import BaseSettings
+from pydantic import Field, BaseModel, ConfigDict, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathspec.gitignore import GitIgnoreSpec
-from typing_extensions import Annotated
+from typing_extensions import Annotated, override
 
 import functools
-from pathlib import Path
 from typing import List, Iterable, Optional, Union
 
 # The core dependency that does all the heavy lifting.
@@ -661,9 +660,14 @@ ignored_*.ipynb
 # ------------------------------------------------------------------------------
 # Deprecated: parse_args is deprecated in favor of CliCommand check if there are regressions or missing documentation in _perform_gitignore_setup or misisng comments or bugs then once confirmed, remove parse_args function
 # ------------------------------------------------------------------------------
-# --- Argument Parsing ---
+# --- Argument Parsing --- DEPRECATED - REMOVE AFTER MIGRATION
+# TODO: This function is deprecated. The CLICommand Pydantic class with Typer
+# should be used instead. This old argparse implementation will be removed.
 def parse_args():
-    parser = argparse.ArgumentParser(
+    # DEPRECATED: Use CLICommand Pydantic class instead
+    raise DeprecationWarning(
+        "parse_args() is deprecated. Use CLICommand Pydantic class with Typer instead."
+    )
         description="Automate Python project setup with uv, VS Code config, and dependency management for scripts and notebooks. "
                    "Respects .gitignore patterns by default for intelligent file discovery."
     )
@@ -2419,10 +2423,16 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_manager: Ignor
         return True
 
 ######################################################################
-# MAIN ORCHESTRATION FUNCTION - Deprecated
+# MAIN ORCHESTRATION FUNCTION - DEPRECATED - REMOVE AFTER MIGRATION
 ######################################################################
+# TODO: This function is deprecated. The new Typer-based main() with CLICommand
+# should be used instead. This old implementation will be removed once all
+# functionality is confirmed to work with the new architecture.
 def main():
-    args = parse_args()
+    # DEPRECATED: Use the new @app.callback(cls=CLICommand) main instead
+    raise DeprecationWarning(
+        "This main() function is deprecated. Use the new Typer-based implementation."
+    )
     if getattr(args, "version", False):
         version = _get_project_version(Path(__file__).parent / "pyproject.toml", "pyuvstarter")
         _log_action("show_version", "INFO", f"pyuvstarter version: {version}")
@@ -3009,7 +3019,7 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
 
 
 # ==============================================================================
-# SECTION 4: CLI DEFINITION & APPLICATION ENTRY POINT
+# SECTION 4: CLI DEFINITION & APPLICATION ENTRY POINT - new functionality to repair and keep
 # ==============================================================================
 
 # --- REFACTORED GITIGNORE ORCHESTRATION CONTROLLER ---
@@ -3082,7 +3092,7 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
         raise typer.Exit(code=1)
 
 # ==============================================================================
-# SECTION 4: CLI DEFINITION & APPLICATION ENTRY POINT
+# SECTION 4: CLI DEFINITION & APPLICATION ENTRY POINT - new functionality to repair and keep
 # This section implements the advanced Typer/Pydantic integration pattern
 # to achieve a true Single Source of Truth for CLI options and configuration.
 # ==============================================================================
@@ -3095,6 +3105,7 @@ app = typer.Typer(
     help="🚀 **A Modern Python Project Setup Tool**", # Overall help message.
 )
 
+# CLICOMMAND: new functionality to repair and keep
 class CLICommand(BaseSettings):
     """The Pydantic model defining the application's configuration schema.
 
@@ -3241,7 +3252,7 @@ class CLICommand(BaseSettings):
         """Customizes the order and sources from which settings are loaded.
 
         This method is crucial for implementing the desired configuration
-        precedence: CLI > JSON File > Environment Variables > Defaults.
+        precedence: CLI > Environment Variables > JSON Config File > Defaults.
 
         Args:
             settings_cls: The Pydantic BaseSettings class itself.
@@ -3253,8 +3264,8 @@ class CLICommand(BaseSettings):
         Returns:
             A tuple of dictionaries, ordered by precedence (lower index = higher precedence).
         """
-        # Start with environment variables and .env files (lowest explicit precedence).
-        sources: List[SettingsConfigDict] = [env_settings, dotenv_settings]
+        # Start with .env files and JSON config file (lowest precedence).
+        sources: List[SettingsConfigDict] = [dotenv_settings]
 
         # Check if a config file path was provided (from CLI or env).
         # We need to load it here so its values can be layered.
@@ -3265,8 +3276,7 @@ class CLICommand(BaseSettings):
                 try:
                     # Load the JSON config file.
                     file_settings = json.loads(p.read_text(encoding='utf-8'))
-                    # Yield file settings so they are layered before init_settings (CLI).
-                    # This ensures CLI overrides file.
+                    # Add file settings with lower precedence than env vars and CLI.
                     sources.append(file_settings)
                     _log_action("config_load", "INFO", f"Loaded settings from config file: '{p}'")
                 except json.JSONDecodeError as e:
@@ -3277,6 +3287,9 @@ class CLICommand(BaseSettings):
                     raise typer.Exit(code=1)
             else:
                 typer.secho(f"WARNING: Config file not found or is not a file: '{p}'", fg=typer.colors.YELLOW, err=True)
+
+        # Add environment variables with higher precedence than config file but lower than CLI.
+        sources.append(env_settings)
 
         # Finally, add the `init_settings` (from CLI arguments) with the highest precedence.
         sources.append(init_settings)
@@ -3328,6 +3341,10 @@ class CLICommand(BaseSettings):
 
         # This list will track the status of major actions for the final summary.
         major_action_results: List[Tuple[str, str]] = []
+
+        # Track VS Code configuration status for the final log.
+        vscode_settings_status = "NOT_ATTEMPTED"
+        vscode_launch_status = "NOT_ATTEMPTED"
 
         # --- Main Orchestration Logic ---
         # The entire orchestration is wrapped in a try-except block here. This ensures
@@ -3425,11 +3442,17 @@ class CLICommand(BaseSettings):
             # Step 11: Configure VS Code workspace settings and launch configurations.
             _log_action("configure_vscode", "INFO", "Configuring VS Code workspace settings and launch files.")
             _configure_vscode_settings(self.project_dir, venv_python_executable, self.dry_run)
+            vscode_settings_status = "SUCCESS"
             _ensure_vscode_launch_json(self.project_dir, venv_python_executable, self.dry_run)
+            vscode_launch_status = "SUCCESS"
             major_action_results.append(("vscode_config", "SUCCESS"))
 
             # --- Final Status and Summary ---
             _log_action("script_end", "SUCCESS", "🎉 Automated project setup script completed successfully!")
+
+            # RESTORED & ENHANCED: Explicit file summary (provides detailed paths for user clarity).
+            explicit_summary = _get_explicit_summary_text(self.project_dir, self.venv_name, pyproject_file_path, log_file_path)
+            _log_action("explicit_summary", "INFO", explicit_summary)
 
             # RESTORED & ENHANCED: Final summary table printed to console.
             # This provides immediate, high-level feedback to the user.
@@ -3462,6 +3485,8 @@ class CLICommand(BaseSettings):
         # which was a key UX feature of the legacy `main` function.
         except SystemExit as e:
             # Caught for clean exits initiated by other functions.
+            vscode_settings_status = "FAILED"
+            vscode_launch_status = "FAILED"
             _log_action("script_halted_by_logic", "ERROR", f"SCRIPT HALTED: {e}")
             _log_data_global["overall_status"] = "HALTED_BY_SCRIPT_LOGIC"
             _log_data_global["final_summary"] = f"Script halted by explicit exit: {e}"
@@ -3469,6 +3494,8 @@ class CLICommand(BaseSettings):
             raise typer.Exit(code=1) # Re-raise to exit Typer properly.
         except subprocess.CalledProcessError as e:
             failed_cmd_str = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
+            vscode_settings_status = "FAILED"
+            vscode_launch_status = "FAILED"
             error_message = f"A critical command failed execution: '{failed_cmd_str}'"
             _log_action("critical_command_failed", "ERROR", error_message, details={
                 "command": failed_cmd_str, "return_code": e.returncode,
@@ -3479,29 +3506,43 @@ class CLICommand(BaseSettings):
 
             # Provide specific, actionable hints based on the failed command.
             typer.secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
-            if "uv pip install" in failed_cmd_str or "uv add" in failed_cmd_str or "uv sync" in failed_cmd_str:
-                _log_action("install_sync_hint", "WARN", "HINT: A `uv` dependency command failed. Ensure package names in `pyproject.toml` are correct and exist on PyPI. Check `uv`'s error output above for details.")
-            elif "uv venv" in failed_cmd_str:
-                _log_action("uv_venv_hint", "WARN", "HINT: `uv venv` failed. Check for insufficient disk space or permission issues in the project directory.")
-            elif "uv tool install" in failed_cmd_str:
-                _log_action("uv_tool_install_hint", "WARN", "HINT: `uv tool install` failed. Check network connectivity or if the tool package (e.g., 'pipreqs') is available.")
+            cmd_str_lower = failed_cmd_str.lower()
+            if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_lower or "uv sync" in cmd_str_lower:
+                _log_action("install_sync_hint", "WARN", f"INSTALLATION/SYNC HINT: A package operation with `uv` failed.\n  - Review `uv`'s error output (logged as FAIL_STDOUT/FAIL_STDERR for the command) for specific package names or reasons.\n  - Ensure the package name is correct and exists on PyPI (https://pypi.org) or your configured index.\n  - Some packages require system-level (non-Python) libraries to be installed first. Check the package's documentation.\n  - You might need to manually edit 'pyproject.toml' and then run `uv sync --python {venv_python_executable}`.")
+            elif "pipreqs" in cmd_str_lower:
+                _log_action("pipreqs_hint", "WARN", f"PIPReQS HINT: The 'pipreqs' command (run via 'uvx') failed.\n  - This could be due to syntax errors in your Python files that `pipreqs` cannot parse, an internal `pipreqs` issue, or `uvx` failing to execute `pipreqs`.\n  - Try running manually for debug: uvx pipreqs \"{self.project_dir}\" --ignore \"{self.venv_name}\" --debug")
+            elif "uv venv" in cmd_str_lower:
+                _log_action("uv_venv_hint", "WARN", f"VIRTUAL ENV HINT: `uv venv` command failed.\n  - Ensure `uv` is correctly installed and functional. Check `uv --version`.\n  - Check for issues like insufficient disk space or permissions in the project directory '{self.project_dir}'.")
+            elif "uv tool install" in cmd_str_lower:
+                _log_action("uv_tool_install_hint", "WARN", "UV TOOL INSTALL HINT: `uv tool install` (likely for pipreqs) failed.\n  - This could be due to network issues, `uv` problems, or the tool package ('pipreqs') not being found by `uv`.\n  - Try running `uv tool install pipreqs` manually in your terminal.")
+            elif "uv init" in cmd_str_lower:
+                _log_action("uv_init_hint", "WARN", f"UV INIT HINT: `uv init` command failed.\n  - Ensure `uv` is correctly installed. Try running `uv init` manually in an empty directory to test.\n  - Check for permissions issues in the project directory '{self.project_dir}'.")
+            elif "brew" in cmd_str_lower:
+                _log_action("brew_hint", "WARN", "Homebrew might be required for some installations. Ensure it's installed and working.")
 
             typer.secho(f"\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED)
             raise typer.Exit(code=1)
         except FileNotFoundError as e:
             # Caught for missing external executables (e.g., 'uv' itself, 'brew', 'curl').
             cmd_name = e.filename if hasattr(e, 'filename') and e.filename else "An external command"
+            vscode_settings_status = "FAILED"
+            vscode_launch_status = "FAILED"
             error_message = f"Required command '{cmd_name}' was not found. Please ensure it's installed and in your system's PATH."
             _log_action("missing_system_command", "ERROR", error_message, details={"filename": e.filename, "message": str(e)})
             _log_data_global["overall_status"] = "MISSING_SYSTEM_COMMAND"
             _log_data_global["final_summary"] = error_message
 
             typer.secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
-            if cmd_name == "brew": typer.secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW)
+            if cmd_name == "brew":
+                typer.secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW)
+            elif cmd_name == "curl":
+                typer.secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW)
             typer.secho("Setup aborted.", fg=typer.colors.RED)
             raise typer.Exit(code=1)
         except Exception as e:
             # Catch-all for any unexpected errors.
+            vscode_settings_status = "FAILED"
+            vscode_launch_status = "FAILED"
             tb_str = traceback.format_exc() # Capture full traceback for debugging.
             error_message = f"An unexpected critical error occurred: {e}"
             _log_action("unexpected_critical_error", "ERROR", error_message, details={
@@ -3517,8 +3558,12 @@ class CLICommand(BaseSettings):
             # Ensure the log file is always saved at the end of the execution,
             # even if an error caused an early exit.
             if _log_data_global: # Only save if _init_log was called successfully.
+                # Update summary in log with VS Code config status (restored from deprecated main).
+                _log_data_global["vscode_settings_json_status"] = vscode_settings_status
+                _log_data_global["vscode_launch_json_status"] = vscode_launch_status
                 _save_log(log_file_path, self.project_dir)
 
+# main with app.callback: new functionality to repair and keep
 
 # The `@app.callback(cls=CLICommand)` decorator is the core of the advanced
 # Typer/Pydantic integration. It tells Typer to:
@@ -3548,8 +3593,10 @@ def main(ctx: typer.Context):
         raise typer.Exit()
 
     # No other logic is directly in `main`'s body. The `CLICommand` class
-    # handles all parsing, validation, and triggers the `_run_orchestration`
+    # handles all parsing, validation, and triggers the orchestration
     # logic via its `model_post_init` method.
+
+# new main with app() is new functionality to repair and keep
 
 # This block ensures that the Typer application is run when the script is executed.
 if __name__ == "__main__":
