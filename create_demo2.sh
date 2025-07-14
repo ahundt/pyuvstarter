@@ -25,7 +25,8 @@ SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # === CONFIGURATION ===
-DEMO_DIR="pyuvstarter_demo_project"
+# Use absolute path for demo directory to ensure consistent location
+DEMO_DIR="$SCRIPT_DIR/pyuvstarter_demo_project"
 OUTPUT_BASENAME="pyuvstarter_demo"
 PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-python3 $SCRIPT_DIR/pyuvstarter.py}"
 
@@ -823,6 +824,18 @@ create_demo_script() {
 #!/bin/bash
 # Self-contained demo script
 
+# Dynamically resolve paths relative to this script
+DEMO_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PARENT_DIR="$(cd "$DEMO_SCRIPT_DIR/.." && pwd)"
+PYUVSTARTER_PATH="$PARENT_DIR/pyuvstarter.py"
+VENV_ACTIVATE="$PARENT_DIR/.venv/bin/activate"
+
+# Verify pyuvstarter exists
+if [ ! -f "$PYUVSTARTER_PATH" ]; then
+    echo "ERROR: Cannot find pyuvstarter.py at $PYUVSTARTER_PATH"
+    exit 1
+fi
+
 # Colors
 setup_colors() {
     C_RESET='\033[0m'
@@ -863,19 +876,19 @@ main() {
     echo "You've just cloned a 'working' ML project. Let's explore..."
     sleep 1
 
-    type_command "tree -L 2 pyuvstarter_demo_project"
+    type_command "tree -L 2 ."
     # Show REAL directory structure
-    tree -L 2 pyuvstarter_demo_project -I '__pycache__' --dirsfirst 2>/dev/null || ls -la pyuvstarter_demo_project
+    tree -L 2 . -I '__pycache__' --dirsfirst 2>/dev/null || ls -la .
     sleep 1
 
     echo -e "\n${C_YELLOW}Let's check the requirements:${C_RESET}"
-    type_command "cat pyuvstarter_demo_project/requirements.txt"
-    cat pyuvstarter_demo_project/requirements.txt
+    type_command "cat requirements.txt"
+    cat requirements.txt
     echo -e "\n${C_RED}   ⚠️  Missing 24 critical dependencies!${C_RESET}"
     sleep 1.5
 
     echo -e "\n${C_CYAN}Let's try running the analysis script:${C_RESET}"
-    type_command "cd pyuvstarter_demo_project && python3 scripts/data_analysis.py"
+    type_command "python3 scripts/data_analysis.py"
     sleep 0.3
 
     # Simulate error
@@ -893,15 +906,15 @@ main() {
     sleep 0.5
 
     echo "Watch pyuvstarter discover and fix everything automatically..."
-    type_command "python3 pyuvstarter.py pyuvstarter_demo_project"
+    type_command "python3 $PYUVSTARTER_PATH ."
     sleep 0.5
 
     # ACTUALLY RUN PYUVSTARTER - show real output!
     (
-        if [ -f ".venv/bin/activate" ]; then
-            source .venv/bin/activate
+        if [ -f "$VENV_ACTIVATE" ]; then
+            source "$VENV_ACTIVATE"
         fi
-        python3 pyuvstarter.py pyuvstarter_demo_project
+        python3 "$PYUVSTARTER_PATH" .
     )
 
     echo ""
@@ -942,30 +955,30 @@ main() {
     sleep 0.5
 
     echo "What pyuvstarter created:"
-    type_command "ls -la pyuvstarter_demo_project | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
+    type_command "ls -la . | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
     
     # Actually run the command and show real results
-    ls -la pyuvstarter_demo_project | grep -E '(pyproject|venv|lock|gitignore|vscode)' | while read -r line; do
+    ls -la . | grep -E '(pyproject|venv|lock|gitignore|vscode)' | while read -r line; do
         echo "   $line"
     done
     
     echo ""
     # Check and report what was actually created
-    [ -f "pyuvstarter_demo_project/pyproject.toml" ] && echo -e "${C_GREEN}   ✅ pyproject.toml   ${C_DIM}# Modern Python configuration${C_RESET}" || echo -e "${C_RED}   ❌ pyproject.toml   ${C_DIM}# Not found!${C_RESET}"
-    [ -d "pyuvstarter_demo_project/.venv" ] && echo -e "${C_GREEN}   ✅ .venv/           ${C_DIM}# Isolated virtual environment${C_RESET}" || echo -e "${C_RED}   ❌ .venv/           ${C_DIM}# Not found!${C_RESET}"
-    [ -f "pyuvstarter_demo_project/uv.lock" ] && echo -e "${C_GREEN}   ✅ uv.lock          ${C_DIM}# Reproducible dependency versions${C_RESET}" || echo -e "${C_RED}   ❌ uv.lock          ${C_DIM}# Not found!${C_RESET}"
-    [ -f "pyuvstarter_demo_project/.gitignore" ] && echo -e "${C_GREEN}   ✅ .gitignore       ${C_DIM}# Version control ready${C_RESET}" || echo -e "${C_RED}   ❌ .gitignore       ${C_DIM}# Not found!${C_RESET}"
-    [ -d "pyuvstarter_demo_project/.vscode" ] && echo -e "${C_GREEN}   ✅ .vscode/         ${C_DIM}# IDE configuration${C_RESET}" || echo -e "${C_RED}   ❌ .vscode/         ${C_DIM}# Not found!${C_RESET}"
+    [ -f "pyproject.toml" ] && echo -e "${C_GREEN}   ✅ pyproject.toml   ${C_DIM}# Modern Python configuration${C_RESET}" || echo -e "${C_RED}   ❌ pyproject.toml   ${C_DIM}# Not found!${C_RESET}"
+    [ -d ".venv" ] && echo -e "${C_GREEN}   ✅ .venv/           ${C_DIM}# Isolated virtual environment${C_RESET}" || echo -e "${C_RED}   ❌ .venv/           ${C_DIM}# Not found!${C_RESET}"
+    [ -f "uv.lock" ] && echo -e "${C_GREEN}   ✅ uv.lock          ${C_DIM}# Reproducible dependency versions${C_RESET}" || echo -e "${C_RED}   ❌ uv.lock          ${C_DIM}# Not found!${C_RESET}"
+    [ -f ".gitignore" ] && echo -e "${C_GREEN}   ✅ .gitignore       ${C_DIM}# Version control ready${C_RESET}" || echo -e "${C_RED}   ❌ .gitignore       ${C_DIM}# Not found!${C_RESET}"
+    [ -d ".vscode" ] && echo -e "${C_GREEN}   ✅ .vscode/         ${C_DIM}# IDE configuration${C_RESET}" || echo -e "${C_RED}   ❌ .vscode/         ${C_DIM}# Not found!${C_RESET}"
     sleep 1.5
 
     echo -e "\n${C_GREEN}Let's run that script again:${C_RESET}"
-    type_command "cd pyuvstarter_demo_project && source .venv/bin/activate && python scripts/data_analysis.py"
+    type_command "source .venv/bin/activate && python scripts/data_analysis.py"
     sleep 0.3
 
     # Actually run it to show it works!
     local script_exit_code=0
-    if [ -f "pyuvstarter_demo_project/.venv/bin/activate" ]; then
-        (cd pyuvstarter_demo_project && source .venv/bin/activate && python scripts/data_analysis.py)
+    if [ -f ".venv/bin/activate" ]; then
+        (source .venv/bin/activate && python scripts/data_analysis.py)
         script_exit_code=$?
         
         if [ $script_exit_code -ne 0 ]; then
@@ -1114,9 +1127,10 @@ record_demo() {
     echo ""
 
     # Run t-rec with -m flag to create both GIF and MP4
+    # The demo script now handles all path resolution internally
     t-rec -m \
         --output "$OUTPUT_BASENAME" \
-        "$DEMO_DIR/.demo_script.sh"
+        -- "$DEMO_DIR/.demo_script.sh"
 
     # Check results
     echo -e "\n📦 Recording complete. Generated files:"
