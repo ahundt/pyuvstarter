@@ -1,4 +1,18 @@
 #!/bin/bash
+# Copyright 2025 Andrew Hundt
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # ==============================================================================
 # create_demo.sh v3.0.0 - Professional demo generation for pyuvstarter
 #
@@ -178,6 +192,12 @@ parse_arguments() {
 setup_install_simulation() {
     log_verbose "Setting up installation simulation"
 
+    # Ensure demo directory exists before creating files in it
+    if [ ! -d "$DEMO_DIR" ]; then
+        log_error "Demo directory does not exist: $DEMO_DIR"
+        return 1
+    fi
+    
     # Create wrapper script for simulating installs
     cat > "$DEMO_DIR/.simulate_installs.py" << 'EOF'
 #!/usr/bin/env python3
@@ -246,10 +266,24 @@ create_demo_project() {
     local mode="${1:-demo}"  # "demo" or "test"
 
     log_info "Creating demo project structure..."
+    log_verbose "SCRIPT_DIR: $SCRIPT_DIR"
+    log_verbose "DEMO_DIR: $DEMO_DIR"
+    log_verbose "Current directory: $(pwd)"
 
     # Clean and create directory structure
-    rm -rf "$DEMO_DIR"
-    mkdir -p "$DEMO_DIR"/{notebooks,scripts,src,tests,data}
+    rm -rf "$DEMO_DIR" || true  # Don't fail if directory doesn't exist
+    
+    # Create base directory first
+    mkdir -p "$DEMO_DIR" || {
+        log_error "Failed to create demo directory: $DEMO_DIR"
+        return 1
+    }
+    
+    # Create subdirectories
+    mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts" "$DEMO_DIR/src" "$DEMO_DIR/tests" "$DEMO_DIR/data" || {
+        log_error "Failed to create subdirectories in: $DEMO_DIR"
+        return 1
+    }
 
     # Create files based on mode
     create_requirements_file "$mode"

@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
+# Copyright 2025 Andrew Hundt
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 pyuvstarter.py (v7.0 - Enhanced Robustness & User Experience)
-
-Copyright (c) 2025 Andrew Hundt
 
 Purpose:
     Automates Python project and environment setup using `uv`, focusing on modern, reproducible, and user-friendly workflows.
@@ -1467,7 +1479,7 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
                         if base_pkg and base_pkg not in _DYNAMIC_IGNORE_SET:
                             discovered_packages.add((_canonicalize_pkg_name(base_pkg), base_pkg))
             except SyntaxError as e:
-                _log_action(action_name, "INFO", f"Skipping AST parse due to non-Python syntax.", details={"error": str(e)})
+                _log_action(action_name, "INFO", "Skipping AST parse due to non-Python syntax.", details={"error": str(e)})
 
     return discovered_packages
 
@@ -1930,7 +1942,7 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
 
     except subprocess.CalledProcessError:
         # ENHANCEMENT (from va): Provide a more actionable error message.
-        _log_action(action_name, "ERROR", f"`uvx pipreqs` command failed. Check command logs for details.")
+        _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Check command logs for details.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"An unexpected error occurred while running `pipreqs`: {e}", details={"exception": str(e)})
 
@@ -2203,7 +2215,8 @@ def _manage_project_dependencies(
                         content = f.read()
                     if '[project]' in content and 'name' in content:
                         can_install_editable = True
-                except Exception: pass
+                except Exception:
+                    pass
 
             if can_install_editable:
                 _log_action(action_name, "INFO", "Performing editable install as requested.")
@@ -3060,7 +3073,7 @@ class CLICommand(BaseSettings):
             elif "brew" in cmd_str_lower:
                 _log_action("brew_hint", "WARN", "Homebrew might be required for some installations. Ensure it's installed and working.")
 
-            typer.secho(f"\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED)
+            typer.secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED)
             raise typer.Exit(code=1)
         except FileNotFoundError as e:
             # Caught for missing external executables (e.g., 'uv' itself, 'brew', 'curl').
