@@ -52,8 +52,7 @@ jobs:
 
     - name: Check Python syntax
       run: |
-        source .venv/bin/activate || . .venv/Scripts/activate
-        python -m py_compile pyuvstarter.py
+        uv run python -m py_compile pyuvstarter.py
 
     - name: Build pyuvstarter package
       run: |
@@ -108,7 +107,7 @@ jobs:
       # E722: bare except (sometimes needed for robustness)
       # F401: imported but unused (might be used in type annotations)
       run: |
-        uvx ruff check . --select=E9,F63,F7,F82 --show-source || true
+        uvx ruff check . --select=E9,F63,F7,F82 --show-files || true
         # Run full check but don't fail the build
         uvx ruff check . --exit-zero
 
@@ -139,10 +138,10 @@ jobs:
       if: runner.os == 'Windows'
       run: |
         # Windows doesn't support the bash demo script, so run pyuvstarter directly
-        python pyuvstarter.py --help
+        uv run pyuvstarter --help
         mkdir test_windows
         cd test_windows
-        python ../pyuvstarter.py
+        uv run --directory .. pyuvstarter
         if (Test-Path "pyproject.toml") { echo "✅ Windows test passed" } else { exit 1 }
 
     - name: Run integration test - New project
@@ -150,7 +149,7 @@ jobs:
       run: |
         mkdir -p test_new_project
         cd test_new_project
-        python ../pyuvstarter.py
+        uv run --directory .. pyuvstarter
         # Verify key outputs
         test -f pyproject.toml || exit 1
         test -f .gitignore || exit 1
@@ -171,7 +170,7 @@ jobs:
         echo "import numpy as np" >> analysis.py
         
         # Run pyuvstarter
-        python ../pyuvstarter.py --dependency-migration auto
+        uv run --directory .. pyuvstarter --dependency-migration auto
         
         # Verify migration
         test -f pyproject.toml || exit 1
@@ -202,7 +201,7 @@ jobs:
         EOF
         
         # Run pyuvstarter
-        python ../pyuvstarter.py
+        uv run --directory .. pyuvstarter
         
         # Verify notebook dependencies were found
         test -f pyproject.toml || exit 1
