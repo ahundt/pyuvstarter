@@ -67,7 +67,7 @@ jobs:
     - name: Test pyuvstarter as installed package
       run: |
         # Test that pyuvstarter can be run as an installed command
-        pyuvstarter --version
+        uv run pyuvstarter --version
         
     - name: Test pyuvstarter in isolated environment (Unix)
       if: runner.os != 'Windows'
