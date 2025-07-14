@@ -344,7 +344,7 @@ run_the_demo() {
     echo "📊 PROJECT BEFORE PYUVSTARTER (the mess that will be fixed):"
     echo '👋 SCENARIO: You inherited this messy ML project...'
     echo ''
-    sleep 2
+    sleep 3
     echo '📁 CURRENT PROJECT STRUCTURE - BROKEN:'
     tree "$DEMO_DIR" -I '__pycache__' --dirsfirst 2>/dev/null || find "$DEMO_DIR" -type f | sort
     echo ''
@@ -929,8 +929,8 @@ DEMO_SCRIPT_EOF
             --output "$GIF_BASE_NAME" \
             --decor shadow \
             --bg transparent \
-            --end-pause 3s \
-            --start-pause 2s \
+            --end-pause 5s \
+            --start-pause 3s \
             --natural \
             "$DEMO_DIR/../demo_script.sh"
 
