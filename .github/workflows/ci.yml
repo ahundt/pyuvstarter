@@ -115,6 +115,9 @@ jobs:
     - name: Run unit tests (Unix)
       if: runner.os != 'Windows'
       run: |
+        # Activate the virtual environment so pyuvstarter dependencies are available
+        source .venv/bin/activate
+        
         chmod +x create_demo.sh create_demo2.sh
         
         echo "Running create_demo.sh unit tests..."
