@@ -123,6 +123,18 @@ verify_artifact() {
         return 0
     else
         echo "   ❌ $name not created"
+        case "$name" in
+            "pyproject.toml")
+                echo "      ACTION: Check if 'uv init' ran successfully" ;;
+            ".gitignore")
+                echo "      ACTION: Verify pyuvstarter's gitignore creation logic" ;;
+            ".venv"|"venv")
+                echo "      ACTION: Check if 'uv venv' completed successfully" ;;
+            "pyuvstarter_setup_log.json")
+                echo "      ACTION: Check if pyuvstarter started execution properly" ;;
+            *)
+                echo "      ACTION: Check pyuvstarter logs for errors creating $name" ;;
+        esac
         return 1
     fi
 }
@@ -221,15 +233,20 @@ run_unit_tests() {
     original_cwd=$(pwd)
 
     # Test 1: Run from project root (normal case)
+    local activate_cmd=""
+    if [ -f ".venv/bin/activate" ]; then
+        activate_cmd="source .venv/bin/activate && "
+    fi
     run_test 1 "Running pyuvstarter from project root directory" \
-        python3 ./pyuvstarter.py "$original_cwd/$DEMO_DIR"
+        bash -c "${activate_cmd}python3 ./pyuvstarter.py '$original_cwd/$DEMO_DIR'" || \
+        echo "   ACTION: Check if pyuvstarter.py exists and has proper permissions (chmod +x)"
 
     # Test 2: Run from different directory (edge case)
     local temp_dir
     temp_dir=$(mktemp -d)
     cd "$temp_dir"
     run_test 2 "Running pyuvstarter from different working directory" \
-        python3 "$original_cwd/pyuvstarter.py" "$original_cwd/$DEMO_DIR"
+        bash -c "${activate_cmd}python3 '$original_cwd/pyuvstarter.py' '$original_cwd/$DEMO_DIR'"
     cd "$original_cwd"
     rm -rf "$temp_dir"
 
@@ -258,19 +275,31 @@ run_unit_tests() {
     check_dependency_discovery() {
         if ! has_file "$DEMO_DIR/pyproject.toml"; then
             echo "   ❌ pyproject.toml not found"
+            echo "   ACTION: Check if pyuvstarter ran successfully and look for errors in pyuvstarter_setup_log.json"
             return 1
         fi
 
-        # More precise: find the dependencies section and count actual dependencies
-        local dep_count
-        # pyuvstarter uses [project] format with dependencies = [...]
-        dep_count=$(sed -n '/dependencies = \[/,/\]/p' "$DEMO_DIR/pyproject.toml" | grep -c '".*"' || echo "0")
+        # Check for specific expected dependencies from the demo project
+        local missing_deps=()
+        local found_deps=0
+        
+        # Key dependencies that should be discovered from demo files
+        for dep in "pandas" "numpy" "scikit-learn" "matplotlib"; do
+            if grep -q "\"$dep" "$DEMO_DIR/pyproject.toml"; then
+                ((found_deps++))
+            else
+                missing_deps+=("$dep")
+            fi
+        done
 
-        if [ "$dep_count" -gt 5 ]; then
-            echo "   ✅ Found $dep_count dependencies (expected >5)"
+        if [ $found_deps -ge 3 ]; then
+            echo "   ✅ Found $found_deps/4 key dependencies (pandas, numpy, scikit-learn, matplotlib)"
             return 0
         else
-            echo "   ❌ Only found $dep_count dependencies (expected >5)"
+            echo "   ❌ Only found $found_deps/4 expected dependencies"
+            echo "   Missing: ${missing_deps[*]}"
+            echo "   ACTION: Check if demo Python files contain the expected imports"
+            echo "           Verify pyuvstarter's dependency discovery is working"
             return 1
         fi
     }

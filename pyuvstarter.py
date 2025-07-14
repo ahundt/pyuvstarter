@@ -854,8 +854,8 @@ def _get_next_steps_text(config: 'CLICommand') -> str:
             activate_cmd = f"source '{venv_path / 'bin' / 'activate'}'"
         steps.append(f"2. Activate the environment in your terminal:\n    {activate_cmd}")
 
-    steps.append(f"3. Review `{config.pyproject_toml_name}`, `uv.lock`, and `{config.gitignore_name}`.")
-    steps.append(f"4. Commit your project files, including `{config.pyproject_toml_name}` and `uv.lock`, to version control.")
+    steps.append(f"3. Review `{PYPROJECT_TOML_NAME}`, `uv.lock`, and `{GITIGNORE_NAME}`.")
+    steps.append(f"4. Commit your project files, including `{PYPROJECT_TOML_NAME}` and `uv.lock`, to version control.")
 
     return "Next Steps:\n" + "\n".join(steps)
 

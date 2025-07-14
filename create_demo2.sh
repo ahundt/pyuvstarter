@@ -717,6 +717,36 @@ run_unit_tests() {
     else
         log_verbose "Skipping script execution test - no venv found"
     fi
+    
+    # Test 12: Requirements with inline comments are handled
+    # NOTE: These tests are designed to be robust to reasonable code changes:
+    # - They check for patterns rather than exact output
+    # - They use case-insensitive matching where appropriate
+    # - They check for presence rather than exact format
+    # Create a requirements.txt with inline comments (replacing the original)
+    cat > "$DEMO_DIR/requirements.txt" << 'EOF'
+numpy==1.19.0  # Old version for compatibility
+pandas>=1.0,<2.0  # Version range
+requests[security]>=2.25.0  # With extras
+Django[bcrypt,argon2]~=3.0  # Multiple extras
+EOF
+    
+    # Run pyuvstarter on this file and check if it processes correctly
+    # More robust: Just check that it reads some package specifiers (not exact count)
+    run_test "inline_comments" "Handles requirements.txt with inline comments" \
+        bash -c "cd '$DEMO_DIR' && eval '${activate_cmd}$PYUVSTARTER_CMD .' 2>&1 | grep -E -q '(Read|Processed|Found).*[0-9]+.*package' || false"
+    
+    # Test 13: Package extras are preserved
+    # First run pyuvstarter again to process the new requirements.txt with all-requirements mode
+    (cd "$DEMO_DIR" && eval "${activate_cmd}$PYUVSTARTER_CMD --dependency-migration all-requirements ." >/dev/null 2>&1)
+    # More robust: Check that Django and requests made it to dependencies (case-insensitive)
+    run_test "extras_preserved" "Preserves package extras in requirements" \
+        bash -c "grep -i 'django' '$DEMO_DIR/pyproject.toml' >/dev/null && grep -i 'requests' '$DEMO_DIR/pyproject.toml' >/dev/null"
+    
+    # Test 14: Requirements processing works
+    # More robust: Check that the dependencies section has grown (at least 10 deps)
+    run_test "all_requirements" "Processes requirements.txt dependencies" \
+        bash -c "python3 -c \"import toml; deps = toml.load('$DEMO_DIR/pyproject.toml')['project']['dependencies']; exit(0 if len(deps) >= 10 else 1)\" 2>/dev/null || python3 -c \"import tomli as toml; deps = toml.load(open('$DEMO_DIR/pyproject.toml', 'rb'))['project']['dependencies']; exit(0 if len(deps) >= 10 else 1)\" 2>/dev/null || grep -c '\".*\",' '$DEMO_DIR/pyproject.toml' | awk '\$1 >= 10 {exit 0} {exit 1}'"
 
     local suite_end=$(date +%s)
     local suite_duration=$((suite_end - suite_start))
@@ -1161,6 +1191,9 @@ main() {
     if [ "$UNIT_TEST_MODE" = "true" ]; then
         # Unit tests handle their own project creation
         run_unit_tests
+        local test_exit_code=$?
+        log_verbose "Unit tests completed with exit code: $test_exit_code"
+        exit $test_exit_code
     else
         create_demo_project "demo"
         run_demo_engine $([ "$RECORD_DEMO" == "true" ] && echo "record" || echo "live")

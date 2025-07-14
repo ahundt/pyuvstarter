@@ -115,8 +115,22 @@ jobs:
     - name: Run unit tests (Unix)
       if: runner.os != 'Windows'
       run: |
-        chmod +x create_demo.sh
-        ./create_demo.sh --unit-test
+        chmod +x create_demo.sh create_demo2.sh
+        
+        echo "Running create_demo.sh unit tests..."
+        if ! ./create_demo.sh --unit-test; then
+          echo "❌ create_demo.sh unit tests failed"
+          exit 1
+        fi
+        
+        echo ""
+        echo "Running create_demo2.sh unit tests..."
+        if ! ./create_demo2.sh --unit-test; then
+          echo "❌ create_demo2.sh unit tests failed"
+          exit 1
+        fi
+        
+        echo "✅ All unit tests passed"
 
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
