@@ -69,6 +69,9 @@ coverage.xml
 # Log file from this script
 pyuvstarter_setup_log.json
 
+# Temporary demo script file created by create_demo.sh
+demo_script.sh
+
 # OS-specific
 .DS_Store
 Thumbs.db

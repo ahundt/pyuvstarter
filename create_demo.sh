@@ -445,6 +445,8 @@ cleanup() {
     if ! is_true "$NO_CLEANUP"; then
         # Clean up any t-rec temporary files
         rm -rf /tmp/trec-* 2>/dev/null || true
+        # Clean up demo script if it exists (in case recording was interrupted)
+        rm -f "$DEMO_DIR/../demo_script.sh" 2>/dev/null || true
     fi
 
     if [ $exit_code -eq 0 ]; then
@@ -913,8 +915,10 @@ DEMO_SCRIPT_EOF
             --natural \
             "$DEMO_DIR/../demo_script.sh"
 
-        # Clean up temporary script
-        rm -f "$DEMO_DIR/../demo_script.sh"
+        # Clean up temporary script if cleanup is enabled
+        if ! is_true "$NO_CLEANUP"; then
+            rm -f "$DEMO_DIR/../demo_script.sh"
+        fi
         echo "✅ Recording complete: $GIF_FILE"
     else
         # If not recording, just run the demo sequence directly.
