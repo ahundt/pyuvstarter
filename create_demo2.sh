@@ -830,6 +830,15 @@ PARENT_DIR="$(cd "$DEMO_SCRIPT_DIR/.." && pwd)"
 PYUVSTARTER_PATH="$PARENT_DIR/pyuvstarter.py"
 VENV_ACTIVATE="$PARENT_DIR/.venv/bin/activate"
 
+# Ensure we're running from the demo directory
+# This is needed because t-rec runs scripts from the current working directory,
+# while run_live_demo() properly cd's to the demo directory first
+cd "$DEMO_SCRIPT_DIR" || {
+    echo "ERROR: Demo script must run from demo directory" >&2
+    echo "Failed to cd to: $DEMO_SCRIPT_DIR" >&2
+    exit 1
+}
+
 # Verify pyuvstarter exists
 if [ ! -f "$PYUVSTARTER_PATH" ]; then
     echo "ERROR: Cannot find pyuvstarter.py at $PYUVSTARTER_PATH"
