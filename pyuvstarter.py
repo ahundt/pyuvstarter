@@ -122,29 +122,41 @@ import time
 import traceback
 
 from pathlib import Path
-from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type, Never
+from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type, Never, Iterable
 
 # --- Third-Party Imports ---
+# Handle missing dependencies gracefully
+
 try:
     import pathspec
+    from pathspec.gitignore import GitIgnoreSpec
+    from pathspec.patterns.gitwildmatch import GitWildMatchPattern
+    from pathspec import PathSpec
 except ImportError:
     pathspec = None
+    GitIgnoreSpec = None
+    GitWildMatchPattern = None
+    PathSpec = None
 
-import typer
-from pydantic import Field, BaseModel, ConfigDict, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pathspec.gitignore import GitIgnoreSpec
-from pathspec.patterns.gitwildmatch import GitWildMatchPattern
-from pathspec import PathSpec
-from typing_extensions import Annotated, override
+try:
+    import typer
+    from typing_extensions import Annotated, override
+except ImportError as e:
+    print(f"ERROR: Required dependency 'typer' is not installed.")
+    print(f"Please install it using: pip install typer")
+    print(f"Or if using uv: uv pip install typer")
+    sys.exit(1)
+
+try:
+    from pydantic import Field, BaseModel, ConfigDict, ValidationError
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError as e:
+    print(f"ERROR: Required dependency 'pydantic' is not installed.")
+    print(f"Please install it using: pip install pydantic pydantic-settings")
+    print(f"Or if using uv: uv pip install pydantic pydantic-settings")
+    sys.exit(1)
 
 import functools
-from typing import List, Iterable, Optional, Union
-
-# The core dependency that does all the heavy lifting.
-# By inheriting from GitIgnoreSpec, our class becomes a specialized, more
-# convenient version of it, gaining its powerful matching capabilities.
-from pathspec.gitignore import GitIgnoreSpec
 
 
 # ==============================================================================
@@ -1631,7 +1643,7 @@ def _ensure_project_initialized(project_root: Path, dry_run: bool):
     main_py_existed_before_init = main_py_path.exists()
 
     try:
-        _run_command(["uv", "init", "--no-workspace"], f"{action_name}_uv_init_exec", dry_run=dry_run)
+        _run_command(["uv", "init", "--no-workspace"], f"{action_name}_uv_init_exec", work_dir=project_root, dry_run=dry_run)
 
         if dry_run:
             _log_action(action_name, "INFO", f"In dry-run mode: Assuming `uv init` would create/update '{PYPROJECT_TOML_NAME}'.")
@@ -1718,12 +1730,55 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
         _log_action(action_name, "ERROR", msg, details={"exception": str(e)})
         return dependencies
 
+def _get_packages_from_legacy_req_txt_simple(requirements_path: Path) -> set[tuple[str, str]]:
+    """
+    Simple fallback parser for requirements.txt when pip-requirements-parser is not available.
+    Returns a set of (canonical_base_name, full_specifier) tuples.
+    """
+    action_name = "read_legacy_requirements_txt_simple"
+    packages_specs = set()
+    
+    if not requirements_path.exists():
+        return packages_specs
+        
+    _log_action(action_name, "WARN", "Using simple parser - inline comments will not be handled correctly")
+    
+    try:
+        with open(requirements_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                # Simple comment stripping (not perfect but better than nothing)
+                if '#' in line:
+                    line = line.split('#')[0].strip()
+                if line:
+                    # Extract package name using the existing helper
+                    pkg_name = _extract_package_name_from_specifier(line)
+                    if pkg_name:
+                        canonical_name = _canonicalize_pkg_name(pkg_name)
+                        packages_specs.add((canonical_name, line))
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to read requirements.txt: {e}")
+    
+    return packages_specs
+
+
 def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str, str]]:
     """
     Reads a requirements.txt file and extracts package specifiers.
     Returns a set of (canonical_base_name, full_specifier) tuples.
     """
-    from pip_requirements_parser import RequirementsFile
+    try:
+        from pip_requirements_parser import RequirementsFile
+    except ImportError:
+        _log_action("read_legacy_requirements_txt_content", "ERROR", 
+                   "pip-requirements-parser is not installed. Cannot parse requirements.txt with comments.")
+        _log_action("read_legacy_requirements_txt_content", "INFO", 
+                   "Install it with: uv pip install pip-requirements-parser")
+        # Fall back to simple line-by-line parsing
+        return _get_packages_from_legacy_req_txt_simple(requirements_path)
     
     action_name = "read_legacy_requirements_txt_content"
     packages_specs = set()
