@@ -154,18 +154,26 @@ try:
     import typer
     from typing_extensions import Annotated, override
 except ImportError as e:
-    print("ERROR: Required dependency 'typer' is not installed.")
-    print("Please install it using: pip install typer")
-    print("Or if using uv: uv pip install typer")
+    print(f"ERROR: Failed to import required dependency 'typer': {e}")
+    print("")
+    print("This usually means typer is not installed. Please install it using:")
+    print("  pip install typer")
+    print("  Or if using uv: uv pip install typer")
+    print("")
+    print("If typer is installed, the error above will show the specific import issue.")
     sys.exit(1)
 
 try:
     from pydantic import Field, BaseModel, ConfigDict, ValidationError
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ImportError as e:
-    print("ERROR: Required dependency 'pydantic' is not installed.")
-    print("Please install it using: pip install pydantic pydantic-settings")
-    print("Or if using uv: uv pip install pydantic pydantic-settings")
+    print(f"ERROR: Failed to import required dependency 'pydantic': {e}")
+    print("")
+    print("This usually means pydantic is not installed. Please install it using:")
+    print("  pip install pydantic pydantic-settings")
+    print("  Or if using uv: uv pip install pydantic pydantic-settings")
+    print("")
+    print("If pydantic is installed, the error above will show the specific import issue.")
     sys.exit(1)
 
 import functools

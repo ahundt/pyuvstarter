@@ -42,7 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Use absolute path for demo directory to ensure consistent location
 DEMO_DIR="$SCRIPT_DIR/pyuvstarter_demo_project"
 OUTPUT_BASENAME="pyuvstarter_demo"
-PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-python3 $SCRIPT_DIR/pyuvstarter.py}"
+PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run --directory $SCRIPT_DIR pyuvstarter}"
 
 # === STATE VARIABLES ===
 UNIT_TEST_MODE=false
@@ -145,7 +145,7 @@ EXAMPLES:
   ./create_demo.sh --record-demo
 
 ENVIRONMENT VARIABLES:
-  PYUVSTARTER_CMD - Override pyuvstarter command (default: python3 ./pyuvstarter.py)
+  PYUVSTARTER_CMD - Override pyuvstarter command (default: uv run pyuvstarter)
   CI              - Set to any value to enable CI mode (JSON test output)
 EOF
 }
@@ -687,7 +687,7 @@ run_unit_tests() {
 
     # Test 2: Pyuvstarter is executable
     run_test "executable" "Pyuvstarter script exists and is executable" \
-        bash -c "[[ -f './pyuvstarter.py' ]] && python3 -m py_compile ./pyuvstarter.py"
+        bash -c "[[ -f './pyuvstarter.py' ]]"
 
     # Test 3: Pyuvstarter execution (CRITICAL - REAL TEST)
     log_info "Running LIVE pyuvstarter test (this is the real deal)..."
@@ -861,7 +861,6 @@ create_demo_script() {
 # Dynamically resolve paths relative to this script
 DEMO_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARENT_DIR="$(cd "$DEMO_SCRIPT_DIR/.." && pwd)"
-PYUVSTARTER_PATH="$PARENT_DIR/pyuvstarter.py"
 VENV_ACTIVATE="$PARENT_DIR/.venv/bin/activate"
 
 # Ensure we're running from the demo directory
@@ -873,11 +872,7 @@ cd "$DEMO_SCRIPT_DIR" || {
     exit 1
 }
 
-# Verify pyuvstarter exists
-if [ ! -f "$PYUVSTARTER_PATH" ]; then
-    echo "ERROR: Cannot find pyuvstarter.py at $PYUVSTARTER_PATH"
-    exit 1
-fi
+# No need to verify pyuvstarter.py exists since we're using 'uv run'
 
 # Colors
 setup_colors() {
@@ -949,15 +944,12 @@ main() {
     sleep 0.5
 
     echo "Watch pyuvstarter discover and fix everything automatically..."
-    type_command "python3 $PYUVSTARTER_PATH ."
+    type_command "uv run --directory $PARENT_DIR pyuvstarter ."
     sleep 0.5
 
     # ACTUALLY RUN PYUVSTARTER - show real output!
     (
-        if [ -f "$VENV_ACTIVATE" ]; then
-            source "$VENV_ACTIVATE"
-        fi
-        python3 "$PYUVSTARTER_PATH" .
+        uv run --directory "$PARENT_DIR" pyuvstarter .
     )
 
     echo ""
