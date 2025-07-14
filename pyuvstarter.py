@@ -142,18 +142,18 @@ try:
     import typer
     from typing_extensions import Annotated, override
 except ImportError as e:
-    print(f"ERROR: Required dependency 'typer' is not installed.")
-    print(f"Please install it using: pip install typer")
-    print(f"Or if using uv: uv pip install typer")
+    print("ERROR: Required dependency 'typer' is not installed.")
+    print("Please install it using: pip install typer")
+    print("Or if using uv: uv pip install typer")
     sys.exit(1)
 
 try:
     from pydantic import Field, BaseModel, ConfigDict, ValidationError
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ImportError as e:
-    print(f"ERROR: Required dependency 'pydantic' is not installed.")
-    print(f"Please install it using: pip install pydantic pydantic-settings")
-    print(f"Or if using uv: uv pip install pydantic pydantic-settings")
+    print("ERROR: Required dependency 'pydantic' is not installed.")
+    print("Please install it using: pip install pydantic pydantic-settings")
+    print("Or if using uv: uv pip install pydantic pydantic-settings")
     sys.exit(1)
 
 import functools
@@ -1581,8 +1581,10 @@ def discover_dependencies_in_scope(scan_path: Path, ignore_manager: Optional[Git
     if failed_primary_notebooks:
         _log_action(action_name, "INFO", f"Using fallback manual parser for {len(failed_primary_notebooks)} notebook(s).")
         for nb_path in failed_primary_notebooks:
-            try: result.from_manual_notebooks.update(_parse_notebook_manually(nb_path))
-            except Exception as e: _log_action(action_name, "CRITICAL", f"Unrecoverable error parsing '{nb_path.name}'.", details={"exception": str(e)})
+            try:
+                result.from_manual_notebooks.update(_parse_notebook_manually(nb_path))
+            except Exception as e:
+                _log_action(action_name, "CRITICAL", f"Unrecoverable error parsing '{nb_path.name}'.", details={"exception": str(e)})
 
     _log_action(action_name, "SUCCESS", f"Discovery complete. {result}")
     # log the discovery summary
@@ -3151,7 +3153,7 @@ def main(
 
     # Create CLICommand instance - this will trigger model_post_init
     try:
-        command = CLICommand(**cli_kwargs)
+        command = CLICommand(**cli_kwargs)  # noqa: F841 - Instance creation triggers validation
     except ValidationError as e:
         typer.secho("❌ Configuration validation error:", fg=typer.colors.RED, bold=True)
         for error in e.errors():
