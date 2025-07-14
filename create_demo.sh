@@ -232,25 +232,35 @@ run_unit_tests() {
     local original_cwd
     original_cwd=$(pwd)
 
-    # Test 1: Run from project root (normal case)
+    # Always use the local development version for unit tests
+    local pyuvstarter_cmd
     local activate_cmd=""
     if [ -f ".venv/bin/activate" ]; then
         activate_cmd="source .venv/bin/activate && "
     fi
+    pyuvstarter_cmd="${activate_cmd}python3 ./pyuvstarter.py"
+
+    # Test 1: Run from project root (normal case)
     run_test 1 "Running pyuvstarter from project root directory" \
-        bash -c "${activate_cmd}python3 ./pyuvstarter.py '$original_cwd/$DEMO_DIR'" || \
+        bash -c "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
         echo "   ACTION: Check if pyuvstarter.py exists and has proper permissions (chmod +x)"
 
     # Test 2: Run from different directory (edge case)
     local temp_dir
     temp_dir=$(mktemp -d)
     cd "$temp_dir"
+    # Always use local version by going back to original directory
     run_test 2 "Running pyuvstarter from different working directory" \
-        bash -c "${activate_cmd}python3 '$original_cwd/pyuvstarter.py' '$original_cwd/$DEMO_DIR'"
+        bash -c "cd '$original_cwd' && $pyuvstarter_cmd '$original_cwd/$DEMO_DIR'"
     cd "$original_cwd"
     rm -rf "$temp_dir"
 
-    # Test 3: Verify transformation results
+    # Test 3: Test idempotency - run pyuvstarter again on same project
+    run_test "Testing idempotency (running pyuvstarter again)" 3 \
+        bash -c "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
+        echo "   ACTION: pyuvstarter should be able to run multiple times without failing"
+
+    # Test 4: Verify transformation results
     verify_artifacts() {
         local artifacts=(
             "$DEMO_DIR/pyproject.toml"
@@ -269,9 +279,9 @@ run_unit_tests() {
         return 0
     }
 
-    run_test "Verifying transformation results" 3 verify_artifacts
+    run_test "Verifying transformation results" 4 verify_artifacts
 
-    # Test 4: Test dependency discovery
+    # Test 5: Test dependency discovery
     check_dependency_discovery() {
         if ! has_file "$DEMO_DIR/pyproject.toml"; then
             echo "   ❌ pyproject.toml not found"
@@ -304,7 +314,7 @@ run_unit_tests() {
         fi
     }
 
-    run_test "Verifying dependency discovery" 4 check_dependency_discovery
+    run_test "Verifying dependency discovery" 5 check_dependency_discovery
 
     echo ""
     echo "🧪 UNIT TEST SUMMARY"
@@ -371,7 +381,12 @@ run_the_demo() {
     echo "   🔎 Discovering dependencies..."
 
     # Actually run pyuvstarter and capture exit code
-    python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
+    # Use venv if available, otherwise try system Python
+    if [ -f ".venv/bin/activate" ]; then
+        (source .venv/bin/activate && python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR") || PYUVSTARTER_EXIT_CODE=$?
+    else
+        python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
+    fi
 
     echo ""
     if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
@@ -748,7 +763,11 @@ echo "   🔎 Discovering dependencies..."
 
 # Actually run pyuvstarter and capture exit code
 PYUVSTARTER_EXIT_CODE=0
-python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
+if [ -f ".venv/bin/activate" ]; then
+    (source .venv/bin/activate && python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR") || PYUVSTARTER_EXIT_CODE=$?
+else
+    python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
+fi
 
 echo ""
 if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
