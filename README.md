@@ -31,7 +31,7 @@ Whether you are starting a new application or modernizing a years-old codebase, 
 
 `pyuvstarter` is designed to be a valuable assistant for any Python developer, whether you're building from scratch or upgrading an existing codebase.
 
-*   **For Modernizing Existing Projects:** Do you have an old project with a messy `requirements.txt`? Run `pyuvstarter` in its directory. It will scan all your code and notebooks, discover every dependency, and build you a fresh, modern environment managed by a `pyproject.toml` file, painlessly upgrading your workflow.
+*   **For Modernizing Existing Projects:** Do you have an old project with a messy `requirements.txt`? Run `pyuvstarter` in its directory. It handles real-world requirements files (inline comments, package extras like `requests[security]`), discovers every dependency in your code and notebooks, and builds a fresh environment managed by `pyproject.toml`.
 
 *   **For Starting New Projects:** Get a new web app, CLI, or data analysis project off the ground instantly. `pyuvstarter` provides a clean slate with a `pyproject.toml`, a virtual environment, and all the necessary configurations, so you can start coding immediately.
 
