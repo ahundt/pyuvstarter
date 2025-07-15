@@ -630,7 +630,7 @@ run_test() {
     local test_desc="$2"
     shift 2
 
-    ((TEST_COUNT++))
+    TEST_COUNT=$((TEST_COUNT + 1))
     echo -n "🧪 TEST $TEST_COUNT: $test_desc "
 
     # Run test with output capture
@@ -649,11 +649,11 @@ run_test() {
 
     if [[ $exit_code -eq 0 ]]; then
         echo -e "${C_GREEN}[ ✅ PASSED ]${C_RESET} (${duration}s)"
-        ((TEST_PASSED++))
+        TEST_PASSED=$((TEST_PASSED + 1))
         TEST_RESULTS="${TEST_RESULTS}${test_name}:PASSED\n"
     else
         echo -e "${C_RED}[ ❌ FAILED ]${C_RESET} (${duration}s)"
-        ((TEST_FAILED++))
+        TEST_FAILED=$((TEST_FAILED + 1))
         TEST_RESULTS="${TEST_RESULTS}${test_name}:FAILED:$exit_code\n"
         if [ "$VERBOSE" = "true" ]; then
             echo -e "${C_GRAY}    Output: ${output:0:200}${C_RESET}"
