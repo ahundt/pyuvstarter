@@ -124,17 +124,14 @@ import subprocess
 import importlib
 import datetime
 import platform
-import argparse
 import re
 import ast
 import tempfile
-import warnings
 import shlex
-import time
 import traceback
 
 from pathlib import Path
-from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type, Never, Iterable
+from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
 
 # --- Third-Party Imports ---
 # Handle missing dependencies gracefully
@@ -164,7 +161,7 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    from pydantic import Field, BaseModel, ConfigDict, ValidationError
+    from pydantic import Field, ValidationError
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ImportError as e:
     print(f"ERROR: Failed to import required dependency 'pydantic': {e}")
@@ -640,7 +637,9 @@ def test():
         service_a = root / "service_a"
         service_b = root / "service_b"
         ignored_venv_dir = root / "service_a" / ".venv"
-        service_a.mkdir(); service_b.mkdir(); ignored_venv_dir.mkdir(parents=True)
+        service_a.mkdir()
+        service_b.mkdir()
+        ignored_venv_dir.mkdir(parents=True)
 
         (service_a / "main.py").touch()
         (service_a / "success_convert.ipynb").write_text(json.dumps({"cells": [{"cell_type": "code", "source": ["import scipy"]}]}))
@@ -896,7 +895,6 @@ def _save_log(config: 'CLICommand'):
     """Saves the accumulated log data to a JSON file."""
     global _log_data_global
     log_file_path = config.project_dir / config.log_file_name
-    project_root = config.project_dir
 
     _log_data_global["end_time_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     current_overall_status = _log_data_global.get("overall_status", "IN_PROGRESS")
@@ -1425,12 +1423,16 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
             continue
 
         source_block = cell.get("source", [])
-        if isinstance(source_block, str): lines = source_block.splitlines()
-        elif isinstance(source_block, list): lines = source_block
-        else: continue
+        if isinstance(source_block, str):
+            lines = source_block.splitlines()
+        elif isinstance(source_block, list):
+            lines = source_block
+        else:
+            continue
 
         for line in lines:
-            if not isinstance(line, str): continue
+            if not isinstance(line, str):
+                continue
 
             if shell_command_pattern.match(line):
                 line_no_comment = line.split('#', 1)[0]
@@ -1461,7 +1463,8 @@ def _parse_notebook_manually(nb_path: Path) -> set[tuple[str, str]]:
                             args_str = args_str.split(terminator, 1)[0].strip()
                             break
 
-                    if not args_str: continue
+                    if not args_str:
+                        continue
                     try:
                         tokens = shlex.split(args_str)
                         discovered_packages.update(_parse_install_tokens(tokens))
@@ -2915,7 +2918,7 @@ class CLICommand(BaseSettings):
             # Step 2: Ensure pyproject.toml exists and project is initialized.
             _log_action("ensure_project_initialized", "INFO", "Initializing project structure and 'pyproject.toml'.")
             if not _ensure_project_initialized(self.project_dir, self.dry_run):
-                raise SystemExit(f"Project could not be initialized with 'pyproject.toml'.")
+                raise SystemExit("Project could not be initialized with 'pyproject.toml'.")
             major_action_results.append(("project_initialized", "SUCCESS"))
 
             # Step 3: Instantiate GitIgnore manager and setup .gitignore.
