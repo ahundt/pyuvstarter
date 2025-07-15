@@ -824,8 +824,8 @@ EOF
         fi
     fi
 
-    # Generate JSON report for CI
-    if [[ -n "${CI:-}" ]]; then
+    # Generate test report for unit tests
+    if [[ "$UNIT_TEST_MODE" = "true" ]]; then
         generate_test_report "$suite_duration"
     fi
 

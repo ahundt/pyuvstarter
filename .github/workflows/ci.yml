@@ -148,6 +148,7 @@ jobs:
         files: test_results_demo2.xml
         check_name: "PyUVStarter Unit Tests"
         comment_title: "PyUVStarter Test Results"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
