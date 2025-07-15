@@ -34,7 +34,7 @@
 #   - For recording: t-rec (auto-installed if needed)
 # ==============================================================================
 
-set -euo pipefail  # Strict error handling
+set -euox pipefail  # Strict error handling
 SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
