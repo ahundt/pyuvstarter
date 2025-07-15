@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -122,12 +126,12 @@ jobs:
 
         echo ""
         echo "Running create_demo2.sh unit tests..."
+        echo "DEBUG: UNIT_TEST_MODE and file generation check:"
         ./create_demo2.sh --unit-test
         DEMO2_EXIT_CODE=$?
-        # Rename test results to avoid overwriting
-        if [ -f "test_results.xml" ]; then
-          mv test_results.xml test_results_demo2.xml
-        fi
+        
+        echo "DEBUG: Checking for test_results.xml..."
+        ls -la test_results* || echo "No test_results* files found"
 
         echo "Running create_demo.sh unit tests..."
         ./create_demo.sh --unit-test
@@ -145,7 +149,7 @@ jobs:
       if: always()
       uses: EnricoMi/publish-unit-test-result-action@v2
       with:
-        files: test_results_demo2.xml
+        files: test_results.xml
         check_name: "PyUVStarter Unit Tests"
         comment_title: "PyUVStarter Test Results"
         github_token: ${{ secrets.GITHUB_TOKEN }}
