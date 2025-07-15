@@ -630,7 +630,7 @@ run_test() {
     shift 2
 
     ((TEST_COUNT++))
-    printf "🧪 TEST %02d: %-50s" "$TEST_COUNT" "$test_desc"
+    echo -n "🧪 TEST $TEST_COUNT: $test_desc "
 
     # Run test with output capture
     local output
