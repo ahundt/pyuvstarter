@@ -629,7 +629,7 @@ run_test() {
     local test_desc="$2"
     shift 2
 
-    ((TEST_COUNT++))
+    ((++TEST_COUNT))
     echo -n "🧪 TEST $TEST_COUNT: $test_desc "
 
     # Run test with output capture
