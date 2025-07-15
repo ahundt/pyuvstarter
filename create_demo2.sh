@@ -40,8 +40,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # === CONFIGURATION ===
 # Use absolute path for demo directory to ensure consistent location
-DEMO_DIR="$SCRIPT_DIR/pyuvstarter_demo_project"
-OUTPUT_BASENAME="pyuvstarter_demo"
+DEMO_DIR="$SCRIPT_DIR/pyuvstarter_demo_project2"
+OUTPUT_BASENAME="pyuvstarter_demo2"
 PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run --directory $SCRIPT_DIR pyuvstarter}"
 
 # === STATE VARIABLES ===
@@ -197,7 +197,7 @@ setup_install_simulation() {
         log_error "Demo directory does not exist: $DEMO_DIR"
         return 1
     fi
-    
+
     # Create wrapper script for simulating installs
     cat > "$DEMO_DIR/.simulate_installs.py" << 'EOF'
 #!/usr/bin/env python3
@@ -272,13 +272,13 @@ create_demo_project() {
 
     # Clean and create directory structure
     rm -rf "$DEMO_DIR" || true  # Don't fail if directory doesn't exist
-    
+
     # Create base directory first
     mkdir -p "$DEMO_DIR" || {
         log_error "Failed to create demo directory: $DEMO_DIR"
         return 1
     }
-    
+
     # Create subdirectories
     mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts" "$DEMO_DIR/src" "$DEMO_DIR/tests" "$DEMO_DIR/data" || {
         log_error "Failed to create subdirectories in: $DEMO_DIR"
@@ -752,7 +752,7 @@ run_unit_tests() {
     else
         log_verbose "Skipping script execution test - no venv found"
     fi
-    
+
     # Test 12: Requirements with inline comments are handled
     # NOTE: These tests are designed to be robust to reasonable code changes:
     # - They check for patterns rather than exact output
@@ -765,19 +765,19 @@ pandas>=1.0,<2.0  # Version range
 requests[security]>=2.25.0  # With extras
 Django[bcrypt,argon2]~=3.0  # Multiple extras
 EOF
-    
+
     # Run pyuvstarter on this file and check if it processes correctly
     # More robust: Just check that it reads some package specifiers (not exact count)
     run_test "inline_comments" "Handles requirements.txt with inline comments" \
         bash -c "cd '$DEMO_DIR' && eval '${activate_cmd}$PYUVSTARTER_CMD .' 2>&1 | grep -E -q '(Read|Processed|Found).*[0-9]+.*package' || false"
-    
+
     # Test 13: Package extras are preserved
     # First run pyuvstarter again to process the new requirements.txt with all-requirements mode
     (cd "$DEMO_DIR" && eval "${activate_cmd}$PYUVSTARTER_CMD --dependency-migration all-requirements ." >/dev/null 2>&1)
     # More robust: Check that Django and requests made it to dependencies (case-insensitive)
     run_test "extras_preserved" "Preserves package extras in requirements" \
         bash -c "grep -i 'django' '$DEMO_DIR/pyproject.toml' >/dev/null && grep -i 'requests' '$DEMO_DIR/pyproject.toml' >/dev/null"
-    
+
     # Test 14: Requirements processing works
     # More robust: Check that the dependencies section has grown (at least 10 deps)
     run_test "all_requirements" "Processes requirements.txt dependencies" \
@@ -991,12 +991,12 @@ main() {
 
     echo "What pyuvstarter created:"
     type_command "ls -la . | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
-    
+
     # Actually run the command and show real results
     ls -la . | grep -E '(pyproject|venv|lock|gitignore|vscode)' | while read -r line; do
         echo "   $line"
     done
-    
+
     echo ""
     # Check and report what was actually created
     [ -f "pyproject.toml" ] && echo -e "${C_GREEN}   ✅ pyproject.toml   ${C_DIM}# Modern Python configuration${C_RESET}" || echo -e "${C_RED}   ❌ pyproject.toml   ${C_DIM}# Not found!${C_RESET}"
@@ -1015,7 +1015,7 @@ main() {
     if [ -f ".venv/bin/activate" ]; then
         (source .venv/bin/activate && python scripts/data_analysis.py)
         script_exit_code=$?
-        
+
         if [ $script_exit_code -ne 0 ]; then
             echo -e "\n${C_RED}❌ ERROR: Script failed with exit code $script_exit_code${C_RESET}"
             echo -e "${C_YELLOW}This shouldn't happen after pyuvstarter fixed everything!${C_RESET}"
