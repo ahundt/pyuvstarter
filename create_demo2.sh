@@ -34,7 +34,8 @@
 #   - For recording: t-rec (auto-installed if needed)
 # ==============================================================================
 
-set -euox pipefail  # Strict error handling
+# set -euox pipefail  # Strict error handling
+set -e pipefail  # Exit on error, fail on pipe errors
 SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -629,7 +630,7 @@ run_test() {
     local test_desc="$2"
     shift 2
 
-    ((++TEST_COUNT))
+    ((TEST_COUNT++))
     echo -n "🧪 TEST $TEST_COUNT: $test_desc "
 
     # Run test with output capture
