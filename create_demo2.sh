@@ -35,7 +35,7 @@
 # ==============================================================================
 
 # set -euox pipefail  # Strict error handling
-set -e  # Exit on error
+set -ex  # Exit on error
 SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
