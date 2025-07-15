@@ -43,7 +43,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Use absolute path for demo directory to ensure consistent location
 DEMO_DIR="$SCRIPT_DIR/pyuvstarter_demo_project2"
 OUTPUT_BASENAME="pyuvstarter_demo2"
-PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run --directory $SCRIPT_DIR pyuvstarter}"
+PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run pyuvstarter}"
 
 # === STATE VARIABLES ===
 UNIT_TEST_MODE=false
@@ -650,11 +650,11 @@ run_test() {
     if [[ $exit_code -eq 0 ]]; then
         echo -e "${C_GREEN}[ ✅ PASSED ]${C_RESET} (${duration}s)"
         TEST_PASSED=$((TEST_PASSED + 1))
-        TEST_RESULTS="${TEST_RESULTS}${test_name}:PASSED\n"
+        TEST_RESULTS="${TEST_RESULTS}${test_name}:PASSED;"
     else
         echo -e "${C_RED}[ ❌ FAILED ]${C_RESET} (${duration}s)"
         TEST_FAILED=$((TEST_FAILED + 1))
-        TEST_RESULTS="${TEST_RESULTS}${test_name}:FAILED:$exit_code\n"
+        TEST_RESULTS="${TEST_RESULTS}${test_name}:FAILED:$exit_code;"
         if [ "$VERBOSE" = "true" ]; then
             echo -e "${C_GRAY}    Output: ${output:0:200}${C_RESET}"
         fi
@@ -798,7 +798,7 @@ EOF
 
     # Show detailed test results
     echo -e "\n${C_BOLD}📋 DETAILED TEST RESULTS:${C_RESET}"
-    echo -e "$TEST_RESULTS" | while IFS=: read -r name result code; do
+    echo "$TEST_RESULTS" | tr ';' '\n' | while IFS=: read -r name result code; do
         [[ -z "$name" ]] && continue
         if [ "$result" = "PASSED" ]; then
             echo -e "   ${C_GREEN}✅ $name${C_RESET}"
@@ -848,7 +848,7 @@ generate_test_report() {
   <testsuite name="pyuvstarter.unit_tests" tests="$TEST_COUNT" failures="$TEST_FAILED" time="$duration">
 $(
     # Parse TEST_RESULTS and create actionable test cases
-    echo "$TEST_RESULTS" | while IFS=: read -r name result code; do
+    echo "$TEST_RESULTS" | tr ';' '\n' | while IFS=: read -r name result code; do
         [[ -z "$name" ]] && continue
         
         # Map test names to actionable descriptions
