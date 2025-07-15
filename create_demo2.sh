@@ -1194,25 +1194,43 @@ record_demo() {
 cleanup() {
     local exit_code=$?
 
-    if [ "$NO_CLEANUP" != "true" ]; then
-        log_verbose "Cleaning up demo artifacts..."
-        # Remove the demo directory (includes all its contents)
+    echo ""
+    # Diagnostics and error handling
+    if [[ $exit_code -ne 0 ]]; then
+        log_error "❌ Demo failed with exit code: $exit_code"
+        echo -e "\n===== Bash Variable Dump =====" >&2
+        declare -p | grep -v '^declare -f' >&2
+        echo -e "\n===== Bash Call Stack (most recent call last) =====" >&2
+        local stack_depth=${#FUNCNAME[@]}
+        for ((i=stack_depth-1; i>=0; i--)); do
+            local func="${FUNCNAME[i]}"
+            local file="${BASH_SOURCE[i]}"
+            local line="${BASH_LINENO[i]}"
+            if [[ $i -eq $((stack_depth-1)) ]]; then
+                echo -e "  [Top] $func() at $file" >&2
+            else
+                echo -e "   -> $func() at $file:$line" >&2
+            fi
+        done
+        echo "=============================" >&2
+        echo "🛑 Skipping cleanup to preserve all artifacts for debugging."
+        echo "   📂 Demo project preserved: $DEMO_DIR"
+        echo "   🗂️  Temp files preserved: /tmp/trec-*"
+    elif [ "$NO_CLEANUP" = "true" ]; then
+        log_info "🗂️  NO_CLEANUP enabled. Artifacts preserved: $DEMO_DIR"
+        echo "   🗂️  Temp files preserved: /tmp/trec-*"
+        log_success "✨ Demo completed successfully!"
+    else
+        log_verbose "🧹 Cleaning up all demo artifacts and temp files..."
         if [ -d "$DEMO_DIR" ]; then
+            echo "   📂 Removing demo project: $DEMO_DIR"
             rm -rf "$DEMO_DIR"
         fi
-        # Remove any files created in the current directory during demo
+        rm -rf /tmp/trec-* 2>/dev/null || true
+        rm -f "$DEMO_DIR/../demo_script.sh" 2>/dev/null || true
         rm -f .pyuv_done pyuvstarter_run.log
-    else
-        log_info "Demo artifacts preserved in: $DEMO_DIR"
+        log_success "✨ Cleanup complete!"
     fi
-
-    # Show final status
-    if [[ $exit_code -eq 0 ]]; then
-        log_success "Demo completed successfully!"
-    else
-        log_error "Demo failed with exit code: $exit_code"
-    fi
-
     exit $exit_code
 }
 
