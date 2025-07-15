@@ -62,12 +62,12 @@ jobs:
     - name: Install pyuvstarter (editable)
       run: |
         uv pip install -e .
-        
+
     - name: Test pyuvstarter as installed package
       run: |
         # Test that pyuvstarter can be run as an installed command
         uv run pyuvstarter --version
-        
+
     - name: Test pyuvstarter in isolated environment (Unix)
       if: runner.os != 'Windows'
       run: |
@@ -116,22 +116,21 @@ jobs:
       run: |
         # Activate the virtual environment so pyuvstarter dependencies are available
         source .venv/bin/activate
-        
+
         chmod +x create_demo.sh create_demo2.sh
-        
-        echo "Running create_demo.sh unit tests..."
-        if ! ./create_demo.sh --unit-test; then
-          echo "❌ create_demo.sh unit tests failed"
-          exit 1
-        fi
-        
+
         echo ""
         echo "Running create_demo2.sh unit tests..."
         if ! ./create_demo2.sh --unit-test; then
           echo "❌ create_demo2.sh unit tests failed"
           exit 1
         fi
-        
+
+        echo "Running create_demo.sh unit tests..."
+        if ! ./create_demo.sh --unit-test; then
+          echo "❌ create_demo.sh unit tests failed"
+          exit 1
+        fi
         echo "✅ All unit tests passed"
 
     - name: Run unit tests (Windows)
@@ -168,10 +167,10 @@ jobs:
         echo "numpy>=1.20" >> requirements.txt
         echo "import pandas as pd" > analysis.py
         echo "import numpy as np" >> analysis.py
-        
+
         # Run pyuvstarter
         uv run --directory .. pyuvstarter --dependency-migration auto
-        
+
         # Verify migration
         test -f pyproject.toml || exit 1
         grep -q "pandas" pyproject.toml || exit 1
@@ -184,7 +183,7 @@ jobs:
         # Create project with notebook
         mkdir -p test_notebook_project
         cd test_notebook_project
-        
+
         # Create a simple notebook file
         cat > experiment.ipynb << 'EOF'
         {
@@ -199,10 +198,10 @@ jobs:
           "nbformat_minor": 5
         }
         EOF
-        
+
         # Run pyuvstarter
         uv run --directory .. pyuvstarter
-        
+
         # Verify notebook dependencies were found
         test -f pyproject.toml || exit 1
         grep -q "pandas" pyproject.toml || exit 1
