@@ -501,7 +501,7 @@ cat << 'EOF' > "$DEMO_DIR/requirements.txt"
 # Legacy requirements.txt - WOEFULLY INCOMPLETE!
 # Missing 15+ dependencies that are actually used in the project
 transformers
-numpy
+numpy<2.0  # Pin to version that supports Python 3.8+
 # pandas - MISSING but used in scripts!
 # scikit-learn - MISSING but used everywhere!
 # matplotlib - MISSING but used for plots!

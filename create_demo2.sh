@@ -302,7 +302,7 @@ create_requirements_file() {
         # Minimal requirements for fast testing
         cat > "$DEMO_DIR/requirements.txt" << 'EOF'
 # Minimal test requirements
-numpy>=1.20
+numpy
 requests
 sklearn  # Wrong package name!
 EOF
