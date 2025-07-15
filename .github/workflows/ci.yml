@@ -122,17 +122,32 @@ jobs:
 
         echo ""
         echo "Running create_demo2.sh unit tests..."
-        if ! ./create_demo2.sh --unit-test; then
-          echo "❌ create_demo2.sh unit tests failed"
-          exit 1
+        ./create_demo2.sh --unit-test
+        DEMO2_EXIT_CODE=$?
+        # Rename test results to avoid overwriting
+        if [ -f "test_results.xml" ]; then
+          mv test_results.xml test_results_demo2.xml
         fi
 
         echo "Running create_demo.sh unit tests..."
-        if ! ./create_demo.sh --unit-test; then
-          echo "❌ create_demo.sh unit tests failed"
+        ./create_demo.sh --unit-test
+        DEMO1_EXIT_CODE=$?
+        # Note: create_demo.sh doesn't generate test_results.xml
+
+        # Check if either test suite failed
+        if [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ]; then
+          echo "❌ Unit tests failed"
           exit 1
         fi
         echo "✅ All unit tests passed"
+
+    - name: Publish Test Results
+      if: always()
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      with:
+        files: test_results_demo2.xml
+        check_name: "PyUVStarter Unit Tests"
+        comment_title: "PyUVStarter Test Results"
 
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'

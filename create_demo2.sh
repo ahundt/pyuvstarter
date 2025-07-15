@@ -34,8 +34,8 @@
 #   - For recording: t-rec (auto-installed if needed)
 # ==============================================================================
 
-# set -euox pipefail  # Strict error handling
-set -ex  # Exit on error
+# Initial settings - will be adjusted based on mode
+set -x  # Show commands for debugging
 SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -796,11 +796,32 @@ EOF
     echo "   ⏱️  Duration: ${suite_duration}s"
     echo "============================================="
 
+    # Show detailed test results
+    echo -e "\n${C_BOLD}📋 DETAILED TEST RESULTS:${C_RESET}"
+    echo -e "$TEST_RESULTS" | while IFS=: read -r name result code; do
+        [[ -z "$name" ]] && continue
+        if [ "$result" = "PASSED" ]; then
+            echo -e "   ${C_GREEN}✅ $name${C_RESET}"
+        else
+            echo -e "   ${C_RED}❌ $name (exit code: $code)${C_RESET}"
+        fi
+    done
+
     # Show warnings if any tests failed
     if [[ $TEST_FAILED -gt 0 ]]; then
         echo -e "\n${C_RED}${C_BOLD}⚠️  TEST FAILURES DETECTED:${C_RESET}"
         echo -e "$TEST_WARNINGS"
         echo -e "${C_YELLOW}Please check the errors above and fix any issues.${C_RESET}"
+
+        # Show cascade failure analysis
+        echo -e "\n${C_BOLD}🔍 FAILURE ANALYSIS:${C_RESET}"
+        if echo "$TEST_RESULTS" | grep -q "structure:FAILED"; then
+            echo -e "   ${C_RED}⚠️  Structure test failed - this will cause all subsequent tests to fail${C_RESET}"
+        fi
+        if echo "$TEST_RESULTS" | grep -q "execution:FAILED"; then
+            echo -e "   ${C_RED}⚠️  Execution test failed - pyuvstarter didn't run successfully${C_RESET}"
+            echo -e "   ${C_YELLOW}     This will cause Tests 4-14 to fail (artifacts, venv, deps, etc.)${C_RESET}"
+        fi
     fi
 
     # Generate JSON report for CI
@@ -820,37 +841,104 @@ EOF
 generate_test_report() {
     local duration="$1"
 
-    cat > "test_results.json" << EOF
-{
-  "version": "$SCRIPT_VERSION",
-  "platform": "$PLATFORM",
-  "python": "$(python3 --version 2>&1 | cut -d' ' -f2)",
-  "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "summary": {
-    "total": $TEST_COUNT,
-    "passed": $TEST_PASSED,
-    "failed": $TEST_FAILED,
-    "duration_seconds": $duration
-  },
-  "tests": {
+    # Generate JUnit XML for GitHub Actions integration
+    cat > "test_results.xml" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="pyuvstarter_tests" tests="$TEST_COUNT" failures="$TEST_FAILED" time="$duration">
+  <testsuite name="pyuvstarter.unit_tests" tests="$TEST_COUNT" failures="$TEST_FAILED" time="$duration">
 $(
-    # Parse TEST_RESULTS string
-    local first=true
+    # Parse TEST_RESULTS and create actionable test cases
     echo "$TEST_RESULTS" | while IFS=: read -r name result code; do
         [[ -z "$name" ]] && continue
-        if [ "$first" = "true" ]; then first=false; else echo ","; fi
+        
+        # Map test names to actionable descriptions
+        case "$name" in
+            "structure") test_desc="Demo project structure creation" ;;
+            "executable") test_desc="pyuvstarter.py accessibility" ;;
+            "execution") test_desc="pyuvstarter core execution" ;;
+            "artifacts") test_desc="pyproject.toml and .gitignore creation" ;;
+            "venv") test_desc="Virtual environment setup" ;;
+            "deps_found") test_desc="Dependency discovery (pandas)" ;;
+            "import_map") test_desc="Import name mapping (sklearn→scikit-learn)" ;;
+            "notebook_deps") test_desc="Jupyter notebook dependency parsing" ;;
+            "vscode") test_desc="VS Code configuration" ;;
+            "logfile") test_desc="Execution logging" ;;
+            "script_runs") test_desc="End-to-end script execution" ;;
+            "inline_comments") test_desc="Requirements.txt comment handling" ;;
+            "extras_preserved") test_desc="Package extras preservation" ;;
+            "all_requirements") test_desc="Requirements processing" ;;
+            *) test_desc="$name" ;;
+        esac
+        
         if [ "$result" = "PASSED" ]; then
-            echo -n "    \"$name\": \"PASSED\""
+            echo "    <testcase name=\"$test_desc\" classname=\"pyuvstarter.$name\"/>"
         else
-            echo -n "    \"$name\": \"FAILED: Exit code $code\""
+            echo "    <testcase name=\"$test_desc\" classname=\"pyuvstarter.$name\">"
+            
+            # Generate actionable failure messages
+            case "$name" in
+                "structure")
+                    echo "      <failure message=\"Demo project creation failed - check directory permissions and disk space\">"
+                    echo "        CRITICAL: All subsequent tests will fail without demo project structure"
+                    echo "      </failure>"
+                    ;;
+                "executable")
+                    echo "      <failure message=\"pyuvstarter.py not found - check file exists and is accessible\">"
+                    echo "        Action: Verify pyuvstarter.py is in the current directory"
+                    echo "      </failure>"
+                    ;;
+                "execution")
+                    echo "      <failure message=\"pyuvstarter execution failed (exit code: $code)\">"
+                    echo "        CRITICAL: This will cause validation tests to fail"
+                    echo "        Action: Check pyuvstarter dependencies and Python environment"
+                    echo "      </failure>"
+                    ;;
+                "artifacts")
+                    echo "      <failure message=\"pyproject.toml or .gitignore not created\">"
+                    echo "        Likely cause: pyuvstarter execution failed"
+                    echo "      </failure>"
+                    ;;
+                "venv")
+                    echo "      <failure message=\"Virtual environment not created\">"
+                    echo "        Action: Check 'uv venv' command execution in pyuvstarter"
+                    echo "      </failure>"
+                    ;;
+                "deps_found")
+                    echo "      <failure message=\"pandas dependency not found in pyproject.toml\">"
+                    echo "        Action: Check dependency discovery logic in pyuvstarter"
+                    echo "      </failure>"
+                    ;;
+                "import_map")
+                    echo "      <failure message=\"sklearn not mapped to scikit-learn\">"
+                    echo "        Action: Check import name mapping in pyuvstarter"
+                    echo "      </failure>"
+                    ;;
+                "notebook_deps")
+                    echo "      <failure message=\"Notebook dependencies not discovered\">"
+                    echo "        Action: Check Jupyter notebook parsing in pyuvstarter"
+                    echo "      </failure>"
+                    ;;
+                "script_runs")
+                    echo "      <failure message=\"Fixed script execution failed\">"
+                    echo "        Action: Check virtual environment and installed dependencies"
+                    echo "      </failure>"
+                    ;;
+                *)
+                    echo "      <failure message=\"Test failed with exit code $code\">"
+                    echo "        Action: Check test implementation and dependencies"
+                    echo "      </failure>"
+                    ;;
+            esac
+            
+            echo "    </testcase>"
         fi
     done
 )
-  }
-}
+  </testsuite>
+</testsuites>
 EOF
 
-    log_info "Test report written to test_results.json"
+    log_info "Test report written to test_results.xml for GitHub Actions"
 }
 
 # === DEMO EXECUTION ENGINE ===
@@ -1246,13 +1334,20 @@ main() {
     # Set up exit handler
     trap cleanup EXIT INT TERM
 
-    # Show mode
+    # Configure error handling based on mode
     if [ "$UNIT_TEST_MODE" = "true" ]; then
         log_info "Running in unit test mode"
+        # In unit test mode, don't exit on errors - we want to capture all test results
+        set +e  # Disable exit on error
+        set -x   # Keep command tracing for debugging
     elif [ "$RECORD_DEMO" = "true" ]; then
         log_info "Running in recording mode"
+        # In recording mode, use strict error handling
+        set -ex  # Exit on error and show commands
     else
         log_info "Running in live demo mode"
+        # In live demo mode, use strict error handling
+        set -ex  # Exit on error and show commands
     fi
 
     # Create the demo project
