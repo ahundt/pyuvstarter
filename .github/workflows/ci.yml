@@ -146,7 +146,7 @@ jobs:
         echo "✅ All unit tests passed"
 
     - name: Publish Test Results
-      if: always()
+      if: always() && runner.os == 'Linux'
       uses: EnricoMi/publish-unit-test-result-action@v2
       with:
         files: test_results.xml
