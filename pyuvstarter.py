@@ -16,106 +16,6 @@
 """
 pyuvstarter.py (v7.0 - Enhanced Robustness & User Experience)
 
-Design Philosophy:
-    pyuvstarter follows these core principles to create an exceptional user experience.
-    These are ordered from most fundamental to most specific:
-    
-    === CORE PRINCIPLES ===
-    
-    1. **Automatic and Correct**: Make things "just work" without user intervention.
-       We handle complexity so users don't have to. The tool should feel magical.
-       Once started, pyuvstarter runs to completion without asking questions.
-    
-    2. **Modernize Projects Automatically**: Transform legacy Python projects into
-       modern, reproducible environments. We find the newest compatible versions
-       that work together, not the oldest. We're upgrading, not downgrading.
-    
-    3. **Easy to Use Correctly, Hard to Use Incorrectly**: Design APIs and defaults
-       that guide users toward success. Minimal parameters, smart defaults.
-       Example: Just run `pyuvstarter` - no flags needed for 95% of cases.
-    
-    4. **Solve Problems FOR Users**: Don't just report problems - fix them automatically.
-       When we detect a conflict, we don't just tell users about it, we retry with
-       a solution. Users should feel the tool is working on their behalf.
-    
-    === COMMUNICATION PRINCIPLES ===
-    
-    5. **Specific and Actionable Feedback**: Every message must tell users exactly what to do.
-       - Bad: "Error occurred"
-       - Good: "numpy 2.3.1 requires Python 3.11+, but your project uses Python 3.8"
-       - Better: "Automatically finding compatible numpy version for Python 3.8..."
-       - Best: "✅ Found numpy 1.24.3 that works with Python 3.8. Installing now..."
-       The key: Show the problem AND that we're solving it for them!
-    
-    5. **Context-Aware Messages**: Error messages must include relevant context:
-       - What was being attempted ("Installing numpy 2.3.1...")
-       - Why it failed ("requires Python 3.11+, you have 3.8")
-       - What we're doing to fix it ("Finding compatible version...")
-       - What the user can do if we can't fix it (exact commands)
-    
-    6. **Show Progress and Success**: Users need confirmation that things are working.
-       - Use status indicators: ✅ SUCCESS, ⚠️ WARNING, ❌ ERROR
-       - Show what's happening: "Analyzing dependencies..." → "Installing..." → "✅ Done!"
-       - Celebrate success: "✅ Successfully installed 12 packages!"
-    
-    7. **Progressive Disclosure**: Show simple success messages for normal cases,
-       detailed information only when debugging is needed. Don't overwhelm users
-       with logs when everything is working fine.
-    
-    === TECHNICAL PRINCIPLES ===
-    
-    8. **Graceful Recovery**: When something goes wrong, try to fix it automatically
-       before asking for help. Example: retry with unpinned packages on version conflicts.
-       The user should rarely need to intervene.
-    
-    9. **Trust the Tools**: Use tools as their creators intended. Don't try to
-       outsmart uv's resolver or pipreqs' discovery - leverage their strengths.
-       We orchestrate tools, we don't replace them.
-    
-    10. **Preserve User Intent**: Never change project settings (like requires-python)
-        without explicit consent. Respect the user's choices. Their project, their rules.
-    
-    11. **One Problem, One Solution**: Avoid complex multi-strategy approaches when
-        a single good solution suffices. Simplicity is reliability. Don't overthink it.
-    
-    === FAILURE HANDLING ===
-    
-    12. **Fail Fast with Recovery Path**: When automation isn't possible, fail quickly
-        with a clear explanation and specific recovery steps. Don't leave users hanging.
-    
-    13. **Manual Fix Guidance**: When automation fails, guide toward modernization:
-        Bad: "Failed to resolve dependencies"
-        Good: "numpy 2.3.1 and pandas 2.2.0 require Python 3.11+. Your project uses Python 3.8."
-        Best: "Cannot automatically resolve: numpy 2.3.1 and pandas 2.2.0 require Python 3.11+, 
-               but your project uses Python 3.8.
-               
-               Here are your options to modernize your project:
-               
-               1. Use a newer Python version (recommended):
-                  Run: python3.11 -m pyuvstarter
-                  This gives you latest features and best performance.
-                  Note: You may need to update code that uses deprecated APIs.
-               
-               2. Update your project's Python requirement:
-                  Edit pyproject.toml: requires-python = '>=3.11'
-                  Then run pyuvstarter again.
-               
-               3. If you must stay on Python 3.8:
-                  Run: uv add 'numpy<2.0' 'pandas<2.0'
-                  This keeps older but compatible versions.
-               
-               Options 1 or 2 modernize your project, option 3 maintains compatibility."
-    
-    === OPTIMIZATION PRINCIPLES ===
-    
-    14. **Optimize for Common Case**: Make the 95% case seamless, even if the 5%
-        requires manual intervention. Most users should never see an error.
-        Focus effort where it has the most impact.
-    
-    15. **Transparent Operations**: Tell users what's happening and why. They should
-        understand what the tool is doing, even if they don't need to intervene.
-        Build trust through transparency.
-
 Purpose:
     Automates Python project and environment setup using `uv`, focusing on modern, reproducible, and user-friendly workflows.
     - Sets up `pyproject.toml` for dependency management.
@@ -162,14 +62,29 @@ How to Use:
    - (Optional) An existing 'requirements.txt' file if migrating an old project.
 
 2. Placement:
-   - Save this script as 'pyuvstarter.py' (or your preferred name) in the root directory of your new or existing Python project.
+   - Place `pyuvstarter.py` in your existing project directory or use it to start a new project in an empty directory.
 
 3. Execution:
-   - Open your terminal or command prompt.
-   - Navigate to the project root (the directory containing this script).
-   - Make executable (Linux/macOS): `chmod +x pyuvstarter.py`
-   - Run: `./pyuvstarter.py` (or `python3 pyuvstarter.py`)
-   - Use `--help` to see additional options like `--dependency-migration` and `--dry-run`.
+   - Basic: `python pyuvstarter.py` (uses all defaults).
+   - Custom venv: `python pyuvstarter.py --venv-name myenv`.
+   - Preview mode: `python pyuvstarter.py --dry-run` (shows what would happen without making changes).
+   - Migration mode examples:
+     - `python pyuvstarter.py --dependency-migration all-requirements` (migrates everything from `requirements.txt`).
+     - `python pyuvstarter.py --dependency-migration skip-requirements` (ignores `requirements.txt` entirely).
+   - Full gitignore overwrite: `python pyuvstarter.py --full-gitignore-overwrite` (replaces existing `.gitignore`).
+   - Custom log file: `python pyuvstarter.py --log-file-name my_setup_log.json`.
+
+4. Post-run:
+   - Activate the virtual environment:
+     - macOS/Linux: `source .venv/bin/activate` (or your custom venv name).
+     - Windows: `.venv\\Scripts\\activate.bat` or `.venv\\Scripts\\activate.ps1`.
+   - Check the log file for a detailed summary of all actions and any warnings.
+
+5. Configuration:
+   - JSON config file: `python pyuvstarter.py --config-file settings.json`
+   - Environment variables: `PYUVSTARTER_VENV_NAME=myenv python pyuvstarter.py`
+   - See --help for all options: `python pyuvstarter.py --help`
+
 
 Outcome:
 - A `pyproject.toml` will define project dependencies.
@@ -214,6 +129,108 @@ Uninstall pyuvstarter:
 uv tool uninstall pyuvstarter
 uv pip uninstall pyuvstarter
 find ~/.local/share/uv/tools ~/.cache/uv ~/.local/lib ~/.pyenv .venv -iname 'pyuvstarter*' -delete
+
+
+Design Philosophy:
+    pyuvstarter follows these core principles to create an exceptional user experience.
+    These are ordered from most fundamental to most specific:
+
+    === CORE PRINCIPLES ===
+
+    1. **Automatic and Correct**: Make things "just work" without user intervention.
+       We handle complexity so users don't have to. The tool should feel magical.
+       Once started, pyuvstarter runs to completion without asking questions.
+
+    2. **Modernize Projects Automatically**: Transform legacy Python projects into
+       modern, reproducible environments. We find the newest compatible versions
+       that work together, not the oldest. We're upgrading, not downgrading.
+
+    3. **Easy to Use Correctly, Hard to Use Incorrectly**: Design APIs and defaults
+       that guide users toward success. Minimal parameters, smart defaults.
+       Example: Just run `pyuvstarter` - no flags needed for 95% of cases.
+
+    4. **Solve Problems FOR Users**: Don't just report problems - fix them automatically.
+       When we detect a conflict, we don't just tell users about it, we retry with
+       a solution. Users should feel the tool is working on their behalf.
+
+    === COMMUNICATION PRINCIPLES ===
+
+    5. **Specific and Actionable Feedback**: Every message must tell users exactly what to do.
+       - Bad: "Error occurred"
+       - Good: "numpy 2.3.1 requires Python 3.11+, but your project uses Python 3.8"
+       - Better: "Automatically finding compatible numpy version for Python 3.8..."
+       - Best: "✅ Found numpy 1.24.3 that works with Python 3.8. Installing now..."
+       The key: Show the problem AND that we're solving it for them!
+
+    5. **Context-Aware Messages**: Error messages must include relevant context:
+       - What was being attempted ("Installing numpy 2.3.1...")
+       - Why it failed ("requires Python 3.11+, you have 3.8")
+       - What we're doing to fix it ("Finding compatible version...")
+       - What the user can do if we can't fix it (exact commands)
+
+    6. **Show Progress and Success**: Users need confirmation that things are working.
+       - Use status indicators: ✅ SUCCESS, ⚠️ WARNING, ❌ ERROR
+       - Show what's happening: "Analyzing dependencies..." → "Installing..." → "✅ Done!"
+       - Celebrate success: "✅ Successfully installed 12 packages!"
+
+    7. **Progressive Disclosure**: Show simple success messages for normal cases,
+       detailed information only when debugging is needed. Don't overwhelm users
+       with logs when everything is working fine.
+
+    === TECHNICAL PRINCIPLES ===
+
+    8. **Graceful Recovery**: When something goes wrong, try to fix it automatically
+       before asking for help. Example: retry with unpinned packages on version conflicts.
+       The user should rarely need to intervene.
+
+    9. **Trust the Tools**: Use tools as their creators intended. Don't try to
+       outsmart uv's resolver or pipreqs' discovery - leverage their strengths.
+       We orchestrate tools, we don't replace them.
+
+    10. **Preserve User Intent**: Never change project settings (like requires-python)
+        without explicit consent. Respect the user's choices. Their project, their rules.
+
+    11. **One Problem, One Solution**: Avoid complex multi-strategy approaches when
+        a single good solution suffices. Simplicity is reliability. Don't overthink it.
+
+    === FAILURE HANDLING ===
+
+    12. **Fail Fast with Recovery Path**: When automation isn't possible, fail quickly
+        with a clear explanation and specific recovery steps. Don't leave users hanging.
+
+    13. **Manual Fix Guidance**: When automation fails, guide toward modernization:
+        Bad: "Failed to resolve dependencies"
+        Good: "numpy 2.3.1 and pandas 2.2.0 require Python 3.11+. Your project uses Python 3.8."
+        Best: "Cannot automatically resolve: numpy 2.3.1 and pandas 2.2.0 require Python 3.11+,
+               but your project uses Python 3.8.
+
+               Here are your options to modernize your project:
+
+               1. Use a newer Python version (recommended):
+                  Run: python3.11 -m pyuvstarter
+                  This gives you latest features and best performance.
+                  Note: You may need to update code that uses deprecated APIs.
+
+               2. Update your project's Python requirement:
+                  Edit pyproject.toml: requires-python = '>=3.11'
+                  Then run pyuvstarter again.
+
+               3. If you must stay on Python 3.8:
+                  Run: uv add 'numpy<2.0' 'pandas<2.0'
+                  This keeps older but compatible versions.
+
+               Options 1 or 2 modernize your project, option 3 maintains compatibility."
+
+    === OPTIMIZATION PRINCIPLES ===
+
+    14. **Optimize for Common Case**: Make the 95% case seamless, even if the 5%
+        requires manual intervention. Most users should never see an error.
+        Focus effort where it has the most impact.
+
+    15. **Transparent Operations**: Tell users what's happening and why. They should
+        understand what the tool is doing, even if they don't need to intervene.
+        Build trust through transparency.
+
 """
 
 import sys
