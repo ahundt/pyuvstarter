@@ -3205,8 +3205,8 @@ class CLICommand(BaseSettings):
                 # Clear, specific user message showing we're solving the problem
                 conflicts = result.get("conflicts", [])
                 # Progressive disclosure: Keep it simple during automatic resolution
-                _log_action("retry_discovery", "INFO",
-                          "⚡ Version conflict detected. Automatically resolving with flexible version ranges...")
+                _log_action("version_conflict_resolution_attempt_2", "INFO",
+                          "⚡ Version conflict detected. Trying again with flexible version ranges...")
 
                 # Phase 2: Re-run discovery with no-pin mode (this is fast - just different output format)
                 discovery_unpinned = discover_dependencies_in_scope(
@@ -3230,8 +3230,8 @@ class CLICommand(BaseSettings):
 
                 if not isinstance(result, dict) or result.get("status") != "NEEDS_UNPINNED_RETRY":
                     # Success!
-                    _log_action("retry_success", "SUCCESS",
-                              "✅ Successfully resolved dependencies using flexible versions!")
+                    _log_action("version_conflict_resolved", "SUCCESS",
+                              "✅ Successfully resolved dependencies using flexible version ranges!")
                     major_action_results.append(("dependency_management", "SUCCESS"))
                 else:
                     # Phase 3: Third fallback - try with NO version constraints at all
@@ -3240,9 +3240,9 @@ class CLICommand(BaseSettings):
                     # Preserve conflict information from phase 2 for paper trail
                     conflicts_from_phase2 = result.get("conflicts", [])
                     
-                    _log_action("third_fallback_attempt", "INFO",
+                    _log_action("version_conflict_resolution_attempt_3", "INFO",
                               "⚡ Flexible ranges still have conflicts. "
-                              "Attempting final resolution - letting uv pick ANY compatible versions...")
+                              "Final attempt - removing ALL version constraints...")
                     
                     # Extract bare package names - strip ALL version info
                     packages_no_versions = set()
@@ -3252,11 +3252,11 @@ class CLICommand(BaseSettings):
                             packages_no_versions.add(pkg_name)
                     
                     # Log exactly what we're attempting (Philosophy: "Transparent Operations")
-                    _log_action("third_fallback_packages", "INFO",
-                              f"Attempting to install {len(packages_no_versions)} packages with latest available versions",
+                    _log_action("packages_being_installed", "INFO",
+                              f"Installing {len(packages_no_versions)} packages without version numbers",
                               details={
                                   "packages": sorted(packages_no_versions),
-                                  "strategy": "No version constraints - letting uv choose compatible versions"
+                                  "strategy": "Package manager (uv) will choose compatible versions"
                               })
                     
                     # Final attempt with bare package names
@@ -3272,19 +3272,19 @@ class CLICommand(BaseSettings):
                     
                     if not isinstance(result_phase3, dict) or result_phase3.get("status") != "NEEDS_UNPINNED_RETRY":
                         # Success! Provide detailed success message with warnings
-                        _log_action("third_fallback_success", "WARN",
-                                  f"✅ Successfully resolved dependencies using latest versions (no constraints)!",
+                        _log_action("version_conflict_resolved_without_constraints", "WARN",
+                                  f"✅ Dependencies resolved by removing version numbers!",
                                   details={
                                       "packages_installed": sorted(packages_no_versions),
                                       "packages_count": len(packages_no_versions),
-                                      "resolution_path": {
-                                          "attempt_1": "Failed: Exact versions had conflicts",
-                                          "attempt_2": f"Failed: {conflicts_from_phase2 if conflicts_from_phase2 else 'Version range conflicts'}",
-                                          "attempt_3": "Success: Latest versions (no constraints)"
+                                      "what_happened": {
+                                          "attempt_1": "Exact versions had conflicts with your Python version",
+                                          "attempt_2": f"Flexible ranges still had conflicts",
+                                          "attempt_3": "Success: Removed all version numbers and let package manager decide"
                                       },
-                                      "warning": "Packages installed without version constraints may break in future",
-                                      "important": "Your code may need updates if APIs have changed in newer versions",
-                                      "immediate_action": "Run 'uv lock' to capture current working versions",
+                                      "warning": "Packages installed without version numbers may update unexpectedly",
+                                      "important": "Your code may need updates if newer package versions changed their APIs",
+                                      "immediate_action": "Run 'uv lock' to save the exact versions that were installed",
                                       "recommended_steps": [
                                           "1. Test your application thoroughly",
                                           "2. Run: uv lock",
@@ -3300,18 +3300,20 @@ class CLICommand(BaseSettings):
                         # All three attempts failed
                         phase3_conflicts = result_phase3.get("conflicts", [])
                         
-                        _log_action("all_attempts_failed", "ERROR",
-                                  "All three dependency resolution strategies failed",
+                        _log_action("dependency_resolution_failed", "ERROR",
+                                  "Unable to automatically resolve package dependencies",
                                   details={
-                                      "attempt_1": "Exact versions: Failed due to Python version requirements",
-                                      "attempt_2": f"Flexible ranges: {conflicts_from_phase2 if conflicts_from_phase2 else 'Failed with conflicts'}",
-                                      "attempt_3": f"No constraints: {phase3_conflicts if phase3_conflicts else 'Failed to resolve'}",
-                                      "action": "Manual resolution required - see guidance below",
-                                      "common_solutions": [
-                                          "Check if all package names are correct (typos happen!)",
-                                          "Verify packages exist on PyPI (https://pypi.org) or your configured index",
-                                          "Some packages may require special installation or system dependencies",
-                                          "Check PyPI connection (https://pypi.org) or your configured package index"
+                                      "what_we_tried": {
+                                          "attempt_1": "Exact version numbers - conflicted with Python version",
+                                          "attempt_2": f"Flexible version ranges - still had conflicts",
+                                          "attempt_3": f"No version numbers - could not find compatible set"
+                                      },
+                                      "action": "Manual intervention needed - see instructions below",
+                                      "common_causes": [
+                                          "Package name typo (e.g., 'numpy' vs 'nunpy')",
+                                          "Package doesn't exist on PyPI (https://pypi.org)",
+                                          "Package requires system libraries not installed",
+                                          "Could not reach PyPI servers to download packages"
                                       ]
                                   })
                         
@@ -3386,12 +3388,12 @@ class CLICommand(BaseSettings):
                     if option3_note:
                         error_message += f"      {option3_note}\n"
 
-                    _log_action("retry_failed", "ERROR", error_message)
+                    _log_action("manual_resolution_guidance", "ERROR", error_message)
 
                     # Log complete details for debugging without cluttering main output
                     if conflicts:
-                        _log_action("retry_failed_debug", "DEBUG",
-                                  "Complete conflict information for debugging",
+                        _log_action("technical_conflict_details", "DEBUG",
+                                  "Technical details for troubleshooting",
                                   details={"all_conflicts": conflicts,
                                           "parsed_packages": conflict_packages if 'conflict_packages' in locals() else [],
                                           "current_python": current_python})
@@ -3429,13 +3431,36 @@ class CLICommand(BaseSettings):
 
             # RESTORED & ENHANCED: Final summary table printed to console.
             # This provides immediate, high-level feedback to the user.
+            # User-friendly step names for the summary table
+            step_display_names = {
+                "uv_installed": "Package Manager (uv)",
+                "project_initialized": "Project Structure",
+                "gitignore": "Git Ignore File",
+                "venv_ready": "Virtual Environment",
+                "pipreqs_cli_tool": "Dependency Scanner",
+                "ruff_cli_tool": "Code Quality Tool",
+                "ruff_unused_import_check": "Unused Import Check",
+                "code_dep_discovery": "Dependency Discovery",
+                "dependency_management": "Package Installation",
+                "notebook_exec_support": "Notebook Support",
+                "uv_final_sync": "Environment Sync",
+                "vscode_config": "VS Code Setup"
+            }
+            
             summary_lines = [
                 "\n--- Project Setup Summary ---",
                 "Step                         | Status",
                 "-----------------------------|----------",
             ]
             for step, status in major_action_results:
-                summary_lines.append(f"{step.ljust(29)}| {status}")
+                display_name = step_display_names.get(step, step)
+                # Also make status messages clearer
+                display_status = status
+                if status == "SUCCESS_NO_VERSIONS":
+                    display_status = "SUCCESS (no versions)"
+                elif status == "COMPLETED_WITH_WARNINGS":
+                    display_status = "COMPLETED (warnings)"
+                summary_lines.append(f"{display_name.ljust(29)}| {display_status}")
             summary_lines.append(f"\nSee '{log_file_path.name}' for full details.")
             _log_action("final_summary_table", "INFO", "\n".join(summary_lines))
 
