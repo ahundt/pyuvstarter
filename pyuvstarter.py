@@ -3206,7 +3206,7 @@ class CLICommand(BaseSettings):
                 conflicts = result.get("conflicts", [])
                 # Progressive disclosure: Keep it simple during automatic resolution
                 _log_action("retry_discovery", "INFO",
-                          "⚡ Version conflict detected. Automatically finding compatible versions...")
+                          "⚡ Version conflict detected. Automatically resolving with flexible version ranges...")
 
                 # Phase 2: Re-run discovery with no-pin mode (this is fast - just different output format)
                 discovery_unpinned = discover_dependencies_in_scope(
@@ -3234,6 +3234,99 @@ class CLICommand(BaseSettings):
                               "✅ Successfully resolved dependencies using flexible versions!")
                     major_action_results.append(("dependency_management", "SUCCESS"))
                 else:
+                    # Phase 3: Third fallback - try with NO version constraints at all
+                    # This implements the philosophy: "Solve Problems Automatically"
+                    
+                    # Preserve conflict information from phase 2 for paper trail
+                    conflicts_from_phase2 = result.get("conflicts", [])
+                    
+                    _log_action("third_fallback_attempt", "INFO",
+                              "⚡ Flexible ranges still have conflicts. "
+                              "Attempting final resolution - letting uv pick ANY compatible versions...")
+                    
+                    # Extract bare package names - strip ALL version info
+                    packages_no_versions = set()
+                    for dep in discovery_unpinned.all_unique_dependencies:
+                        pkg_name = _extract_package_name_from_specifier(dep)
+                        if pkg_name:
+                            packages_no_versions.add(pkg_name)
+                    
+                    # Log exactly what we're attempting (Philosophy: "Transparent Operations")
+                    _log_action("third_fallback_packages", "INFO",
+                              f"Attempting to install {len(packages_no_versions)} packages with latest available versions",
+                              details={
+                                  "packages": sorted(packages_no_versions),
+                                  "strategy": "No version constraints - letting uv choose compatible versions"
+                              })
+                    
+                    # Final attempt with bare package names
+                    result_phase3 = _manage_project_dependencies(
+                        project_root=self.project_dir,
+                        venv_python_executable=venv_python_executable,
+                        pyproject_file_path=pyproject_file_path,
+                        migration_mode=self.dependency_migration,
+                        dry_run=self.dry_run,
+                        declared_deps_before_management=declared_deps,
+                        project_imported_packages=packages_no_versions
+                    )
+                    
+                    if not isinstance(result_phase3, dict) or result_phase3.get("status") != "NEEDS_UNPINNED_RETRY":
+                        # Success! Provide detailed success message with warnings
+                        _log_action("third_fallback_success", "WARN",
+                                  f"✅ Successfully resolved dependencies using latest versions (no constraints)!",
+                                  details={
+                                      "packages_installed": sorted(packages_no_versions),
+                                      "packages_count": len(packages_no_versions),
+                                      "resolution_path": {
+                                          "attempt_1": "Failed: Exact versions had conflicts",
+                                          "attempt_2": f"Failed: {conflicts_from_phase2 if conflicts_from_phase2 else 'Version range conflicts'}",
+                                          "attempt_3": "Success: Latest versions (no constraints)"
+                                      },
+                                      "warning": "Packages installed without version constraints may break in future",
+                                      "important": "Your code may need updates if APIs have changed in newer versions",
+                                      "immediate_action": "Run 'uv lock' to capture current working versions",
+                                      "recommended_steps": [
+                                          "1. Test your application thoroughly",
+                                          "2. Run: uv lock",
+                                          "3. Commit both pyproject.toml and uv.lock",
+                                          "4. Fix any compatibility issues in your code",
+                                          "5. Consider adding version bounds once stable"
+                                      ]
+                                  })
+                        major_action_results.append(("dependency_management", "SUCCESS_NO_VERSIONS"))
+                        # Don't pass error to manual guidance
+                        result = None
+                    else:
+                        # All three attempts failed
+                        phase3_conflicts = result_phase3.get("conflicts", [])
+                        
+                        _log_action("all_attempts_failed", "ERROR",
+                                  "All three dependency resolution strategies failed",
+                                  details={
+                                      "attempt_1": "Exact versions: Failed due to Python version requirements",
+                                      "attempt_2": f"Flexible ranges: {conflicts_from_phase2 if conflicts_from_phase2 else 'Failed with conflicts'}",
+                                      "attempt_3": f"No constraints: {phase3_conflicts if phase3_conflicts else 'Failed to resolve'}",
+                                      "action": "Manual resolution required - see guidance below",
+                                      "common_solutions": [
+                                          "Check if all package names are correct (typos happen!)",
+                                          "Verify packages exist on PyPI (https://pypi.org) or your configured index",
+                                          "Some packages may require special installation or system dependencies",
+                                          "Check PyPI connection (https://pypi.org) or your configured package index"
+                                      ]
+                                  })
+                        
+                        # Update conflicts for manual guidance section
+                        # Prefer phase 2 conflicts as they're usually more informative
+                        if conflicts_from_phase2:
+                            conflicts = conflicts_from_phase2
+                        else:
+                            conflicts = phase3_conflicts or []
+                        
+                        # Pass through the error for manual guidance
+                        result = result_phase3
+                
+                # Only show manual fix guidance if all attempts failed
+                if isinstance(result, dict) and result.get("status") == "NEEDS_UNPINNED_RETRY":
                     # Retry also failed - provide comprehensive manual fix guidance
                     current_python = f"{sys.version_info.major}.{sys.version_info.minor}"
 
@@ -3274,8 +3367,10 @@ class CLICommand(BaseSettings):
                         option3_note = ""
 
                     # Build the complete error message following the philosophy
+                    # Note: We've already tried with no versions, so adjust guidance
                     error_message = f"{error_start}\n"
-                    error_message += "\nHere are your options to modernize your project:\n"
+                    error_message += "\nWe tried 3 strategies: exact versions, flexible ranges, and no versions.\n"
+                    error_message += "All failed. Here are your options:\n"
                     error_message += "\n1. Use a newer Python version (recommended):\n"
                     error_message += "   Run: python3.11 -m pyuvstarter\n"
                     error_message += "   This gives you latest features and best performance.\n"
@@ -3284,10 +3379,12 @@ class CLICommand(BaseSettings):
                     error_message += "   Edit pyproject.toml: requires-python = '>=3.11'\n"
                     error_message += "   Then run pyuvstarter again.\n"
                     error_message += f"\n3. If you must stay on Python {current_python}:\n"
-                    error_message += f"   Run: {option3_cmd}\n"
+                    error_message += "   a) Check for typos in import statements\n"
+                    error_message += "   b) Some packages may have different names (e.g., cv2 → opencv-python)\n"
+                    error_message += "   c) Try installing problem packages individually:\n"
+                    error_message += f"      {option3_cmd}\n"
                     if option3_note:
-                        error_message += f"   {option3_note}\n"
-                    error_message += "\nOptions 1 or 2 modernize your project, option 3 maintains compatibility."
+                        error_message += f"      {option3_note}\n"
 
                     _log_action("retry_failed", "ERROR", error_message)
 
@@ -3390,7 +3487,7 @@ class CLICommand(BaseSettings):
             elif "uv venv" in cmd_str_lower:
                 _log_action("uv_venv_hint", "WARN", f"VIRTUAL ENV HINT: `uv venv` command failed.\n  - Ensure `uv` is correctly installed and functional. Check `uv --version`.\n  - Check for issues like insufficient disk space or permissions in the project directory '{self.project_dir}'.")
             elif "uv tool install" in cmd_str_lower:
-                _log_action("uv_tool_install_hint", "WARN", "UV TOOL INSTALL HINT: `uv tool install` (likely for pipreqs) failed.\n  - This could be due to network issues, `uv` problems, or the tool package ('pipreqs') not being found by `uv`.\n  - Try running `uv tool install pipreqs` manually in your terminal.")
+                _log_action("uv_tool_install_hint", "WARN", "UV TOOL INSTALL HINT: `uv tool install` (likely for pipreqs) failed.\n  - Check PyPI connection (https://pypi.org) or your configured package index\n  - Verify `uv` is working: `uv --version`\n  - Try running `uv tool install pipreqs` manually in your terminal")
             elif "uv init" in cmd_str_lower:
                 _log_action("uv_init_hint", "WARN", f"UV INIT HINT: `uv init` command failed.\n  - Ensure `uv` is correctly installed. Try running `uv init` manually in an empty directory to test.\n  - Check for permissions issues in the project directory '{self.project_dir}'.")
             elif "brew" in cmd_str_lower:

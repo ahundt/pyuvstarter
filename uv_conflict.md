@@ -963,12 +963,179 @@ This transforms a frustrating error into a seamless experience.
 1. ✅ Update philosophy in both files
 2. ✅ Document all design options and analysis
 3. ✅ Choose best implementation approach
-4. ⬜ Modify `_manage_project_dependencies` to return status instead of raising
-5. ⬜ Add `pipreqs_mode` parameter to discovery functions
-6. ⬜ Implement retry logic in model_post_init
-7. ⬜ Update error messages to match new philosophy
-8. ⬜ Test with create_demo.sh and create_demo2.sh
-9. ⬜ Commit changes with proper messages
+4. ✅ Modify `_manage_project_dependencies` to return status instead of raising
+5. ✅ Add `pipreqs_mode` parameter to discovery functions
+6. ✅ Implement Two-Phase Discovery (pinned → flexible ranges)
+7. ✅ Add Three-Phase Discovery (third fallback with no versions)
+
+## Updated Implementation: Three-Phase Discovery
+
+After implementing the Two-Phase Discovery and observing CI failures where even flexible version ranges couldn't resolve conflicts, we've implemented a Three-Phase Discovery approach:
+
+### Phase 1: Pinned Versions (Default)
+- Uses exact versions from pipreqs (e.g., `numpy==2.3.1`)
+- Best for reproducibility
+- May fail due to Python version constraints
+
+### Phase 2: Flexible Ranges (First Fallback)
+- Uses `pipreqs --mode no-pin` which gives minimum versions (e.g., `numpy>=2.3.1`)
+- Allows newer compatible versions
+- May still fail if minimum versions have Python constraints
+
+### Phase 3: No Version Constraints (Final Fallback)
+- Strips ALL version information (e.g., just `numpy`)
+- Lets uv pick any compatible version
+- Maximum flexibility but least reproducibility
+
+### Implementation Details
+
+The Three-Phase Discovery system progressively relaxes version constraints to maximize the chance of successful dependency resolution:
+
+```python
+# Phase 1: Try with exact pinned versions (default pipreqs behavior)
+result = _manage_project_dependencies(
+    project_imported_packages=discovery_result.all_unique_dependencies  # e.g., ["numpy==2.3.1"]
+)
+
+if isinstance(result, dict) and result.get("status") == "NEEDS_UNPINNED_RETRY":
+    # Phase 2: Re-run discovery with flexible version ranges
+    _log_action("retry_discovery", "INFO",
+              "⚡ Version conflict detected. Automatically resolving with flexible version ranges...")
+    
+    discovery_unpinned = discover_dependencies_in_scope(
+        scan_path=self.project_dir,
+        pipreqs_mode="no-pin"  # Changes output to e.g., ["numpy>=2.3.1"]
+    )
+    
+    result = _manage_project_dependencies(
+        project_imported_packages=discovery_unpinned.all_unique_dependencies
+    )
+    
+    if isinstance(result, dict) and result.get("status") == "NEEDS_UNPINNED_RETRY":
+        # Phase 3: Final fallback - strip ALL version constraints
+        _log_action("third_fallback_attempt", "INFO",
+                  "⚡ Flexible ranges still have conflicts. "
+                  "Attempting final resolution - letting uv pick ANY compatible versions...")
+        
+        # Extract bare package names only
+        packages_no_versions = set()
+        for dep in discovery_unpinned.all_unique_dependencies:
+            pkg_name = _extract_package_name_from_specifier(dep)  # e.g., "numpy>=2.3.1" → "numpy"
+            if pkg_name:
+                packages_no_versions.add(pkg_name)
+        
+        # Try with no version constraints at all
+        result_phase3 = _manage_project_dependencies(
+            project_imported_packages=packages_no_versions  # e.g., ["numpy", "pandas", "matplotlib"]
+        )
+        
+        if not isinstance(result_phase3, dict) or result_phase3.get("status") != "NEEDS_UNPINNED_RETRY":
+            # Success! But with important warnings
+            _log_action("third_fallback_success", "WARN",
+                      "✅ Successfully resolved dependencies using latest versions (no constraints)!",
+                      details={
+                          "packages_installed": sorted(packages_no_versions),
+                          "warning": "Packages installed without version constraints may break in future",
+                          "important": "Your code may need updates if APIs have changed in newer versions",
+                          "immediate_action": "Run 'uv lock' to capture current working versions",
+                          "recommended_steps": [
+                              "1. Test your application thoroughly",
+                              "2. Run: uv lock",
+                              "3. Commit both pyproject.toml and uv.lock",
+                              "4. Fix any compatibility issues in your code",
+                              "5. Consider adding version bounds once stable"
+                          ]
+                      })
+        else:
+            # All three attempts failed - provide comprehensive manual guidance
+            _log_action("all_attempts_failed", "ERROR",
+                      "All three dependency resolution strategies failed",
+                      details={
+                          "common_solutions": [
+                              "Check if all package names are correct (typos happen!)",
+                              "Verify packages exist on PyPI (https://pypi.org) or your configured index",
+                              "Some packages may require special installation or system dependencies",
+                              "Check PyPI connection (https://pypi.org) or your configured package index"
+                          ]
+                      })
+```
+
+### Key Benefits
+1. **Maximum Success Rate**: Three attempts with progressively more flexible constraints
+2. **Clear Paper Trail**: Each attempt is logged with exact details
+3. **User Guidance**: Success warnings and failure instructions at each stage
+4. **Philosophy Alignment**: Solves problems automatically while being transparent
+
+### Trade-offs
+- Phase 3 sacrifices version predictability for compatibility
+- Users should immediately run `uv lock` after Phase 3 success
+- Clear warnings ensure users understand the implications
+
+### Error Message Improvements
+
+Following the design philosophy of "Specific and Actionable Feedback", all error messages have been updated:
+
+#### Before (Vague):
+- "Network issues or registry downtime can cause failures"
+- "This could be due to network issues, `uv` problems..."
+
+#### After (Specific):
+- "Check PyPI connection (https://pypi.org) or your configured package index"
+- "Verify `uv` is working: `uv --version`"
+
+#### Manual Guidance When All Phases Fail:
+```
+Cannot automatically resolve: numpy 2.3.1 requires Python 3.11+,
+but your project uses Python 3.8.
+
+We tried 3 strategies: exact versions, flexible ranges, and no versions.
+All failed. Here are your options:
+
+1. Use a newer Python version (recommended):
+   Run: python3.11 -m pyuvstarter
+   This gives you latest features and best performance.
+   Note: You may need to update code that uses deprecated APIs.
+
+2. Update your project's Python requirement:
+   Edit pyproject.toml: requires-python = '>=3.11'
+   Then run pyuvstarter again.
+
+3. If you must stay on Python 3.8:
+   a) Check for typos in import statements
+   b) Some packages may have different names (e.g., cv2 → opencv-python)
+   c) Try installing problem packages individually:
+      uv add --resolution lowest numpy pandas matplotlib
+      This finds the oldest compatible versions. You may want newer ones.
+```
+
+### Philosophy Alignment Summary
+
+The Three-Phase Discovery implementation aligns perfectly with pyuvstarter's design philosophy:
+
+1. **Automatic and Correct**: Makes things "just work" by trying three different strategies automatically
+2. **Modernize Projects Automatically**: Attempts to find the newest compatible versions at each phase
+3. **Easy to Use Correctly**: No new flags or parameters needed - it just works
+4. **Solve Problems FOR Users**: Doesn't just report conflicts - actively tries multiple solutions
+5. **Specific and Actionable Feedback**: Every message tells users exactly what's happening and what to do
+
+## Implementation Status
+
+### Completed Tasks
+1. ✅ Update philosophy in both files
+2. ✅ Document all design options and analysis
+3. ✅ Choose best implementation approach (Three-Phase Discovery)
+4. ✅ Modify `_manage_project_dependencies` to return status instead of raising
+5. ✅ Add `pipreqs_mode` parameter to discovery functions
+6. ✅ Implement Two-Phase Discovery (pinned → flexible ranges)
+7. ✅ Add Three-Phase Discovery (third fallback with no versions)
+8. ✅ Update error messages to match new philosophy
+9. ✅ Fix vague error messages (network issues → specific PyPI URLs)
+10. ✅ Align all messages with design philosophy
+11. ✅ Test with create_demo.sh and create_demo2.sh
+
+### Pending Tasks
+- ⬜ Commit changes with proper messages
+- ⬜ Monitor CI for any remaining issues
 
 ### Git Status Context
 - **Staged**: pyproject.toml (packaging dependency), uv.lock
@@ -1138,3 +1305,27 @@ Note: Success depends on whether compatible versions are available in the packag
 ✅ **Progressive Disclosure**: Simple during fix, detailed on failure  
 ✅ **Trust the Tools**: Uses pipreqs and uv features as designed  
 ✅ **One Problem, One Solution**: Single retry strategy, not multiple
+
+## Three-Phase Discovery Enhancement (Latest)
+
+After implementing Two-Phase Discovery, we enhanced it further to Three-Phase Discovery based on continued CI failures:
+
+### Phase Progression
+1. **Phase 1**: Exact pinned versions (`numpy==2.3.1`)
+2. **Phase 2**: Flexible version ranges (`numpy>=2.3.1`) 
+3. **Phase 3**: No version constraints (`numpy`)
+
+### Key Improvements in Three-Phase
+- **Maximum flexibility**: Phase 3 strips ALL version info, letting uv choose any compatible version
+- **Clear warnings**: Users are warned when packages install without constraints
+- **Immediate actions**: Tells users to run `uv lock` to capture working versions
+- **Complete paper trail**: All three attempts are logged with details
+
+### Error Message Evolution
+- Fixed vague "network issues" → specific "Check PyPI connection (https://pypi.org)"
+- Added specific commands like `uv --version` for verification
+- Manual guidance only appears after all three automated attempts fail
+- Error messages show exactly which strategy was tried and why it failed
+
+### Final Result
+The Three-Phase Discovery system transforms pyuvstarter from a tool that fails on version conflicts to one that automatically resolves them through progressive fallback strategies, embodying the philosophy of solving problems FOR users.
