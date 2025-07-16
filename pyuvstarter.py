@@ -3209,7 +3209,6 @@ class CLICommand(BaseSettings):
                     major_action_results.append(("dependency_management", "SUCCESS"))
                 else:
                     # Retry also failed - provide comprehensive manual fix guidance
-                    import sys
                     current_python = f"{sys.version_info.major}.{sys.version_info.minor}"
 
                     # Parse conflicts to build clear error message
