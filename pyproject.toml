@@ -12,14 +12,15 @@ authors = [
 # Dependencies needed for pyuvstarter.py itself to run.
 dependencies = [
     "toml>=0.10.2",
-    "pathspec>=0.11.0",  # For .gitignore pattern matching
-    "typer>=0.9.0",  # CLI framework
-    "rich>=10.0.0",  # Rich terminal output (typer's optional dependency)
-    "pydantic>=2.0.0",  # Data validation and settings management
-    "pydantic-settings>=2.0.0",  # Settings management with Pydantic
-    "typing-extensions>=4.0.0",  # Backports of typing features
-    "pip-requirements-parser>=32.0.0",  # For robust requirements.txt parsing
-    "packaging>=20.0",  # For parsing requirement specifiers
+    "pathspec>=0.11.0", # For .gitignore pattern matching
+    "typer>=0.9.0", # CLI framework
+    "rich>=10.0.0", # Rich terminal output (typer's optional dependency)
+    "pydantic>=2.0.0", # Data validation and settings management
+    "pydantic-settings>=2.0.0", # Settings management with Pydantic
+    "typing-extensions>=4.0.0", # Backports of typing features
+    "pip-requirements-parser>=32.0.0", # For robust requirements.txt parsing
+    "packaging>=20.0", # For parsing requirement specifiers
+    "tqdm>=4.67.1",
 ]
 
 

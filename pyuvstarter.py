@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 # Copyright 2025 Andrew Hundt
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -290,26 +291,7 @@ except ImportError:
     GitWildMatchPattern = None
     PathSpec = None
 
-try:
-    from tqdm import tqdm
-    HAS_TQDM = True
-except ImportError:
-    HAS_TQDM = False
-    # Fallback progress implementation
-    class MockTqdm:
-        def __init__(self, *args, **kwargs):
-            self.desc = kwargs.get('desc', '')
-            self.n = 0
-            self.total = kwargs.get('total', 0)
-        def set_description(self, desc): 
-            self.desc = desc
-        def update(self, n): 
-            self.n += n
-        def write(self, msg): 
-            print(msg)
-        def close(self): 
-            pass
-    tqdm = MockTqdm
+from tqdm import tqdm
 
 try:
     import typer
@@ -935,6 +917,7 @@ _log_data_global = {}
 # Global state for intelligent output system
 _progress_bar = None
 _current_config = None
+_progress_steps_seen = set()  # Track all progress steps as they occur
 _auto_intelligence = {
     "files_created": set(),
     "files_modified": set(), 
@@ -945,12 +928,17 @@ _auto_intelligence = {
     "auto_fixes_available": []
 }
 
-# Major steps for progress tracking (derived from analysis of existing _log_action calls)
-MAJOR_STEPS = [
-    "script_start", "ensure_uv_installed", "ensure_project_initialized", 
-    "ensure_gitignore", "create_or_verify_venv", "discover_dependencies",
-    "manage_project_dependencies", "configure_vscode", "uv_final_sync", "script_end"
+# Progress tracking patterns (decentralized - no need to modify when adding steps)
+PROGRESS_PATTERNS = [
+    "script_start", "script_end", "ensure_", "create_", "discover_",
+    "manage_", "configure_", "uv_final_sync", "version_conflict_resolution",
+    "run_pre_flight_checks"
 ]
+
+def _should_show_progress(action_name: str) -> bool:
+    """Determine if action should show progress based on patterns."""
+    return any(action_name.startswith(pattern) or action_name == pattern 
+               for pattern in PROGRESS_PATTERNS)
 
 def set_output_mode(config):
     """Initialize intelligent output system with config."""
@@ -1036,27 +1024,51 @@ def _extract_unused_imports_automatically(details: dict):
         })
 
 def _init_progress_bar():
-    """Initialize progress bar with error recovery."""
-    global _progress_bar
+    """Initialize progress bar with dynamically counted total steps."""
+    global _progress_bar, _progress_steps_seen
     version = _get_project_version()
     header = f"🚀 PYUVSTARTER v{version}"
     
+    # Reset step tracking for new run
+    _progress_steps_seen.clear()
+    
+    # Count total progress steps by dry-run scanning the execution
+    total_steps = _count_total_progress_steps()
+    
     try:
-        if HAS_TQDM:
-            _progress_bar = tqdm(
-                total=len(MAJOR_STEPS),
-                desc=header,
-                bar_format='{desc}: {percentage:3.0f}%|{bar}| {n}/{total} steps',
-                ncols=80
-            )
-        else:
-            print(header)
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            _progress_bar = tqdm(desc=header)
+        _progress_bar = tqdm(
+            total=total_steps,
+            desc=header,
+            bar_format='{desc}: {percentage:3.0f}%|{bar}| {n}/{total} steps',
+            ncols=80
+        )
     except Exception as e:
         # Fallback to simple output if any progress bar creation fails
         print(header)
         _progress_bar = tqdm()
+
+def _count_total_progress_steps():
+    """Count total progress steps by analyzing current execution context."""
+    # This is a simplified heuristic - in practice, you'd want to analyze
+    # the current configuration and predict which steps will run
+    global _current_config
+    
+    # Core steps that always run
+    base_steps = [
+        "script_start", "ensure_uv_installed", "ensure_project_initialized",
+        "ensure_gitignore", "create_or_verify_venv", "ensure_tool_pipreqs",
+        "ensure_tool_ruff", "run_pre_flight_checks", "discover_dependencies",
+        "manage_project_dependencies", "ensure_notebook_support", "uv_final_sync",
+        "configure_vscode_settings", "ensure_vscode_launch_json", "script_end"
+    ]
+    
+    # Add conditional steps that may occur
+    conditional_steps = 0
+    
+    # Version conflict resolution (if needed)
+    conditional_steps += 2  # attempt_2, attempt_3
+    
+    return len(base_steps) + conditional_steps
 
 def _handle_intelligent_output(action_name: str, status: str, message: str, details: dict):
     """Handle output with automatic intelligence."""
@@ -1079,53 +1091,77 @@ def _handle_intelligent_output(action_name: str, status: str, message: str, deta
         _init_progress_bar()
     elif status == "ERROR":
         _write_intelligent_error(message)
-    elif action_name in MAJOR_STEPS and status == "SUCCESS":
+    elif _should_show_progress(action_name) and status == "SUCCESS":
         _update_progress_with_auto_intelligence(action_name)
     elif action_name == "script_end":
         _show_intelligent_summary()
 
 def _update_progress_with_auto_intelligence(action_name: str):
     """Update progress with automatically extracted intelligence."""
-    global _progress_bar, _auto_intelligence
+    global _progress_bar, _auto_intelligence, _current_config, _progress_steps_seen
     
-    current_status, auto_detail = _get_intelligent_status_detail(action_name)
-    
-    if _progress_bar:
-        _progress_bar.set_description(current_status)
-        _progress_bar.update(1)
-        if auto_detail:
-            _progress_bar.write(f"   {auto_detail}")
-    else:
-        print(f"✅ {current_status}")
-        if auto_detail:
-            print(f"   {auto_detail}")
+    # Only update if this is a new step we haven't seen before
+    if action_name not in _progress_steps_seen:
+        _progress_steps_seen.add(action_name)
+        
+        current_status, auto_detail = _get_intelligent_status_detail(action_name)
+        verbose_mode = getattr(_current_config, 'verbose', False)
+        
+        # Debug: Print what we're processing
+        # print(f"DEBUG: Processing action '{action_name}' -> '{current_status}'")
+        
+        if _progress_bar:
+            _progress_bar.set_description(f"✅ {current_status}")
+            _progress_bar.update(1)
+            # Progressive Disclosure: Only show auto_detail in verbose mode
+            if auto_detail and verbose_mode:
+                _progress_bar.write(f"   {auto_detail}")
+        else:
+            print(f"✅ {current_status}")
+            if auto_detail and verbose_mode:
+                print(f"   {auto_detail}")
 
 def _get_intelligent_status_detail(action_name: str) -> tuple:
     """Get status and detail using automatically extracted intelligence."""
     global _auto_intelligence
     
-    if "ensure_uv_installed" in action_name:
+    # Handle specific action names first, then broader patterns
+    if action_name == "ensure_uv_installed":
         return "🔧 Verified uv installation", None
-        
-    elif "ensure_project_initialized" in action_name:
+    elif action_name == "ensure_project_initialized":
         return "📁 Initialized project structure", "📄 pyproject.toml ready"
-        
-    elif "ensure_gitignore" in action_name:
+    elif action_name == "ensure_gitignore":
         return "📝 Set up .gitignore", "📄 .gitignore configured"
-        
-    elif "create_or_verify_venv" in action_name:
+    elif action_name == "create_or_verify_venv":
         return "🐍 Created virtual environment", "📁 .venv/ ready"
-        
-    elif "discover_dependencies" in action_name:
+    elif action_name == "discover_dependencies":
         count = _auto_intelligence["packages_discovered"]
         return "📂 Discovered dependencies", f"📦 Found {count} packages" if count > 0 else None
-        
-    elif "manage_project_dependencies" in action_name:
+    elif action_name == "manage_project_dependencies":
         count = _auto_intelligence["packages_installed"]
         return "📦 Installed dependencies", f"📦 {count} packages → uv.lock created" if count > 0 else None
         
-    elif "configure_vscode" in action_name:
+    elif action_name == "ensure_tool_pipreqs":
+        return "🔧 Installed pipreqs tool", "📦 Dependency scanner ready"
+    elif action_name == "ensure_tool_ruff":
+        return "🔧 Installed ruff tool", "📦 Code formatter ready"
+    elif action_name == "run_pre_flight_checks":
+        return "🔍 Pre-flight checks", "✅ Code quality verified"
+    elif action_name == "ensure_notebook_support":
+        return "📓 Notebook support", "📦 Jupyter packages ready"
+    elif action_name == "configure_vscode_settings":
+        return "⚙️ VS Code settings", "📄 .vscode/settings.json ready"
+    elif action_name == "ensure_vscode_launch_json":
+        return "⚙️ VS Code launch config", "📄 .vscode/launch.json ready"
+    elif action_name == "configure_vscode":
         return "⚙️ Configured VS Code", "📄 .vscode/ settings ready"
+    elif action_name == "uv_final_sync":
+        return "🔧 Environment sync", "📦 Dependencies synchronized"
+    elif action_name == "script_end":
+        return "🎉 Setup complete!", "✅ All steps finished"
+    # Pattern matches for sub-actions
+    elif "version_conflict_resolution" in action_name:
+        return "⚡ Resolving version conflicts", "📦 Finding compatible versions"
         
     return f"🔧 {_clean_action_name(action_name)}", None
 
@@ -2402,7 +2438,7 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
 
     except subprocess.CalledProcessError:
         # ENHANCEMENT (from va): Provide a more actionable error message.
-        _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Check command logs for details.")
+        _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Check pyuvstarter_setup_log.json for details.\nTry running `uvx pipreqs --help` to verify pipreqs is available.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"An unexpected error occurred while running `pipreqs`: {e}", details={"exception": str(e)})
 
@@ -3123,7 +3159,7 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
 
         _log_action(action_name, "SUCCESS", f"'{config.gitignore_name}' setup complete.")
     except IOError as e:
-        _log_action(action_name, "ERROR", f"Gitignore setup failed: {e}", details={"exception": str(e)})
+        _log_action(action_name, "ERROR", f"Gitignore setup failed: {e}\nCheck file permissions and ensure you can write to the project directory.", details={"exception": str(e)})
         raise typer.Exit(code=1)
 
 # ==============================================================================
