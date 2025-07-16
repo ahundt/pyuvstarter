@@ -75,3 +75,12 @@ demo_script.sh
 # OS-specific
 .DS_Store
 Thumbs.db
+
+# Essential patterns by pyuvstarter: Project Specific
+/.venv/
+/pyuvstarter_setup_log.json
+
+# Test and demo directories
+test_*/
+demo_*/
+pyuvstarter_demo*/
