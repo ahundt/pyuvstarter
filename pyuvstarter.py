@@ -233,6 +233,12 @@ Design Philosophy:
 
 """
 
+# --- Import Strategy ---
+# All module-level imports are placed here to avoid UnboundLocalError issues.
+# Python treats any name that has an import statement anywhere in a function
+# as a local variable throughout that function's scope, even before the import.
+# Moving imports to module level prevents this issue.
+
 import sys
 import json
 import os
@@ -246,10 +252,30 @@ import ast
 import tempfile
 import shlex
 import traceback
+import functools
 
 from pathlib import Path
 from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
 
+# --- Optional Built-in Imports ---
+# Handle version-specific modules
+
+# tomllib is the standard TOML parser in Python 3.11+
+# We import it at module level to avoid UnboundLocalError issues
+# Setting to None when not available allows clean version checking
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    tomllib = None
+
+# importlib.metadata provides package version info (Python 3.8+)
+# Using a flag instead of setting to None avoids modifying module namespace
+try:
+    import importlib.metadata  # Python 3.8+
+    HAS_IMPORTLIB_METADATA = True
+except ImportError:
+    HAS_IMPORTLIB_METADATA = False
+    
 # --- Third-Party Imports ---
 # Handle missing dependencies gracefully
 
@@ -290,7 +316,6 @@ except ImportError as e:
     print("If pydantic is installed, the error above will show the specific import issue.")
     sys.exit(1)
 
-import functools
 
 
 # ==============================================================================
@@ -856,17 +881,18 @@ def _get_project_version(pyproject_path: Path = Path(__file__), project_name: st
     Note: don't call me on a project before uv init, as I will return 'unknown'.
     """
     # Try importlib.metadata.version if project_name is given
-    if project_name:
+    if project_name and HAS_IMPORTLIB_METADATA:
         try:
-            import importlib.metadata
             return importlib.metadata.version(project_name)
         except Exception:
             pass
     # Fallback: try to read pyproject.toml
     if pyproject_path is not None and pyproject_path.exists():
         try:
-            if sys.version_info >= (3, 11):
-                import tomllib
+            # Use module-level tomllib if available (Python 3.11+)
+            # Otherwise dynamically import toml package
+            # Different file modes: tomllib needs binary, toml needs text
+            if tomllib is not None:
                 with open(pyproject_path, "rb") as f:
                     data = tomllib.load(f)
             else:
@@ -1263,15 +1289,15 @@ def _get_dynamic_ignore_set():
     """
     stdlib_modules = set()
     # Best case: Python 3.10+ has this built-in.
+    # We use hasattr instead of version check because it's more reliable
     if hasattr(sys, "stdlib_module_names"):
         stdlib_modules = set(sys.stdlib_module_names)
     else:
         # Fallback for older Python: try to use an optional, pre-installed helper package.
         try:
             from stdlib_list import stdlib_list  # type: ignore
-            import sys as _sys
             # Get stdlib for the version of python running the script
-            stdlib_modules = set(stdlib_list(f"{_sys.version_info.major}.{_sys.version_info.minor}"))
+            stdlib_modules = set(stdlib_list(f"{sys.version_info.major}.{sys.version_info.minor}"))
         except ImportError:
             # If neither is available, the set will be smaller, which is a minor degradation.
             # We still filter builtins, which is better than nothing.
@@ -1407,7 +1433,6 @@ def _canonicalize_pkg_name(name: str) -> str:
 
     # Step 2: Check if it's a known built-in module
     # This prevents trying to install built-in modules
-    import sys
     if name_lower in sys.builtin_module_names:
         return ""
 
@@ -1836,6 +1861,11 @@ def _get_declared_dependencies(pyproject_path: Path) -> set[str]:
         _log_action(action_name, "WARN", f"'{pyproject_path.name}' not found when trying to read declared dependencies. Assuming none declared yet.")
         return dependencies
 
+    # Dynamic import is necessary here because:
+    # 1. We need to check if tomllib is available (Python 3.11+)
+    # 2. If not, we fall back to the third-party 'toml' package
+    # 3. This function needs to work even if neither is available
+    # We use importlib.import_module to avoid syntax errors on older Python
     tomllib_module = None
     tomllib_source = "None"
     if sys.version_info >= (3, 11):
@@ -2340,8 +2370,6 @@ def _manage_project_dependencies(
 
                 if "no solution found" in stderr and "python" in stderr:
                     # Python version conflict - parse the error to be specific
-                    import re
-
                     # Extract specific conflict information
                     conflict_details = []
 
@@ -2764,11 +2792,9 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
             # If overwriting an existing file, create a backup first
             if gitignore_path.exists():
                 # Create backup with timestamp
-                import datetime
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_path = gitignore_path.parent / f"{config.gitignore_name}.backup_{timestamp}"
                 try:
-                    import shutil
                     shutil.copy2(gitignore_path, backup_path)
                     _log_action(action_name, "INFO", f"Created backup of existing '{config.gitignore_name}' at '{backup_path}'.")
                 except Exception as e:
