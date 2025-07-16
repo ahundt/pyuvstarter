@@ -1287,14 +1287,14 @@ _DYNAMIC_IGNORE_SET = _get_dynamic_ignore_set()
 
 def _extract_package_name_from_specifier(specifier: str) -> str:
     """Extract the base package name from a PEP 508 specifier.
-    
+
     Examples:
         'numpy>=1.19.0' -> 'numpy'
         'requests[security]>=2.25.0' -> 'requests'
         'Django>=3.0,<4.0' -> 'django' (lowercase)
     """
     from packaging.requirements import Requirement
-    
+
     try:
         req = Requirement(specifier)
         return req.name.lower()
@@ -1398,26 +1398,26 @@ def _canonicalize_pkg_name(name: str) -> str:
     }
 
     name_lower = name.lower()
-    
+
     # Step 1: Check our curated mapping for known discrepancies
     if name_lower in mapping:
         canonical = mapping[name_lower]
         # Empty string means built-in module that shouldn't be installed
         return canonical if canonical else name_lower
-    
+
     # Step 2: Check if it's a known built-in module
     # This prevents trying to install built-in modules
     import sys
     if name_lower in sys.builtin_module_names:
         return ""
-    
+
     # Step 3: Skip any importlib.metadata lookup!
     # Why? Because:
     # - It only works for already-installed packages (defeats our purpose)
     # - It's slow even for simple lookups
     # - Most packages have import name == package name anyway
     # - Our static mapping handles the known exceptions
-    
+
     # Default: Assume import name == package name (lowercased)
     # This is correct for 95%+ of packages:
     # requests -> requests, numpy -> numpy, flask -> flask, etc.
@@ -1673,8 +1673,16 @@ class DiscoveryResult:
                 f"  - Total Unique Dependencies: {len(self.all_unique_dependencies)}")
 
 
-def discover_dependencies_in_scope(scan_path: Path, ignore_manager: Optional[GitIgnore] = None, scan_notebooks: bool = True, dry_run: bool = False) -> DiscoveryResult:
-    """The primary, user-facing function to discover all dependencies within a specific scope."""
+def discover_dependencies_in_scope(scan_path: Path, ignore_manager: Optional[GitIgnore] = None, scan_notebooks: bool = True, dry_run: bool = False, pipreqs_mode: Optional[str] = None) -> DiscoveryResult:
+    """The primary, user-facing function to discover all dependencies within a specific scope.
+
+    Args:
+        scan_path: Directory to scan for dependencies
+        ignore_manager: GitIgnore patterns to respect during scan
+        scan_notebooks: Whether to scan Jupyter notebooks
+        dry_run: If True, log commands without executing
+        pipreqs_mode: Optional mode for pipreqs ('no-pin', 'gt', 'compat')
+    """
     action_name = f"discover_deps_{scan_path.name}"
     _log_action(action_name, "INFO", f"Starting scope-aware discovery in '{scan_path}'.")
     result = DiscoveryResult()
@@ -1687,7 +1695,7 @@ def discover_dependencies_in_scope(scan_path: Path, ignore_manager: Optional[Git
         _log_action(action_name, "INFO", "GitIgnore support not provided - will scan all files")
 
     _log_action(action_name, "INFO", "Phase 1: Analyzing Python scripts...")
-    result.from_scripts = _get_packages_from_pipreqs(scan_path, ignore_manager, dry_run)
+    result.from_scripts = _get_packages_from_pipreqs(scan_path, ignore_manager, dry_run, pipreqs_mode)
 
     if not scan_notebooks:
         _log_action(action_name, "INFO", "Phase 2 skipped: notebook scanning is disabled.")
@@ -1712,7 +1720,7 @@ def discover_dependencies_in_scope(scan_path: Path, ignore_manager: Optional[Git
         if conversion_map:
              _log_action(action_name, "INFO", f"Analyzing {len(conversion_map)} converted notebook(s)...")
              # For temp directory scanning, we don't need gitignore support since these are already filtered converted files
-             result.from_converted_notebooks = _get_packages_from_pipreqs(temp_dir, None, dry_run)
+             result.from_converted_notebooks = _get_packages_from_pipreqs(temp_dir, None, dry_run, pipreqs_mode)
 
     result.notebooks_converted_count = len(conversion_map)
     failed_primary_notebooks = set(notebook_paths) - set(conversion_map.keys())
@@ -1879,12 +1887,12 @@ def _get_packages_from_legacy_req_txt_simple(requirements_path: Path) -> set[tup
     """
     action_name = "read_legacy_requirements_txt_simple"
     packages_specs = set()
-    
+
     if not requirements_path.exists():
         return packages_specs
-        
+
     _log_action(action_name, "WARN", "Using simple parser - inline comments will not be handled correctly")
-    
+
     try:
         with open(requirements_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -1903,7 +1911,7 @@ def _get_packages_from_legacy_req_txt_simple(requirements_path: Path) -> set[tup
                         packages_specs.add((canonical_name, line))
     except Exception as e:
         _log_action(action_name, "ERROR", f"Failed to read requirements.txt: {e}")
-    
+
     return packages_specs
 
 
@@ -1915,25 +1923,25 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
     try:
         from pip_requirements_parser import RequirementsFile
     except ImportError:
-        _log_action("read_legacy_requirements_txt_content", "ERROR", 
+        _log_action("read_legacy_requirements_txt_content", "ERROR",
                    "pip-requirements-parser is not installed. Cannot parse requirements.txt with comments.")
-        _log_action("read_legacy_requirements_txt_content", "INFO", 
+        _log_action("read_legacy_requirements_txt_content", "INFO",
                    "Install it with: uv pip install pip-requirements-parser")
         # Fall back to simple line-by-line parsing
         return _get_packages_from_legacy_req_txt_simple(requirements_path)
-    
+
     action_name = "read_legacy_requirements_txt_content"
     packages_specs = set()
-    
+
     if not requirements_path.exists():
         _log_action(action_name, "INFO", f"No legacy '{requirements_path.name}' found.")
         return packages_specs
 
     _log_action(action_name, "INFO", f"Reading legacy '{requirements_path.name}'.")
-    
+
     try:
         rf = RequirementsFile.from_file(str(requirements_path))
-        
+
         for req in rf.requirements:
             if req.name:
                 canonical_name = _canonicalize_pkg_name(req.name.lower())
@@ -1942,11 +1950,11 @@ def _get_packages_from_legacy_req_txt(requirements_path: Path) -> set[tuple[str,
                 specifier_str = str(req.specifier) if req.specifier else ""
                 full_spec = f"{req.name}{extras_str}{specifier_str}"
                 packages_specs.add((canonical_name, full_spec))
-        
+
         _log_action(action_name, "SUCCESS", f"Read {len(packages_specs)} package specifier(s) from '{requirements_path.name}'.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"Could not parse '{requirements_path.name}': {e}", details={"exception": str(e)})
-    
+
     return packages_specs
 
 
@@ -1995,7 +2003,7 @@ def _translate_gitignore_to_pipreqs_ignores(ignore_manager: GitIgnore) -> Tuple[
     return pipreqs_ignores, unsupported_patterns
 
 
-def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgnore], dry_run: bool) -> Set[Tuple[str, str]]:
+def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgnore], dry_run: bool, mode: Optional[str] = None) -> Set[Tuple[str, str]]:
     """
     Runs the `pipreqs` tool safely and parses its output. This function represents
     the synthesis of the best features from multiple versions.
@@ -2005,6 +2013,7 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
         ignore_manager: A fully configured GitIgnore object containing all patterns
                         (from .gitignore, defaults, and CLI).
         dry_run: If True, the command will be logged but not executed.
+        mode: Optional pipreqs mode ('no-pin', 'gt', 'compat'). If None, uses default pinned versions.
 
     Returns:
         A set of (canonical_base_name, full_specifier) tuples, or an empty set on failure.
@@ -2014,6 +2023,10 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
 
     # Build command as list of strings for subprocess execution
     pipreqs_args: List[str] = ["uvx", "pipreqs", "--print"]
+
+    # Add mode if specified (for fallback strategy)
+    if mode:
+        pipreqs_args.extend(["--mode", mode])
 
     # Translate the comprehensive .gitignore patterns into the simple directory list
     # that pipreqs can understand.
@@ -2212,7 +2225,7 @@ def _manage_project_dependencies(
     dry_run: bool,
     declared_deps_before_management: set[str],
     project_imported_packages: set[tuple[str, str]],
-):
+) -> Optional[Dict[str, Any]]:
     """
     Implements the "Context-Aware Orchestrator" philosophy. It builds a
     unified model of all dependency requests, uses safe heuristics to merge them
@@ -2302,7 +2315,7 @@ def _manage_project_dependencies(
     # --- Step 3: Transparently report the plan ---
     if not final_packages_to_add and not editable_install_needed:
         _log_action(action_name, "INFO", "No new dependencies to manage.")
-        return
+        return None
 
     _log_action(action_name, "INFO", "--- Dependency Resolution Plan ---")
     if final_packages_to_add:
@@ -2323,12 +2336,62 @@ def _manage_project_dependencies(
             except subprocess.CalledProcessError as e:
                 # The "Expert Translator" logic for clear error messages.
                 stderr = e.stderr.lower() if e.stderr else ""
-                if "no solution found" in stderr:
-                    _log_action("uv_add_conflict", "ERROR", "DEPENDENCY CONFLICT: `uv` could not find compatible package versions. ACTION: Review the `uv` error in the log and manually adjust versions.")
+                stderr_full = e.stderr if e.stderr else ""
+
+                if "no solution found" in stderr and "python" in stderr:
+                    # Python version conflict - parse the error to be specific
+                    import re
+
+                    # Extract specific conflict information
+                    conflict_details = []
+
+                    # Pattern: "numpy==2.3.1 depends on Python>=3.11"
+                    pkg_conflicts = re.findall(r"(\w+)==([\d\.]+) depends on Python([>=<]+[\d\.]+)", stderr_full)
+                    for pkg_name, pkg_version, python_req in pkg_conflicts:
+                        conflict_details.append(f"{pkg_name} {pkg_version} (requires Python{python_req})")
+
+                    # Pattern: "requested Python version (>=3.8)"
+                    project_python_match = re.search(r"requested Python version \(([^)]+)\)", stderr_full)
+                    project_python = project_python_match.group(1) if project_python_match else "unknown"
+
+                    if conflict_details:
+                        _log_action("uv_add_python_conflict", "WARN",
+                                  f"Python version conflict detected!\n"
+                                  f"  Your project: Python {project_python}\n"
+                                  f"  Conflicting packages:\n" +
+                                  "\n".join(f"    • {detail}" for detail in conflict_details) +
+                                  f"\n\nAutomatically retrying with flexible versions...")
+                    else:
+                        # Couldn't parse specific packages, but we know it's a Python conflict
+                        _log_action("uv_add_python_conflict", "WARN",
+                                  "Python version conflict detected. Retrying with flexible versions...",
+                                  details={"error_snippet": stderr_full[:500]})
+
+                    # Return status indicating retry needed
+                    return {"status": "NEEDS_UNPINNED_RETRY", "conflicts": conflict_details}
+
+                elif "no solution found" in stderr:
+                    _log_action("uv_add_conflict", "ERROR",
+                              "DEPENDENCY CONFLICT: Could not find compatible package versions.\n"
+                              "ACTION: Check the error above and either:\n"
+                              "  • Adjust package versions in requirements.txt\n"
+                              "  • Update requires-python in pyproject.toml")
                 elif "failed to build" in stderr:
-                    _log_action("uv_add_build_failure", "ERROR", "BUILD FAILURE: `uv` failed to build a package from source. ACTION: Check the `uv` build log for details.")
+                    # Extract which package failed to build
+                    build_fail_match = re.search(r"error: Failed to build: ([^\s]+)", stderr_full)
+                    if build_fail_match:
+                        failed_pkg = build_fail_match.group(1)
+                        _log_action("uv_add_build_failure", "ERROR",
+                                  f"BUILD FAILURE: {failed_pkg} failed to build from source.\n"
+                                  f"ACTIONS:\n"
+                                  f"  • Install build dependencies: sudo apt-get install python3-dev build-essential\n"
+                                  f"  • Or try: pip install {failed_pkg} --no-binary :all:")
+                    else:
+                        _log_action("uv_add_build_failure", "ERROR",
+                                  "BUILD FAILURE: Package failed to build from source.\n"
+                                  "ACTION: Install system dependencies (e.g., gcc, python-dev) or use pre-built wheels.")
                 else:
-                    _log_action(action_name, "ERROR", "Failed to add dependencies via `uv add`. See logs for details.")
+                    _log_action(action_name, "ERROR", "Failed to add dependencies. Check the error above.")
 
     # --- Step 5: Handle special cases like editable installs ---
     if editable_install_needed:
@@ -2379,6 +2442,7 @@ def _manage_project_dependencies(
         )
         _log_action(action_name + "_advice_req_txt", "INFO", advice)
     _log_action(action_name, "SUCCESS", f"Dependency management completed for mode: '{migration_mode}'.")
+    return None  # Success case - no retry needed
 
 
 def _configure_vscode_settings(project_root: Path, venv_python_executable: Path, dry_run: bool):
@@ -3098,7 +3162,9 @@ class CLICommand(BaseSettings):
 
             # Step 8: Manage project dependencies (add/remove from pyproject.toml, sync with venv).
             _log_action("manage_project_dependencies", "INFO", "Managing project dependencies via 'pyproject.toml'.")
-            _manage_project_dependencies(
+
+            # Phase 1: Try with pinned versions (current behavior)
+            result = _manage_project_dependencies(
                 project_root=self.project_dir,
                 venv_python_executable=venv_python_executable,
                 pyproject_file_path=pyproject_file_path,
@@ -3107,7 +3173,111 @@ class CLICommand(BaseSettings):
                 declared_deps_before_management=declared_deps,
                 project_imported_packages=discovery_result.all_unique_dependencies
             )
-            major_action_results.append(("dependency_management", "SUCCESS"))
+
+            # Check if we need to retry with unpinned packages
+            if isinstance(result, dict) and result.get("status") == "NEEDS_UNPINNED_RETRY":
+                # Clear, specific user message showing we're solving the problem
+                conflicts = result.get("conflicts", [])
+                # Progressive disclosure: Keep it simple during automatic resolution
+                _log_action("retry_discovery", "INFO",
+                          "⚡ Version conflict detected. Automatically finding compatible versions...")
+
+                # Phase 2: Re-run discovery with no-pin mode (this is fast - just different output format)
+                discovery_unpinned = discover_dependencies_in_scope(
+                    scan_path=self.project_dir,
+                    ignore_manager=ignore_manager,
+                    scan_notebooks=True,
+                    dry_run=self.dry_run,
+                    pipreqs_mode="no-pin"  # This is the key change
+                )
+
+                # Retry with unpinned packages
+                result = _manage_project_dependencies(
+                    project_root=self.project_dir,
+                    venv_python_executable=venv_python_executable,
+                    pyproject_file_path=pyproject_file_path,
+                    migration_mode=self.dependency_migration,
+                    dry_run=self.dry_run,
+                    declared_deps_before_management=declared_deps,
+                    project_imported_packages=discovery_unpinned.all_unique_dependencies
+                )
+
+                if not isinstance(result, dict) or result.get("status") != "NEEDS_UNPINNED_RETRY":
+                    # Success!
+                    _log_action("retry_success", "SUCCESS",
+                              "✅ Successfully resolved dependencies using flexible versions!")
+                    major_action_results.append(("dependency_management", "SUCCESS"))
+                else:
+                    # Retry also failed - provide comprehensive manual fix guidance
+                    import sys
+                    current_python = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+                    # Parse conflicts to build clear error message
+                    if conflicts and len(conflicts) > 0:
+                        # Format specific packages that conflict
+                        conflict_examples = []
+                        conflict_packages = []
+
+                        for conflict in conflicts:
+                            parts = conflict.split()
+                            if len(parts) >= 2:
+                                pkg_name = parts[0]
+                                pkg_version = parts[1]
+                                conflict_examples.append(f"{pkg_name} {pkg_version}")
+                                conflict_packages.append(pkg_name)
+
+                        # Build the initial error statement following philosophy format
+                        if len(conflict_examples) >= 2:
+                            error_start = f"Cannot automatically resolve: {conflict_examples[0]} and {conflict_examples[1]} require Python 3.11+,\nbut your project uses Python {current_python}."
+                        elif len(conflict_examples) == 1:
+                            error_start = f"Cannot automatically resolve: {conflict_examples[0]} requires Python 3.11+,\nbut your project uses Python {current_python}."
+                        else:
+                            error_start = f"Cannot automatically resolve: some packages require Python 3.11+,\nbut your project uses Python {current_python}."
+
+                        # For option 3, provide a clear exploration path
+                        # We know these packages need older versions, so guide the user
+                        if conflict_packages:
+                            # Suggest using --resolution lowest to find oldest working versions
+                            option3_cmd = f"uv add --resolution lowest {' '.join(conflict_packages)}"
+                            option3_note = "This finds the oldest compatible versions. You may want newer ones."
+                        else:
+                            option3_cmd = "uv add --resolution lowest <conflicting-packages>"
+                            option3_note = "Replace <conflicting-packages> with the packages that failed."
+                    else:
+                        error_start = f"Cannot automatically resolve version conflicts with Python {current_python}."
+                        option3_cmd = "Check your requirements and add compatible versions"
+                        option3_note = ""
+
+                    # Build the complete error message following the philosophy
+                    error_message = f"{error_start}\n"
+                    error_message += f"\nHere are your options to modernize your project:\n"
+                    error_message += f"\n1. Use a newer Python version (recommended):\n"
+                    error_message += f"   Run: python3.11 -m pyuvstarter\n"
+                    error_message += f"   This gives you latest features and best performance.\n"
+                    error_message += f"   Note: You may need to update code that uses deprecated APIs.\n"
+                    error_message += f"\n2. Update your project's Python requirement:\n"
+                    error_message += f"   Edit pyproject.toml: requires-python = '>=3.11'\n"
+                    error_message += f"   Then run pyuvstarter again.\n"
+                    error_message += f"\n3. If you must stay on Python {current_python}:\n"
+                    error_message += f"   Run: {option3_cmd}\n"
+                    if option3_note:
+                        error_message += f"   {option3_note}\n"
+                    error_message += f"\nOptions 1 or 2 modernize your project, option 3 maintains compatibility."
+
+                    _log_action("retry_failed", "ERROR", error_message)
+
+                    # Log complete details for debugging without cluttering main output
+                    if conflicts:
+                        _log_action("retry_failed_debug", "DEBUG",
+                                  "Complete conflict information for debugging",
+                                  details={"all_conflicts": conflicts,
+                                          "parsed_packages": conflict_packages if 'conflict_packages' in locals() else [],
+                                          "current_python": current_python})
+
+                    major_action_results.append(("dependency_management", "FAILED"))
+            else:
+                # First attempt succeeded
+                major_action_results.append(("dependency_management", "SUCCESS"))
 
             # Step 9: Ensure Jupyter notebook execution support is configured.
             _log_action("ensure_notebook_support", "INFO", "Ensuring Jupyter notebook execution support.")
