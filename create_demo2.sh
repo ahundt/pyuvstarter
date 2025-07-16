@@ -780,9 +780,9 @@ Django[bcrypt,argon2]~=3.0  # Multiple extras
 EOF
 
     # Run pyuvstarter on this file and check if it processes correctly
-    # More robust: Just check that it reads some package specifiers (not exact count)
+    # Check JSON log for package processing evidence instead of stdout parsing
     run_test "inline_comments" "Handles requirements.txt with inline comments" \
-        bash -c "cd '$DEMO_DIR' && eval '${activate_cmd}$PYUVSTARTER_CMD .' 2>&1 | grep -E -q '(Read|Processed|Found).*[0-9]+.*package' || false"
+        bash -c "cd '$DEMO_DIR' && eval '${activate_cmd}$PYUVSTARTER_CMD .' >/dev/null 2>&1 && grep -q 'package specifier.*requirements.txt' '$DEMO_DIR/pyuvstarter_setup_log.json'"
 
     # Test 13: Package extras are preserved
     # First run pyuvstarter again to process the new requirements.txt with all-requirements mode
