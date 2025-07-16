@@ -2388,7 +2388,7 @@ def _manage_project_dependencies(
                                   f"  Your project: Python {project_python}\n"
                                   f"  Conflicting packages:\n" +
                                   "\n".join(f"    • {detail}" for detail in conflict_details) +
-                                  f"\n\nAutomatically retrying with flexible versions...")
+                                  "\n\nAutomatically retrying with flexible versions...")
                     else:
                         # Couldn't parse specific packages, but we know it's a Python conflict
                         _log_action("uv_add_python_conflict", "WARN",
@@ -3275,19 +3275,19 @@ class CLICommand(BaseSettings):
 
                     # Build the complete error message following the philosophy
                     error_message = f"{error_start}\n"
-                    error_message += f"\nHere are your options to modernize your project:\n"
-                    error_message += f"\n1. Use a newer Python version (recommended):\n"
-                    error_message += f"   Run: python3.11 -m pyuvstarter\n"
-                    error_message += f"   This gives you latest features and best performance.\n"
-                    error_message += f"   Note: You may need to update code that uses deprecated APIs.\n"
-                    error_message += f"\n2. Update your project's Python requirement:\n"
-                    error_message += f"   Edit pyproject.toml: requires-python = '>=3.11'\n"
-                    error_message += f"   Then run pyuvstarter again.\n"
+                    error_message += "\nHere are your options to modernize your project:\n"
+                    error_message += "\n1. Use a newer Python version (recommended):\n"
+                    error_message += "   Run: python3.11 -m pyuvstarter\n"
+                    error_message += "   This gives you latest features and best performance.\n"
+                    error_message += "   Note: You may need to update code that uses deprecated APIs.\n"
+                    error_message += "\n2. Update your project's Python requirement:\n"
+                    error_message += "   Edit pyproject.toml: requires-python = '>=3.11'\n"
+                    error_message += "   Then run pyuvstarter again.\n"
                     error_message += f"\n3. If you must stay on Python {current_python}:\n"
                     error_message += f"   Run: {option3_cmd}\n"
                     if option3_note:
                         error_message += f"   {option3_note}\n"
-                    error_message += f"\nOptions 1 or 2 modernize your project, option 3 maintains compatibility."
+                    error_message += "\nOptions 1 or 2 modernize your project, option 3 maintains compatibility."
 
                     _log_action("retry_failed", "ERROR", error_message)
 
