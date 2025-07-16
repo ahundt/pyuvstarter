@@ -3273,13 +3273,13 @@ class CLICommand(BaseSettings):
                     if not isinstance(result_phase3, dict) or result_phase3.get("status") != "NEEDS_UNPINNED_RETRY":
                         # Success! Provide detailed success message with warnings
                         _log_action("version_conflict_resolved_without_constraints", "WARN",
-                                  f"✅ Dependencies resolved by removing version numbers!",
+                                  "✅ Dependencies resolved by removing version numbers!",
                                   details={
                                       "packages_installed": sorted(packages_no_versions),
                                       "packages_count": len(packages_no_versions),
                                       "what_happened": {
                                           "attempt_1": "Exact versions had conflicts with your Python version",
-                                          "attempt_2": f"Flexible ranges still had conflicts",
+                                          "attempt_2": "Flexible ranges still had conflicts",
                                           "attempt_3": "Success: Removed all version numbers and let package manager decide"
                                       },
                                       "warning": "Packages installed without version numbers may update unexpectedly",
@@ -3305,8 +3305,8 @@ class CLICommand(BaseSettings):
                                   details={
                                       "what_we_tried": {
                                           "attempt_1": "Exact version numbers - conflicted with Python version",
-                                          "attempt_2": f"Flexible version ranges - still had conflicts",
-                                          "attempt_3": f"No version numbers - could not find compatible set"
+                                          "attempt_2": "Flexible version ranges - still had conflicts",
+                                          "attempt_3": "No version numbers - could not find compatible set"
                                       },
                                       "action": "Manual intervention needed - see instructions below",
                                       "common_causes": [
