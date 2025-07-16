@@ -406,13 +406,31 @@ EOF
       # MockTqdm implementation
   ```
 
-- [ ] **_log_action() Function Merge**
+- [ ] **_log_action() Function Merge - CRITICAL PHILOSOPHY ALIGNMENT**
   ```python
   def _log_action(action_name, status, message, details=None, extra_info=None):
-      # Keep main's improved action name mappings
-      # Add my verbose mode check and routing
-      # Preserve main's enhanced error handling
-      # Integrate my intelligence extraction calls
+      # 1. ALWAYS log to JSON (both modes need machine-parseable logs)
+      _log_data_global["actions"].append(entry)
+      
+      # 2. Handle errors consistently
+      if status.upper() == "ERROR":
+          _log_data_global["errors_encountered_summary"].append(error_summary)
+      
+      # 3. Extract intelligence silently (no console output)
+      _extract_intelligence_automatically(action_name, status, message, details)
+      
+      # 4. Route output based on verbose mode (Progressive Disclosure)
+      if getattr(_current_config, 'verbose', True):
+          # VERBOSE MODE: Show everything (existing behavior from main)
+          console_prefix = status.upper()
+          if console_prefix == "SUCCESS":
+              console_prefix = "INFO"
+          details_str = f" | Details: {json.dumps(details)}" if details else ""
+          print(f"{console_prefix}: ({action_name}) {message}{details_str}")
+      else:
+          # CLEAN MODE: Delegate to intelligent handler
+          # This shows ONLY progress bars, errors, and final summary
+          _handle_intelligent_output(action_name, status, message, details)
   ```
 
 ##### Enhanced Action Name Integration
@@ -431,6 +449,75 @@ EOF
   - Update MAJOR_STEPS to reflect main's improved action names
   - Ensure progress tracking works with main's conflict resolution phases
   - Preserve main's user messaging while adding progress indication
+
+- [ ] **Update MAJOR_STEPS to include conflict resolution phases**
+  ```python
+  # Current MAJOR_STEPS (line 949):
+  MAJOR_STEPS = [
+      "script_start", "ensure_uv_installed", "ensure_project_initialized", 
+      "ensure_gitignore", "create_or_verify_venv", "discover_dependencies",
+      "manage_project_dependencies", "configure_vscode", "uv_final_sync", "script_end"
+  ]
+  
+  # Should be updated to include main's new action names:
+  MAJOR_STEPS = [
+      "script_start", "ensure_uv_installed", "ensure_project_initialized", 
+      "ensure_gitignore", "create_or_verify_venv", "discover_dependencies",
+      "manage_project_dependencies", 
+      "version_conflict_resolution_attempt_2",  # Add if conflicts occur
+      "version_conflict_resolution_attempt_3",  # Add if needed
+      "configure_vscode", "uv_final_sync", "script_end"
+  ]
+  
+  # Or better: Make progress tracking dynamic based on actual flow
+  ```
+
+##### Design Philosophy Consistency Check
+- [ ] **Ensure clean/verbose modes align with Progressive Disclosure (Principle #7)**
+  ```python
+  # CRITICAL: The integration must respect:
+  # - Clean mode: "Show simple success messages for normal cases"
+  # - Verbose mode: "detailed information only when debugging is needed"
+  # 
+  # Current issue: _handle_intelligent_output() may conflict with this principle
+  # Solution approach:
+  # 1. In clean mode: Show ONLY progress bars and final summary
+  # 2. In verbose mode: Show ALL _log_action outputs as before
+  # 3. Never duplicate messages between progress and console output
+  ```
+
+- [ ] **Reconcile _log_action() with intelligence extraction**
+  ```python
+  # The current code has at line 1311-1313:
+  # _extract_intelligence_automatically(action_name, status, message, details)
+  # _handle_intelligent_output(action_name, status, message, details)
+  
+  # This MUST be updated to ensure:
+  # 1. In verbose mode: Original _log_action behavior (full console output)
+  # 2. In clean mode: Intelligence extraction WITHOUT console spam
+  # 3. Both modes: Proper JSON logging for machine parsing
+  ```
+
+- [ ] **Verify action name consistency throughout**
+  - Main branch uses improved action names like "version_conflict_resolution_attempt_2"
+  - Progress tracking expects these names in MAJOR_STEPS
+  - Intelligence extraction must recognize both old and new names
+  - Error messages must use user-friendly descriptions from main
+
+- [ ] **Test Progressive Disclosure implementation**
+  ```bash
+  # Clean mode test - should see minimal output:
+  # - Progress bar updates
+  # - Critical errors only
+  # - Final summary
+  uv run pyuvstarter.py test_project/ 2>&1 | wc -l  # Should be < 20 lines
+  
+  # Verbose mode test - should see everything:
+  # - All _log_action calls
+  # - Detailed command outputs
+  # - Full error traces
+  uv run pyuvstarter.py --verbose test_project/ 2>&1 | wc -l  # Should be > 100 lines
+  ```
 
 #### 2.3 Demo Script Integration
 - [ ] **create_demo2.sh integration**
