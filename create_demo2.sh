@@ -1048,40 +1048,41 @@ main() {
     type_command "uv run --directory $PARENT_DIR pyuvstarter ."
     sleep 0.5
 
-    # ACTUALLY RUN PYUVSTARTER - show real output!
-    (
-        uv run --directory "$PARENT_DIR" pyuvstarter .
-    )
+    # ACTUALLY RUN PYUVSTARTER - show real clean output!
+    uv run --directory "$PARENT_DIR" pyuvstarter .
 
     echo ""
-    sleep 1
+    sleep 3
 
-    # Show realistic progress
-    echo -e "${C_GREEN}🚀 PYUVSTARTER v0.2.0${C_RESET}"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    # Simulated progress messages
-    progress_items=(
-        "✓ Checking for uv installation"
-        "✓ Initializing pyproject.toml"
-        "✓ Creating .gitignore with best practices"
-        "✓ Setting up virtual environment (.venv)"
-        "📂 Scanning Python files for imports..."
-        "   Found: pandas, sklearn, rich, numpy..."
-        "📓 Analyzing Jupyter notebooks..."
-        "   Found: seaborn, plotly, streamlit..."
-        "🔍 Mapping import names to packages..."
-        "   sklearn → scikit-learn"
-        "   cv2 → opencv-python"
-        "📦 Installing all dependencies..."
-        "✓ Configuring VS Code"
-        "✓ Creating execution log"
-    )
-
-    for item in "${progress_items[@]}"; do
-        echo "   $item"
-        sleep 0.25
-    done
+    # NOTE: Previously simulated progress for demo purposes - now using real output above
+    # The following was the original simulated version (kept for reference):
+    #
+    # # Show realistic progress
+    # echo -e "${C_GREEN}🚀 PYUVSTARTER v0.2.0${C_RESET}"
+    # echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    #
+    # # Simulated progress messages
+    # progress_items=(
+    #     "✓ Checking for uv installation"
+    #     "✓ Initializing pyproject.toml"
+    #     "✓ Creating .gitignore with best practices"
+    #     "✓ Setting up virtual environment (.venv)"
+    #     "📂 Scanning Python files for imports..."
+    #     "   Found: pandas, sklearn, rich, numpy..."
+    #     "📓 Analyzing Jupyter notebooks..."
+    #     "   Found: seaborn, plotly, streamlit..."
+    #     "🔍 Mapping import names to packages..."
+    #     "   sklearn → scikit-learn"
+    #     "   cv2 → opencv-python"
+    #     "📦 Installing all dependencies..."
+    #     "✓ Configuring VS Code"
+    #     "✓ Creating execution log"
+    # )
+    #
+    # for item in "${progress_items[@]}"; do
+    #     echo "   $item"
+    #     sleep 0.25
+    # done
 
     echo -e "\n${C_GREEN}✨ Project modernization complete!${C_RESET}"
     sleep 1.5
