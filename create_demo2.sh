@@ -300,14 +300,26 @@ create_requirements_file() {
 
     if [[ "$mode" == "test" ]]; then
         # Minimal requirements for fast testing
+        # TODO: Add test case for Python version conflict resolution:
+        #       1. In this if block, change: numpy<2.0  # Prevent CI failure on Python 3.8
+        #          to: numpy
+        #       2. Add a new test function after run_test "Verifying dependency discovery" that checks:
+        #          - pyuvstarter log contains "Python version conflict detected"
+        #          - pyuvstarter log contains "Retrying with flexible version discovery"
+        #          - Final pyproject.toml has numpy without version constraint
         cat > "$DEMO_DIR/requirements.txt" << 'EOF'
 # Minimal test requirements
-numpy
+numpy<2.0  # Prevent CI failure on Python 3.8
 requests
 sklearn  # Wrong package name!
 EOF
     else
         # Realistic problematic requirements.txt
+        # TODO: Add test case for Python version conflict resolution in demo mode:
+        #       1. In the else block below, change: numpy==1.19.0  # Old version - security vulnerabilities!
+        #          to: numpy==2.3.1
+        #       2. This will trigger conflict (numpy 2.3.1 requires Python 3.11+)
+        #       3. The demo should show pyuvstarter automatically retrying with --mode no-pin
         cat > "$DEMO_DIR/requirements.txt" << 'EOF'
 # Production ML Dependencies - INCOMPLETE & OUTDATED
 # Last updated: 2021 (obviously needs work)

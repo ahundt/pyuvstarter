@@ -246,17 +246,13 @@ run_unit_tests() {
     original_cwd=$(pwd)
 
     # Always use the local development version for unit tests
-    local pyuvstarter_cmd
-    local activate_cmd=""
-    if [ -f ".venv/bin/activate" ]; then
-        activate_cmd="source .venv/bin/activate && "
-    fi
-    pyuvstarter_cmd="${activate_cmd}python3 ./pyuvstarter.py"
+    # Use uv run to ensure pyuvstarter runs with proper dependencies
+    local pyuvstarter_cmd="uv run pyuvstarter"
 
     # Test 1: Run from project root (normal case)
     run_test 1 "Running pyuvstarter from project root directory" \
-        bash -c "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
-        echo "   ACTION: Check if pyuvstarter.py exists and has proper permissions (chmod +x)"
+        eval "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
+        echo "   ACTION: Check if pyuvstarter.py exists and has proper permissions"
 
     # Test 2: Run from different directory (edge case)
     local temp_dir
@@ -264,13 +260,13 @@ run_unit_tests() {
     cd "$temp_dir"
     # Always use local version by going back to original directory
     run_test 2 "Running pyuvstarter from different working directory" \
-        bash -c "cd '$original_cwd' && $pyuvstarter_cmd '$original_cwd/$DEMO_DIR'"
+        eval "cd '$original_cwd' && $pyuvstarter_cmd '$original_cwd/$DEMO_DIR'"
     cd "$original_cwd"
     rm -rf "$temp_dir"
 
     # Test 3: Test idempotency - run pyuvstarter again on same project
-    run_test "Testing idempotency (running pyuvstarter again)" 3 \
-        bash -c "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
+    run_test 3 "Testing idempotency (running pyuvstarter again)" \
+        eval "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
         echo "   ACTION: pyuvstarter should be able to run multiple times without failing"
 
     # Test 4: Verify transformation results
@@ -497,6 +493,14 @@ rm -rf "$DEMO_DIR"
 mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts"
 
 # Incomplete requirements.txt (the problem pyuvstarter solves)
+# TODO: Add test case for Python version conflict resolution:
+#       1. Change below: numpy<2.0  # Pin to version that supports Python 3.8+
+#          to: numpy
+#       2. Add a new test in run_unit_tests() after check_dependency_discovery:
+#          check_conflict_resolution() that verifies:
+#          - pyuvstarter_setup_log.json contains "Python version conflict detected"
+#          - Log shows automatic retry with flexible versions
+#          - Final pyproject.toml has numpy without strict version
 cat << 'EOF' > "$DEMO_DIR/requirements.txt"
 # Legacy requirements.txt - WOEFULLY INCOMPLETE!
 # Missing 15+ dependencies that are actually used in the project
@@ -768,7 +772,7 @@ sleep 4
 echo "🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC..."
 echo "============================================"
 echo ""
-echo "$ python3 ./pyuvstarter.py $(pwd)/$DEMO_DIR"
+echo "$ uv run pyuvstarter $(pwd)/$DEMO_DIR"
 echo "🔍 pyuvstarter scanning your project..."
 echo "   📄 Reading scripts/data_analysis.py..."
 echo "   📓 Reading notebooks/ml_experiment.ipynb..."
@@ -776,11 +780,7 @@ echo "   🔎 Discovering dependencies..."
 
 # Actually run pyuvstarter and capture exit code
 PYUVSTARTER_EXIT_CODE=0
-if [ -f ".venv/bin/activate" ]; then
-    (source .venv/bin/activate && python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR") || PYUVSTARTER_EXIT_CODE=$?
-else
-    python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
-fi
+(uv run pyuvstarter "$(pwd)/$DEMO_DIR") || PYUVSTARTER_EXIT_CODE=$?
 
 echo ""
 if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
