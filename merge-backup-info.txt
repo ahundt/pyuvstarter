@@ -1,0 +1,15 @@
+Current HEAD: 375dbe994522dcc35b90cdb7379b57b012be8dc1
+Current branch: feature/reduce-verbose-output-v1
+Backup tag: backup-before-merge-20250716-025746
+ M .gitignore
+ M uv.lock
+?? demo_test_project/
+?? merge-backup-info.txt
+?? merge.md
+?? pyuvstarter_demo_project2/
+?? test_clean_output/
+?? test_output_project/
+?? test_results.xml
+Current branch: feature/reduce-verbose-output-v1
+Backup tag: backup-before-merge-20250716-033313
+Stash created: stash@{0}

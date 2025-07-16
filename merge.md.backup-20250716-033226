@@ -26,23 +26,6 @@ cd /Users/athundt/source/pyuvstarter-reduce-verbose-output-v1
 - ✅ Current state documented in `merge-backup-info.txt`
 - ✅ merge.md plan prepared and validated
 
-### Merge Execution Artifacts
-**Files Created During Merge:**
-- `.claude/settings.json` - Local git permissions (committed with merge.md)
-- `merge.md.backup-20250716-033226` - Backup of merge plan
-- `pyuvstarter-diff-analysis.txt` - Detailed diff analysis of pyuvstarter.py
-- `merge-backup-info.txt` - State documentation
-
-**Git Tags Created:**
-- `backup-before-merge-20250716-033130` - Initial backup tag
-- `backup-before-merge-20250716-033313` - Updated backup tag after merge.md commit
-
-**Git Stash Created:**
-- `stash@{0}: On feature/reduce-verbose-output-v1: Pre-merge stash 20250716-033258` - Contains .gitignore and uv.lock changes
-
-**Global Settings Backup:**
-- `~/.claude/settings.json.backup-20250716-033126` - Backup of global Claude settings
-
 ## Branch Analysis
 
 ### Main Branch Improvements (ac5795a and earlier)
@@ -68,22 +51,22 @@ cd /Users/athundt/source/pyuvstarter-reduce-verbose-output-v1
 
 ## Detailed Merge Plan
 
-### Phase 0: Git Permissions Setup ✅
+### Phase 0: Git Permissions Setup ⏳
 
 #### 0.1 Backup Current Settings and Enable Git Operations
-- [x] **Ensure working in correct worktree**
+- [ ] **Ensure working in correct worktree**
   ```bash
   # FIRST: Navigate to worktree (not main repo!)
   cd /Users/athundt/source/pyuvstarter-reduce-verbose-output-v1
   pwd  # Should show: /Users/athundt/source/pyuvstarter-reduce-verbose-output-v1
   ```
 
-- [x] **Backup current global settings**
+- [ ] **Backup current global settings**
   ```bash
   cp ~/.claude/settings.json ~/.claude/settings.json.backup-$(date +%Y%m%d-%H%M%S)
   ```
 
-- [x] **Create local project settings for git operations**
+- [ ] **Create local project settings for git operations**
   ```bash
   mkdir -p .claude
   cat > .claude/settings.json << 'EOF'
@@ -191,7 +174,7 @@ cd /Users/athundt/source/pyuvstarter-reduce-verbose-output-v1
 EOF
   ```
 
-- [x] **Verify local settings override global**
+- [ ] **Verify local settings override global**
   ```bash
   # Local .claude/settings.json inherits global deny rules and adds git allows
   echo "Local git permissions enabled for merge operations"
@@ -207,10 +190,10 @@ EOF
   fi
   ```
 
-### Phase 1: Preparation & Analysis ✅
+### Phase 1: Preparation & Analysis ⏳
 
 #### 1.1 Pre-merge Safety Checks
-- [x] **Verify workspace is clean and ready**
+- [ ] **Verify workspace is clean and ready**
   ```bash
   # Ensure we're in a git repository
   if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -259,7 +242,7 @@ EOF
   ```
 
 #### 1.2 Backup Current State
-- [x] **Create comprehensive backup**
+- [ ] **Create comprehensive backup**
   ```bash
   # Create timestamped backup tag
   BACKUP_TAG="backup-before-merge-$(date +%Y%m%d-%H%M%S)"
@@ -273,14 +256,14 @@ EOF
   git status --porcelain >> merge-backup-info.txt
   ```
 
-- [x] **Stash any uncommitted changes**
+- [ ] **Stash any uncommitted changes**
   ```bash
   git stash push -m "Pre-merge stash $(date)"
   git stash list  # Verify stash created
   ```
 
 #### 1.3 Fetch and Analyze Main Branch
-- [x] **Set up remote and fetch latest**
+- [ ] **Set up remote and fetch latest**
   ```bash
   # Check if upstream remote already exists
   if git remote | grep -q "^upstream$"; then
@@ -329,7 +312,7 @@ EOF
   git log upstream/main --oneline -20  # Review recent commits
   ```
 
-- [x] **Detailed difference analysis**
+- [ ] **Detailed difference analysis**
   ```bash
   # High-level file comparison
   git diff --name-status HEAD upstream/main
@@ -341,14 +324,14 @@ EOF
   git diff HEAD upstream/main -- pyuvstarter.py | grep "^@@" -A 5 -B 5
   ```
 
-- [x] **Identify critical conflict areas**
+- [ ] **Identify critical conflict areas**
   - Document functions modified in both branches
   - Map action name changes from main to my intelligence extraction patterns
   - Identify CLI option conflicts or additions
   - Note import statement differences
 
 #### 1.3 Pre-merge Strategy Decision
-- [x] **Evaluate merge vs rebase approach**
+- [ ] **Evaluate merge vs rebase approach**
   ```bash
   # Check if linear history is possible
   git merge-base HEAD upstream/main
@@ -360,10 +343,10 @@ EOF
   git merge-tree $(git merge-base HEAD upstream/main) HEAD upstream/main
   ```
 
-### Phase 2: Execute Integration Strategy ✅
+### Phase 2: Execute Integration Strategy ⏳
 
 #### 2.1 Rebase Execution (Primary Strategy)
-- [x] **Start interactive rebase with conflict resolution**
+- [ ] **Start interactive rebase with conflict resolution**
   ```bash
   # Use patience algorithm for better conflict detection
   git rebase upstream/main --strategy-option=patience -i
@@ -376,9 +359,8 @@ EOF
   # git rebase --skip       # Skip problematic commit
   # git rebase --continue   # Continue after resolving conflicts
   ```
-  **RESULT: Rebase completed successfully without conflicts!**
 
-- [x] **Systematic conflict resolution priorities**
+- [ ] **Systematic conflict resolution priorities**
   1. **Preserve main's Python version conflict resolution logic**
      - Keep 3-phase fallback system intact
      - Maintain improved error messaging
@@ -397,7 +379,7 @@ EOF
 #### 2.2 Critical File Integration Details
 
 ##### pyuvstarter.py Integration Strategy
-- [x] **CLI Interface Integration**
+- [ ] **CLI Interface Integration**
   ```python
   # Merge approach: Keep main's CLI structure + add verbose option
   class CLICommand(BaseSettings):
@@ -405,18 +387,16 @@ EOF
       # Add verbose option from my branch:
       verbose: Annotated[bool, typer.Option(...)] = False
   ```
-  **RESULT: No conflicts - verbose option preserved in rebase**
 
-- [x] **Global State Variables**
+- [ ] **Global State Variables**
   ```python
   # Add my global variables after main's imports (around line 770):
   _progress_bar = None
   _current_config = None
   _intelligence_data = {...}
   ```
-  **RESULT: No conflicts - global variables preserved**
 
-- [x] **Import Section Reconciliation**
+- [ ] **Import Section Reconciliation**
   ```python
   # Merge tqdm import with MockTqdm fallback
   try:
@@ -425,35 +405,15 @@ EOF
   except ImportError:
       # MockTqdm implementation
   ```
-  **RESULT: No conflicts - tqdm import preserved**
 
-- [ ] **_log_action() Function Merge - CRITICAL PHILOSOPHY ALIGNMENT**
+- [ ] **_log_action() Function Merge**
   ```python
   def _log_action(action_name, status, message, details=None, extra_info=None):
-      # 1. ALWAYS log to JSON (both modes need machine-parseable logs)
-      _log_data_global["actions"].append(entry)
-      
-      # 2. Handle errors consistently
-      if status.upper() == "ERROR":
-          _log_data_global["errors_encountered_summary"].append(error_summary)
-      
-      # 3. Extract intelligence silently (no console output)
-      _extract_intelligence_automatically(action_name, status, message, details)
-      
-      # 4. Route output based on verbose mode (Progressive Disclosure)
-      if getattr(_current_config, 'verbose', True):
-          # VERBOSE MODE: Show everything (existing behavior from main)
-          console_prefix = status.upper()
-          if console_prefix == "SUCCESS":
-              console_prefix = "INFO"
-          details_str = f" | Details: {json.dumps(details)}" if details else ""
-          print(f"{console_prefix}: ({action_name}) {message}{details_str}")
-      else:
-          # CLEAN MODE: Delegate to intelligent handler
-          # This shows ONLY progress bars, errors, and final summary
-          _handle_intelligent_output(action_name, status, message, details)
+      # Keep main's improved action name mappings
+      # Add my verbose mode check and routing
+      # Preserve main's enhanced error handling
+      # Integrate my intelligence extraction calls
   ```
-  **STATUS: Code rebased successfully but MUST verify philosophy alignment in testing**
 
 ##### Enhanced Action Name Integration
 - [ ] **Map main's improved names to my intelligence patterns**
@@ -465,7 +425,6 @@ EOF
       # ... other mappings
   }
   ```
-  **STATUS: To be verified in Phase 3 testing**
 
 ##### Progress System Integration
 - [ ] **Integrate progress tracking with main's flow**
@@ -473,358 +432,18 @@ EOF
   - Ensure progress tracking works with main's conflict resolution phases
   - Preserve main's user messaging while adding progress indication
 
-- [ ] **Update MAJOR_STEPS to include conflict resolution phases**
-  ```python
-  # Current MAJOR_STEPS (line 949):
-  MAJOR_STEPS = [
-      "script_start", "ensure_uv_installed", "ensure_project_initialized", 
-      "ensure_gitignore", "create_or_verify_venv", "discover_dependencies",
-      "manage_project_dependencies", "configure_vscode", "uv_final_sync", "script_end"
-  ]
-  
-  # Should be updated to include main's new action names:
-  MAJOR_STEPS = [
-      "script_start", "ensure_uv_installed", "ensure_project_initialized", 
-      "ensure_gitignore", "create_or_verify_venv", "discover_dependencies",
-      "manage_project_dependencies", 
-      "version_conflict_resolution_attempt_2",  # Add if conflicts occur
-      "version_conflict_resolution_attempt_3",  # Add if needed
-      "configure_vscode", "uv_final_sync", "script_end"
-  ]
-  
-  # Or better: Make progress tracking dynamic based on actual flow
-  ```
-
-##### Design Philosophy Consistency Check (ADDED POST-REBASE)
-- [ ] **Ensure clean/verbose modes align with Progressive Disclosure (Principle #7)**
-  ```python
-  # CRITICAL: The integration must respect:
-  # - Clean mode: "Show simple success messages for normal cases"
-  # - Verbose mode: "detailed information only when debugging is needed"
-  # 
-  # Current issue: _handle_intelligent_output() may conflict with this principle
-  # Solution approach:
-  # 1. In clean mode: Show ONLY progress bars and final summary
-  # 2. In verbose mode: Show ALL _log_action outputs as before
-  # 3. Never duplicate messages between progress and console output
-  ```
-
-- [ ] **Reconcile _log_action() with intelligence extraction**
-  ```python
-  # The current code has at line 1311-1313:
-  # _extract_intelligence_automatically(action_name, status, message, details)
-  # _handle_intelligent_output(action_name, status, message, details)
-  
-  # This MUST be updated to ensure:
-  # 1. In verbose mode: Original _log_action behavior (full console output)
-  # 2. In clean mode: Intelligence extraction WITHOUT console spam
-  # 3. Both modes: Proper JSON logging for machine parsing
-  ```
-
-- [ ] **Verify action name consistency throughout**
-  - Main branch uses improved action names like "version_conflict_resolution_attempt_2"
-  - Progress tracking expects these names in MAJOR_STEPS
-  - Intelligence extraction must recognize both old and new names
-  - Error messages must use user-friendly descriptions from main
-
-- [ ] **Test Progressive Disclosure implementation**
-  ```bash
-  # Clean mode test - should see minimal output:
-  # - Progress bar updates
-  # - Critical errors only
-  # - Final summary
-  uv run pyuvstarter.py test_project/ 2>&1 | wc -l  # Should be < 20 lines
-  
-  # Verbose mode test - should see everything:
-  # - All _log_action calls
-  # - Detailed command outputs
-  # - Full error traces
-  uv run pyuvstarter.py --verbose test_project/ 2>&1 | wc -l  # Should be > 100 lines
-  ```
-
 #### 2.3 Demo Script Integration
-- [x] **create_demo2.sh integration**
+- [ ] **create_demo2.sh integration**
   ```bash
   # Keep my real output execution
   # Merge any demo improvements from main
   # Ensure demo works with integrated functionality
   ```
-  **RESULT: No conflicts - demo scripts rebased successfully**
 
 ### Phase 3: Comprehensive Testing ⏳
 
 #### 3.1 Core Functionality Verification
-- [x] **Test verbose mode functionality**
-  **RESULT: Verbose mode works but ALL output is verbose by default**
-  
-- [x] **Test clean mode (default)**
-  **RESULT: Clean mode still shows INFO messages - Progressive Disclosure BROKEN**
-  
-  **ROOT CAUSE FOUND:**
-  - Main branch has console output at end of _log_action (lines 1004-1008)
-  - Our branch moved console output to _handle_intelligent_output 
-  - Rebase kept main's console output, making ALL output verbose
-  - Need to remove lines from _log_action and ensure routing through _handle_intelligent_output
-
-- [ ] **Fix _log_action to respect Progressive Disclosure**
-  
-  **DEEP ANALYSIS REQUIRED - DO NOT RUSH:**
-  
-  **Current State After Rebase:**
-  1. Main branch contributed:
-     - Improved error messages and action names
-     - Context-aware messages (Principle #5)
-     - Version conflict resolution phases
-     - Original _log_action that always prints to console
-  
-  2. Our branch contributed:
-     - Verbose/clean output modes
-     - Progress bar system (tqdm)
-     - Intelligence extraction
-     - _handle_intelligent_output routing
-  
-  **Integration Issues Found:**
-  1. **Duplicate functions**: `set_output_mode` defined twice (lines 955 and 1204)
-  2. **Initialization order**: `_init_log` (line 3396) calls before `set_output_mode` (line 3399)
-     - This causes `script_bootstrap` to print in verbose mode
-  3. **Default behavior**: `_current_config` defaults to verbose=True when None (line 1066)
-  4. **Console output location**: Need to verify where console printing happens
-  
-  **CAREFUL INTEGRATION PLAN:**
-  1. **Analyze Both Implementations**:
-     - [x] Document exactly what main's _log_action does
-     - [x] Document exactly what our _handle_intelligent_output does
-     - [x] Map all the places console output happens
-  
-  **ANALYSIS RESULTS:**
-  
-  **Main's _log_action (upstream/main):**
-  ```python
-  def _log_action(action_name, status, message, details=None):
-      # 1. JSON logging - creates structured log entry
-      _log_data_global["actions"].append(entry)
-      
-      # 2. Error handling - adds to errors_encountered_summary
-      if status.upper() == "ERROR":
-          _log_data_global["errors_encountered_summary"].append(error_summary)
-      
-      # 3. DIRECT CONSOLE OUTPUT - always prints
-      console_prefix = status.upper()
-      if console_prefix == "SUCCESS":
-          console_prefix = "INFO"
-      details_str = f" | Details: {json.dumps(details)}" if details else ""
-      print(f"{console_prefix}: ({action_name}) {message}{details_str}")
-  ```
-  
-  **Our _handle_intelligent_output:**
-  ```python
-  def _handle_intelligent_output(action_name, status, message, details):
-      verbose_mode = getattr(_current_config, 'verbose', True)
-      
-      if verbose_mode:
-          # IDENTICAL to main's console output
-          console_prefix = status.upper()
-          if console_prefix == "SUCCESS":
-              console_prefix = "INFO"
-          details_str = f" | Details: {json.dumps(details)}" if details else ""
-          print(f"{console_prefix}: ({action_name}) {message}{details_str}")
-          return
-      
-      # CLEAN MODE - selective output
-      if action_name == "script_start": _init_progress_bar()
-      elif status == "ERROR": _write_intelligent_error(message)
-      elif action_name in MAJOR_STEPS and status == "SUCCESS": _update_progress_with_auto_intelligence(action_name)
-      elif action_name == "script_end": _show_intelligent_summary()
-  ```
-  
-  **Our Current _log_action (after rebase):**
-  ```python
-  def _log_action(action_name, status, message, details=None):
-      # 1. JSON logging - SAME as main
-      _log_data_global["actions"].append(entry)
-      
-      # 2. Error handling - SAME as main
-      if status.upper() == "ERROR":
-          _log_data_global["errors_encountered_summary"].append(error_summary)
-      
-      # 3. Intelligence extraction - NEW
-      _extract_intelligence_automatically(action_name, status, message, details)
-      
-      # 4. Intelligent output routing - NEW (replaces main's direct print)
-      _handle_intelligent_output(action_name, status, message, details)
-  ```
-  
-  **KEY FINDING: The _log_action integration is CORRECT!**
-  - We preserved ALL functionality from main (JSON logging, error handling)
-  - We added our intelligence extraction
-  - We replaced direct console output with intelligent routing
-  - In verbose mode, output is identical to main
-  - In clean mode, we get Progressive Disclosure
-  
-  2. **Design Unified Approach**:
-     - [x] Keep ALL error handling from main - ✅ DONE
-     - [x] Keep ALL improved messages from main - ✅ DONE  
-     - [x] Keep ALL intelligence extraction from our branch - ✅ DONE
-     - [x] Route through _handle_intelligent_output based on verbose flag - ✅ DONE
-  
-  **REAL ISSUES TO FIX:**
-  
-  1. **Duplicate `set_output_mode` functions**:
-     - Line 955: First definition
-     - Line 1204: Second definition (duplicate)
-     - **Fix**: Remove the duplicate at line 1204
-  
-  2. **Initialization order problem**:
-     - Line 3396: `_init_log(self.project_dir)` calls `script_bootstrap` 
-     - Line 3399: `set_output_mode(self)` sets config
-     - **Result**: `script_bootstrap` prints in verbose mode (config=None)
-     - **Fix**: Move `set_output_mode(self)` BEFORE `_init_log(self.project_dir)`
-  
-  3. **Default verbose=True violates Progressive Disclosure**:
-     - Line 1066: `verbose_mode = getattr(_current_config, 'verbose', True)`
-     - **Problem**: When config is None, defaults to verbose
-     - **Fix**: Change default to `False` for Progressive Disclosure
-  
-  4. **DETAILED TECHNICAL PLAN**:
-  
-  **FILE-BY-FILE ANALYSIS RESULTS:**
-  
-  **Current State (post-rebase):**
-  - `set_output_mode` defined at lines 955 and 1204 (identical duplicates)
-  - `_current_config` initialized at line 3399 after `_init_log` at line 3396
-  - `_handle_intelligent_output` defaults to verbose=True when config is None
-  - `script_bootstrap` correctly shows in both modes (by design)
-  
-  **Main Branch Differences:**
-  - Main has no intelligence functions (`set_output_mode`, `_handle_intelligent_output`, etc.)
-  - Main's `_log_action` does direct console output
-  - Main's improved action names preserved in our version
-  - Main's error handling preserved in our version
-  
-  **Original Branch (3d7020c) Differences:**
-  - Had single `set_output_mode` function
-  - Had proper initialization order
-  - Had same intelligence extraction system
-  
-  **SPECIFIC FIXES NEEDED:**
-  
-  1. **Remove duplicate function** (lines 1204-1218):
-     ```python
-     # DELETE these lines completely:
-     def set_output_mode(config):
-         """Initialize intelligent output system with config."""
-         global _current_config, _auto_intelligence
-         _current_config = config
-         
-         # Reset intelligence for new run
-         _auto_intelligence = {
-             "files_created": set(),
-             "files_modified": set(),
-             "commands_executed": [],
-             "packages_discovered": 0,
-             "packages_installed": 0,
-             "issues": [],
-             "auto_fixes_available": []
-         }
-     ```
-  
-  2. **Fix initialization order** (lines 3396-3399):
-     ```python
-     # CURRENT (wrong order):
-     _init_log(self.project_dir)
-     
-     # Initialize intelligent output system with config
-     set_output_mode(self)
-     
-     # SHOULD BE:
-     # Initialize intelligent output system with config
-     set_output_mode(self)
-     
-     # Initialize the global logging mechanism.
-     _init_log(self.project_dir)
-     ```
-  
-  3. **Fix default verbose behavior** (line 1066):
-     ```python
-     # CURRENT:
-     verbose_mode = getattr(_current_config, 'verbose', True)  # Default to verbose for safety
-     
-     # SHOULD BE:
-     verbose_mode = getattr(_current_config, 'verbose', False)  # Default to clean for Progressive Disclosure
-     ```
-  
-  4. **Test sequence**:
-     - [x] Apply fix 1 (remove duplicate)
-     - [x] Test both modes - ✅ PASSED
-     - [x] Apply fix 2 (initialization order)
-     - [x] Test both modes - ✅ PASSED
-     - [x] Apply fix 3 (default verbose)
-     - [x] Test both modes - ✅ PASSED
-     - [x] Verify philosophy compliance - ✅ PASSED
-  
-  **ACTUAL RESULTS FROM TESTING:**
-  
-  **Before fixes:**
-  ```
-  Clean mode: INFO: (script_bootstrap) Script execution initiated...
-  Verbose mode: INFO: (script_bootstrap) Script execution initiated...
-  ```
-  
-  **After fix 1 (remove duplicate):**
-  ```
-  Clean mode: INFO: (script_bootstrap) Script execution initiated...
-  Verbose mode: INFO: (script_bootstrap) Script execution initiated...
-  ```
-  Result: No change (as expected, duplicate wasn't being called)
-  
-  **After fix 2 (initialization order):**
-  ```
-  Clean mode: 🚀 PYUVSTARTER v0.2.0 (NO script_bootstrap message!)
-  Verbose mode: INFO: (script_bootstrap) Script execution initiated...
-  ```
-  Result: ✅ MAJOR IMPROVEMENT - Clean mode now properly suppresses script_bootstrap
-  
-  **After fix 3 (default verbose=False):**
-  ```
-  Clean mode: 🚀 PYUVSTARTER v0.2.0 (clean output)
-  Verbose mode: INFO: (script_bootstrap) Script execution initiated...
-  ```
-  Result: ✅ CONFIRMED - Both modes work correctly
-  
-  **PHILOSOPHY COMPLIANCE CHECK:**
-  
-  ✅ **Progressive Disclosure (Principle #7)**: 
-  - Clean mode: Shows simple progress bars and status indicators
-  - Verbose mode: Shows detailed technical logs for debugging
-  
-  ✅ **Optimize for Common Case (Principle #14)**:
-  - Clean mode is default (no flags needed for 95% of cases)
-  - Verbose mode requires explicit --verbose flag
-  
-  ✅ **Transparent Operations (Principle #15)**:
-  - Clean mode: Shows what's happening with progress indicators
-  - Verbose mode: Shows detailed technical information
-  
-  **SOLUTION CRITIQUE:**
-  
-  **Strengths:**
-  1. ✅ Preserved ALL functionality from main branch
-  2. ✅ Minimal changes - only fixed specific integration issues
-  3. ✅ Clean separation between modes
-  4. ✅ Initialization order fix was the key improvement
-  
-  **Potential Issues:**
-  1. ⚠️ script_bootstrap message completely hidden in clean mode
-     - Pro: Cleaner output for users
-     - Con: No indication script started (but progress bar provides this)
-  2. ⚠️ Default verbose=False during initialization
-     - Pro: Follows Progressive Disclosure principle
-     - Con: Any early errors before config is set might not show
-  
-  **Final Assessment:**
-  - Integration is successful and philosophy-compliant
-  - The key issue was initialization order, not the core _log_action logic
-  - Solution is minimal and preserves all existing functionality
+- [ ] **Test verbose mode functionality**
   ```bash
   # Create clean test project for testing
   mkdir -p test_project_merge_validation

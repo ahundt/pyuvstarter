@@ -1063,7 +1063,7 @@ def _handle_intelligent_output(action_name: str, status: str, message: str, deta
     global _progress_bar, _current_config
     
     # Get verbose mode safely
-    verbose_mode = getattr(_current_config, 'verbose', True)  # Default to verbose for safety
+    verbose_mode = getattr(_current_config, 'verbose', False)  # Default to clean for Progressive Disclosure
     
     if verbose_mode:
         # EXISTING OUTPUT - exactly as before (lines 861-865)
@@ -1200,22 +1200,6 @@ def _show_intelligent_summary():
     print(f"\n📋 FULL DETAILS: pyuvstarter_setup_log.json")
     print("="*60)
 
-
-def set_output_mode(config):
-    """Initialize intelligent output system with config."""
-    global _current_config, _auto_intelligence
-    _current_config = config
-    
-    # Reset intelligence for new run
-    _auto_intelligence = {
-        "files_created": set(),
-        "files_modified": set(),
-        "commands_executed": [],
-        "packages_discovered": 0,
-        "packages_installed": 0,
-        "issues": [],
-        "auto_fixes_available": []
-    }
 
 def _init_log(project_root: Path):
     """Initializes the global log data structure."""
@@ -3392,11 +3376,11 @@ class CLICommand(BaseSettings):
         # This is a critical safety measure for consistent path handling.
         os.chdir(self.project_dir)
 
-        # Initialize the global logging mechanism.
-        _init_log(self.project_dir)
-        
         # Initialize intelligent output system with config
         set_output_mode(self)
+        
+        # Initialize the global logging mechanism.
+        _init_log(self.project_dir)
 
         # Define common paths used throughout the orchestration.
         log_file_path = self.project_dir / self.log_file_name
