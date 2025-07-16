@@ -291,6 +291,27 @@ except ImportError:
     PathSpec = None
 
 try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    # Fallback progress implementation
+    class MockTqdm:
+        def __init__(self, *args, **kwargs):
+            self.desc = kwargs.get('desc', '')
+            self.n = 0
+            self.total = kwargs.get('total', 0)
+        def set_description(self, desc): 
+            self.desc = desc
+        def update(self, n): 
+            self.n += n
+        def write(self, msg): 
+            print(msg)
+        def close(self): 
+            pass
+    tqdm = MockTqdm
+
+try:
     import typer
     from typing_extensions import Annotated, override
 except ImportError as e:
@@ -910,6 +931,292 @@ def _get_project_version(pyproject_path: Path = Path(__file__), project_name: st
 # --- JSON Logging Utilities ---
 _log_data_global = {}
 
+# --- Intelligent Output System Global State ---
+# Global state for intelligent output system
+_progress_bar = None
+_current_config = None
+_auto_intelligence = {
+    "files_created": set(),
+    "files_modified": set(), 
+    "commands_executed": [],
+    "packages_discovered": 0,
+    "packages_installed": 0,
+    "issues": [],
+    "auto_fixes_available": []
+}
+
+# Major steps for progress tracking (derived from analysis of existing _log_action calls)
+MAJOR_STEPS = [
+    "script_start", "ensure_uv_installed", "ensure_project_initialized", 
+    "ensure_gitignore", "create_or_verify_venv", "discover_dependencies",
+    "manage_project_dependencies", "configure_vscode", "uv_final_sync", "script_end"
+]
+
+def set_output_mode(config):
+    """Initialize intelligent output system with config."""
+    global _current_config, _auto_intelligence
+    _current_config = config
+    
+    # Reset intelligence for new run
+    _auto_intelligence = {
+        "files_created": set(),
+        "files_modified": set(),
+        "commands_executed": [],
+        "packages_discovered": 0,
+        "packages_installed": 0,
+        "issues": [],
+        "auto_fixes_available": []
+    }
+
+def _extract_intelligence_automatically(action_name: str, status: str, message: str, details: dict):
+    """Extract intelligence from existing _log_action patterns."""
+    global _auto_intelligence, _current_config
+    
+    if status != "SUCCESS":
+        return
+    
+    # File creation patterns (extracted from analysis of 191 _log_action calls)
+    if action_name.endswith("_init") or "initialized" in message.lower():
+        _auto_intelligence["files_created"].add("pyproject.toml")
+    elif "gitignore" in action_name:
+        _auto_intelligence["files_created"].add(".gitignore")
+    elif "venv" in action_name and ("created" in message.lower() or "ready" in message.lower()):
+        _auto_intelligence["files_created"].add(".venv/")
+    elif "configure_vscode" in action_name:
+        _auto_intelligence["files_created"].update([".vscode/settings.json", ".vscode/launch.json"])
+    elif "uv.lock" in message or ("uv_add" in action_name and "installed" in message.lower()):
+        _auto_intelligence["files_created"].add("uv.lock")
+        _auto_intelligence["files_modified"].add("pyproject.toml")
+    
+    # Command result extraction
+    if details and "command" in details:
+        cmd = details["command"]
+        _auto_intelligence["commands_executed"].append(cmd)
+        
+        if "stdout" in details:
+            _extract_results_from_command_output(cmd, details["stdout"])
+    
+    # Issue detection
+    if "unused imports" in message.lower():
+        _extract_unused_imports_automatically(details)
+    elif "conflict" in message.lower():
+        _auto_intelligence["issues"].append(f"Dependency conflict: {message.split('|')[0].strip()}")
+
+def _extract_results_from_command_output(command: str, output: str):
+    """Extract concrete results from command outputs automatically."""
+    global _auto_intelligence
+    
+    # Extract package counts from pipreqs output
+    if "pipreqs" in command and output:
+        package_lines = [line for line in output.split('\n') if '==' in line]
+        _auto_intelligence["packages_discovered"] = len(package_lines)
+    
+    # Extract installation results from uv add output  
+    elif "uv add" in command and "installed" in output.lower():
+        import re
+        match = re.search(r'installed\s+(\d+)\s+package', output.lower())
+        if match:
+            _auto_intelligence["packages_installed"] = int(match.group(1))
+
+def _extract_unused_imports_automatically(details: dict):
+    """Extract unused imports automatically from existing ruff details."""
+    global _auto_intelligence
+    
+    if details and "unused_imports_details" in details:
+        for file_path, line_num, import_desc in details["unused_imports_details"]:
+            rel_path = file_path.split("/")[-1] if "/" in file_path else file_path
+            _auto_intelligence["issues"].append(f"Unused import: {rel_path}:{line_num} - {import_desc}")
+        
+        # Automatically suggest fix since ruff --fix is safe for unused imports
+        _auto_intelligence["auto_fixes_available"].append({
+            "issue": "unused imports",
+            "command": "uvx ruff check . --fix", 
+            "description": "Remove unused imports automatically",
+            "safe": True
+        })
+
+def _init_progress_bar():
+    """Initialize progress bar with error recovery."""
+    global _progress_bar
+    version = _get_project_version()
+    header = f"🚀 PYUVSTARTER v{version}"
+    
+    try:
+        if HAS_TQDM:
+            _progress_bar = tqdm(
+                total=len(MAJOR_STEPS),
+                desc=header,
+                bar_format='{desc}: {percentage:3.0f}%|{bar}| {n}/{total} steps',
+                ncols=80
+            )
+        else:
+            print(header)
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            _progress_bar = tqdm(desc=header)
+    except Exception as e:
+        # Fallback to simple output if any progress bar creation fails
+        print(header)
+        _progress_bar = tqdm()
+
+def _handle_intelligent_output(action_name: str, status: str, message: str, details: dict):
+    """Handle output with automatic intelligence."""
+    global _progress_bar, _current_config
+    
+    # Get verbose mode safely
+    verbose_mode = getattr(_current_config, 'verbose', True)  # Default to verbose for safety
+    
+    if verbose_mode:
+        # EXISTING OUTPUT - exactly as before (lines 861-865)
+        console_prefix = status.upper()
+        if console_prefix == "SUCCESS":
+            console_prefix = "INFO"
+        details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
+        print(f"{console_prefix}: ({action_name}) {message}{details_str}")
+        return
+    
+    # INTELLIGENT OUTPUT with automatic details
+    if action_name == "script_start":
+        _init_progress_bar()
+    elif status == "ERROR":
+        _write_intelligent_error(message)
+    elif action_name in MAJOR_STEPS and status == "SUCCESS":
+        _update_progress_with_auto_intelligence(action_name)
+    elif action_name == "script_end":
+        _show_intelligent_summary()
+
+def _update_progress_with_auto_intelligence(action_name: str):
+    """Update progress with automatically extracted intelligence."""
+    global _progress_bar, _auto_intelligence
+    
+    current_status, auto_detail = _get_intelligent_status_detail(action_name)
+    
+    if _progress_bar:
+        _progress_bar.set_description(current_status)
+        _progress_bar.update(1)
+        if auto_detail:
+            _progress_bar.write(f"   {auto_detail}")
+    else:
+        print(f"✅ {current_status}")
+        if auto_detail:
+            print(f"   {auto_detail}")
+
+def _get_intelligent_status_detail(action_name: str) -> tuple:
+    """Get status and detail using automatically extracted intelligence."""
+    global _auto_intelligence
+    
+    if "ensure_uv_installed" in action_name:
+        return "🔧 Verified uv installation", None
+        
+    elif "ensure_project_initialized" in action_name:
+        return "📁 Initialized project structure", "📄 pyproject.toml ready"
+        
+    elif "ensure_gitignore" in action_name:
+        return "📝 Set up .gitignore", "📄 .gitignore configured"
+        
+    elif "create_or_verify_venv" in action_name:
+        return "🐍 Created virtual environment", "📁 .venv/ ready"
+        
+    elif "discover_dependencies" in action_name:
+        count = _auto_intelligence["packages_discovered"]
+        return "📂 Discovered dependencies", f"📦 Found {count} packages" if count > 0 else None
+        
+    elif "manage_project_dependencies" in action_name:
+        count = _auto_intelligence["packages_installed"]
+        return "📦 Installed dependencies", f"📦 {count} packages → uv.lock created" if count > 0 else None
+        
+    elif "configure_vscode" in action_name:
+        return "⚙️ Configured VS Code", "📄 .vscode/ settings ready"
+        
+    return f"🔧 {_clean_action_name(action_name)}", None
+
+def _clean_action_name(action_name: str) -> str:
+    """Convert action_name to readable text."""
+    return action_name.replace('_', ' ').replace('ensure ', 'Verifying ').title()
+
+def _write_intelligent_error(message: str):
+    """Write errors using tqdm.write() to preserve visibility."""
+    global _progress_bar
+    error_msg = f"❌ {message}"
+    
+    if _progress_bar:
+        _progress_bar.write(error_msg)
+    else:
+        print(error_msg)
+
+
+def _show_intelligent_summary():
+    """Show summary with automatically collected intelligence."""
+    global _progress_bar, _auto_intelligence
+    
+    if _progress_bar:
+        _progress_bar.set_description("✅ Setup complete!")
+        _progress_bar.close()
+    
+    print("\n" + "="*60)
+    print("✅ PYUVSTARTER SETUP COMPLETE")
+    print("="*60)
+    
+    # Automatically collected files
+    print("\n📁 FILES CREATED:")
+    for file_path in sorted(_auto_intelligence["files_created"]):
+        print(f"   📄 {file_path}")
+    
+    if _auto_intelligence["files_modified"]:
+        print("\n📝 FILES MODIFIED:")
+        for file_path in sorted(_auto_intelligence["files_modified"]):
+            print(f"   📝 {file_path}")
+    
+    # Automatically extracted dependency info
+    if _auto_intelligence["packages_discovered"] > 0:
+        print(f"\n📦 DEPENDENCIES:")
+        print(f"   🔍 Discovered: {_auto_intelligence['packages_discovered']} packages")
+        if _auto_intelligence["packages_installed"] > 0:
+            print(f"   📥 Installed: {_auto_intelligence['packages_installed']} packages")
+        print(f"   🔒 Locked in: uv.lock")
+    
+    # Automatically detected issues
+    if _auto_intelligence["issues"]:
+        print(f"\n⚠️  ISSUES DETECTED:")
+        for issue in _auto_intelligence["issues"][:5]:  # Show first 5
+            print(f"   • {issue}")
+        if len(_auto_intelligence["issues"]) > 5:
+            print(f"   ... and {len(_auto_intelligence['issues']) - 5} more")
+    
+    # Automatically available fixes
+    if _auto_intelligence["auto_fixes_available"]:
+        print(f"\n🔧 AVAILABLE AUTO-FIXES:")
+        for fix in _auto_intelligence["auto_fixes_available"]:
+            print(f"   💡 {fix['description']}: {fix['command']}")
+    
+    # Next steps (only things that CAN'T be automated)
+    print(f"\n🚀 NEXT STEPS:")
+    print(f"   1. Activate environment: source .venv/bin/activate")
+    if _auto_intelligence["auto_fixes_available"]:
+        for fix in _auto_intelligence["auto_fixes_available"]:
+            print(f"   2. {fix['description']}: {fix['command']}")
+    print(f"   3. Start coding: Your environment is ready!")
+    print(f"   4. Commit when ready: git add . && git commit")
+    
+    print(f"\n📋 FULL DETAILS: pyuvstarter_setup_log.json")
+    print("="*60)
+
+
+def set_output_mode(config):
+    """Initialize intelligent output system with config."""
+    global _current_config, _auto_intelligence
+    _current_config = config
+    
+    # Reset intelligence for new run
+    _auto_intelligence = {
+        "files_created": set(),
+        "files_modified": set(),
+        "commands_executed": [],
+        "packages_discovered": 0,
+        "packages_installed": 0,
+        "issues": [],
+        "auto_fixes_available": []
+    }
+
 def _init_log(project_root: Path):
     """Initializes the global log data structure."""
     global _log_data_global
@@ -1000,12 +1307,10 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
         if details and "command" in details:
             error_summary += f", Command: {details['command']}"
         _log_data_global["errors_encountered_summary"].append(error_summary)
-
-    console_prefix = status.upper()
-    if console_prefix == "SUCCESS":
-        console_prefix = "INFO" # Success messages are often displayed as INFO on console
-    details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
-    print(f"{console_prefix}: ({action_name}) {message}{details_str}")
+    
+    # === NEW: AUTOMATIC INTELLIGENCE EXTRACTION ===
+    _extract_intelligence_automatically(action_name, status, message, details)
+    _handle_intelligent_output(action_name, status, message, details)
 
 
 def _get_next_steps_text(config: 'CLICommand') -> str:
@@ -2989,6 +3294,17 @@ class CLICommand(BaseSettings):
         )
     ] = Field(default_factory=list) # Default is an empty list.
 
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Show detailed technical output for debugging and learning.",
+            is_flag=True,
+            rich_help_panel="Execution Control"
+        )
+    ] = False # Default is False, meaning clean progress output is preferred.
+
     @property
     def use_gitignore(self) -> bool:
         """Computed property: True if gitignore functionality is enabled, False otherwise."""
@@ -3078,6 +3394,9 @@ class CLICommand(BaseSettings):
 
         # Initialize the global logging mechanism.
         _init_log(self.project_dir)
+        
+        # Initialize intelligent output system with config
+        set_output_mode(self)
 
         # Define common paths used throughout the orchestration.
         log_file_path = self.project_dir / self.log_file_name
@@ -3590,6 +3909,7 @@ def main(
     full_gitignore_overwrite: Annotated[bool, typer.Option("--full-gitignore-overwrite", help="Overwrite existing .gitignore completely.")] = False,
     no_gitignore: Annotated[bool, typer.Option("--no-gitignore", help="Disable all .gitignore operations.")] = False,
     ignore_patterns: Annotated[List[str], typer.Option("--ignore-pattern", "-i", help="Additional gitignore patterns.")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed technical output for debugging and learning.")] = False,
 ):
     """The main entry point for pyuvstarter.
 
