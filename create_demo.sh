@@ -383,19 +383,15 @@ run_the_demo() {
     echo "🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC..."
     echo "============================================"
     echo ""
-    echo "$ python3 ./pyuvstarter.py \"$(pwd)/$DEMO_DIR\""
+    echo "$ uv run pyuvstarter \"$(pwd)/$DEMO_DIR\""
     echo "🔍 pyuvstarter scanning your project..."
     echo "   📄 Reading scripts/data_analysis.py..."
     echo "   📓 Reading notebooks/ml_experiment.ipynb..."
     echo "   🔎 Discovering dependencies..."
 
     # Actually run pyuvstarter and capture exit code
-    # Use venv if available, otherwise try system Python
-    if [ -f ".venv/bin/activate" ]; then
-        (source .venv/bin/activate && python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR") || PYUVSTARTER_EXIT_CODE=$?
-    else
-        python3 ./pyuvstarter.py "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
-    fi
+    # Use uv run for proper dependency management
+    uv run pyuvstarter "$(pwd)/$DEMO_DIR" || PYUVSTARTER_EXIT_CODE=$?
 
     echo ""
     if [ $PYUVSTARTER_EXIT_CODE -eq 0 ]; then
