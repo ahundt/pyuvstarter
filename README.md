@@ -79,16 +79,27 @@ When you run `pyuvstarter` on a new or existing project directory, it performs a
 
 ### 1. Prerequisites
 
-*   **Python 3:** Preferably 3.8 or newer.
+*   **Python 3:** Requires 3.11 or newer.
 *   **`uv`:** The script will attempt to install `uv` if it's not found. This requires:
     *   **macOS:** Homebrew (`brew`) is preferred, or `curl`.
     *   **Linux:** `curl`.
     *   **Windows:** PowerShell.
 *   **Git:** Required to install `pyuvstarter` from its repository.
 
-### 2. Installation
+### 2. Quick Try (No Installation)
 
-We strongly recommend installing `pyuvstarter` as a command-line tool via `uv`.
+Want to try `pyuvstarter` without installing? Use [`uvx`](https://docs.astral.sh/uv/guides/tools/#running-tools) to run it directly:
+
+```bash
+# Run pyuvstarter directly from GitHub
+uvx --from git+https://github.com/ahundt/pyuvstarter.git pyuvstarter
+```
+
+This downloads and runs `pyuvstarter` in an isolated environment without permanently installing it.
+
+### 3. Installation
+
+For regular use, we recommend installing `pyuvstarter` as a command-line tool via `uv`.
 
 #### Option 1: As a Command-Line Tool (Recommended)
 
@@ -112,7 +123,7 @@ cd pyuvstarter
 uv tool install .
 
 # 3. (Optional) Force reinstall if you want to overwrite an existing install
-uv pip install .
+uv tool install . --force
 ```
 
 #### Uninstalling
@@ -121,16 +132,15 @@ uv tool uninstall pyuvstarter
 uv pip uninstall pyuvstarter
 ```
 
-### 3. Running `pyuvstarter`
+### 4. Running `pyuvstarter`
 
 *   **If installed as a tool:** Navigate to your project's root directory and run:
     ```bash
     pyuvstarter
     ```
-*   **If running as a local script:** Place the `pyuvstarter.py` script in your project root and run it from there.
+*   **If running from a local clone:** Navigate to the cloned pyuvstarter directory and run:
     ```bash
-    # On Linux/macOS, you may need to make it executable first: chmod +x pyuvstarter.py
-    python3 pyuvstarter.py
+    uv run pyuvstarter
     ```
 
 ### Command-Line Arguments
