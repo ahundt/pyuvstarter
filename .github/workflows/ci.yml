@@ -67,6 +67,11 @@ jobs:
       run: |
         uv pip install -e .
 
+    - name: Install pyuvstarter as tool
+      run: |
+        # Install pyuvstarter as a global tool for testing
+        uv tool install .
+
     - name: Test pyuvstarter as installed package
       run: |
         # Test that pyuvstarter can be run as an installed command
