@@ -2684,7 +2684,7 @@ def _manage_project_dependencies(
             _log_action(action_name, "INFO", "DRY RUN: Skipping 'uv add' command.")
         else:
             try:
-                _run_command(["uv", "add"] + final_packages_to_add, "uv_add_bulk")
+                _run_command(["uv", "add"] + final_packages_to_add, "uv_add_bulk", work_dir=project_root)
             except subprocess.CalledProcessError as e:
                 # The "Expert Translator" logic for clear error messages.
                 stderr = e.stderr.lower() if e.stderr else ""
@@ -2762,7 +2762,7 @@ def _manage_project_dependencies(
             if can_install_editable:
                 _log_action(action_name, "INFO", "Performing editable install as requested.")
                 try:
-                    _run_command(["uv", "pip", "install", "-e", "."], "uv_pip_install_editable")
+                    _run_command(["uv", "pip", "install", "-e", "."], "uv_pip_install_editable", work_dir=project_root)
                 except subprocess.CalledProcessError as e:
                     _log_action(action_name, "ERROR", "Failed to install project in editable mode.", details={"exception": str(e)})
             else:
@@ -3048,7 +3048,7 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_manager: Optio
         else:
             try:
                 # Use a single `uv add` command for efficiency.
-                _run_command(["uv", "add"] + sorted(list(packages_to_add)), f"{action_name}_uv_add")
+                _run_command(["uv", "add"] + sorted(list(packages_to_add)), f"{action_name}_uv_add", work_dir=project_root)
                 _log_action(action_name, "SUCCESS", f"Successfully added notebook execution packages: {sorted(list(packages_to_add))}")
                 return True
             except Exception as e:
@@ -3490,7 +3490,7 @@ class CLICommand(BaseSettings):
 
             # Step 4: Create or verify the virtual environment using uv.
             _log_action("create_or_verify_venv", "INFO", f"Creating/ensuring virtual environment '{self.venv_name}'.")
-            _run_command(["uv", "venv", self.venv_name], "create_or_verify_venv_cmd", dry_run=self.dry_run)
+            _run_command(["uv", "venv", self.venv_name], "create_or_verify_venv_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
             venv_python_executable = self.project_dir / self.venv_name / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 
             # Critical check: ensure the venv Python executable exists after creation (if not dry run).
@@ -3746,7 +3746,7 @@ class CLICommand(BaseSettings):
 
             # Step 10: Perform final uv sync to ensure environment matches pyproject.toml.
             _log_action("uv_final_sync", "INFO", "Performing final sync of environment with 'pyproject.toml' and 'uv.lock'.")
-            _run_command(["uv", "sync", "--python", str(venv_python_executable)], "uv_sync_dependencies_cmd", dry_run=self.dry_run)
+            _run_command(["uv", "sync", "--python", str(venv_python_executable)], "uv_sync_dependencies_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
             _log_action("uv_final_sync", "SUCCESS", "Environment synced successfully.")
             major_action_results.append(("uv_final_sync", "SUCCESS"))
 
