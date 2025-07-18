@@ -1053,20 +1053,24 @@ def _count_total_progress_steps():
     # the current configuration and predict which steps will run
     global _current_config
     
-    # Core steps that always run
+    # Core steps that always run - matched to actual SUCCESS log action names
     base_steps = [
-        "script_start", "ensure_uv_installed", "ensure_project_initialized",
+        "ensure_uv_installed", "ensure_project_initialized_with_pyproject",
         "ensure_gitignore", "create_or_verify_venv", "ensure_tool_pipreqs",
-        "ensure_tool_ruff", "run_pre_flight_checks", "discover_dependencies",
-        "manage_project_dependencies", "ensure_notebook_support", "uv_final_sync",
-        "configure_vscode_settings", "ensure_vscode_launch_json", "script_end"
+        "ensure_tool_ruff", "ruff_unused_import_check", "discover_dependencies",
+        "manage_project_dependencies", "ensure_notebook_execution_support", 
+        "uv_final_sync", "configure_vscode_settings", "ensure_vscode_launch_json", 
+        "script_end"
     ]
     
-    # Add conditional steps that may occur
+    # Add conditional steps that may occur during version conflict resolution
     conditional_steps = 0
     
-    # Version conflict resolution (if needed)
-    conditional_steps += 2  # attempt_2, attempt_3
+    # Version conflict resolution attempts (when needed)
+    conditional_steps += 2  # version_conflict_resolution_attempt_2, attempt_3
+    
+    # Note: "discover_dependencies" represents pattern-matched dynamic steps like "discover_deps_{path}"
+    # Pattern matching in _should_show_progress() handles the dynamic action names correctly
     
     return len(base_steps) + conditional_steps
 
