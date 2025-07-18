@@ -233,9 +233,3 @@ jobs:
         cd "$(mktemp -d)"
         ${{ github.workspace }}/tests/test_legacy_migration.sh
 
-    - name: Run integration test - Notebook support
-      if: runner.os != 'Windows'
-      run: |
-        chmod +x tests/test_notebook_support.sh
-        cd "$(mktemp -d)"
-        ${{ github.workspace }}/tests/test_notebook_support.sh

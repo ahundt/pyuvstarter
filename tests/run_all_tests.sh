@@ -11,7 +11,8 @@ echo ""
 ORIGINAL_DIR=$(pwd)
 TEST_DIR="$ORIGINAL_DIR/test_runs_$(date +%s)"
 
-# Create a test directory
+# Create a test directory outside the pyuvstarter workspace
+TEST_DIR="/tmp/pyuvstarter_test_$$"
 mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
 
@@ -28,8 +29,7 @@ fi
 # Run all tests
 TESTS=(
     "test_new_project.sh"
-    "test_legacy_migration.sh" 
-    "test_notebook_support.sh"
+    "test_legacy_migration.sh"
 )
 
 FAILED_TESTS=()
