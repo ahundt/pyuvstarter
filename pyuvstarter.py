@@ -2062,11 +2062,8 @@ def discover_dependencies_in_scope(scan_path: Path, ignore_manager: Optional[Git
     conversion_map: Dict[Path, Path] = {}
     with tempfile.TemporaryDirectory(prefix="pyuvstarter_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        for nb_path in notebook_paths:
-            if "success" in nb_path.name:
-                py_path = temp_dir / (nb_path.name + ".py")
-                py_path.touch()
-                conversion_map[nb_path] = py_path
+        # Convert notebooks to Python scripts for analysis
+        conversion_map = _convert_notebooks_to_py(notebook_paths, temp_dir, scan_path, dry_run)
         if conversion_map:
              _log_action(action_name, "INFO", f"Analyzing {len(conversion_map)} converted notebook(s)...")
              # For temp directory scanning, we don't need gitignore support since these are already filtered converted files
