@@ -253,6 +253,114 @@ Contributions are welcome! Please feel free to open an issue to report a bug or 
 
 **Solution:** For most use cases, install pyuvstarter as a global tool (option 1) or use uvx (option 2) to avoid directory context issues.
 
+## Developer Notes
+
+### Running CI Tests Locally
+
+For contributors who want to test changes before pushing, here are tools to validate and run the CI pipeline locally.
+
+**Quick Start:** Use the provided script to automatically install tools and run CI:
+```bash
+./run_ci_locally.sh
+```
+
+Or follow the manual steps below:
+
+#### 1. Linting GitHub Actions Workflows
+
+Install and run `actionlint` to check for syntax errors and common issues in the workflow files:
+
+```bash
+# Install actionlint (macOS)
+brew install actionlint
+
+# Install actionlint (other platforms)
+# See: https://github.com/rhysd/actionlint/blob/main/docs/install.md
+
+# Run the linter
+actionlint
+
+# Run with shellcheck integration for better shell script validation
+actionlint -shellcheck
+```
+
+#### 2. Running GitHub Actions Locally
+
+Use `act` to run the actual CI workflows on your machine:
+
+```bash
+# Install act (macOS)
+brew install act
+
+# Install act (other platforms)
+# See: https://github.com/nektos/act#installation
+
+# List available workflows and jobs
+act --list
+
+# Run the entire CI workflow
+act
+
+# Run specific job (e.g., test job on ubuntu-latest)
+act -j test
+
+# Run with specific event (e.g., pull request)
+act pull_request
+
+# Dry run to see what would execute
+act -n
+```
+
+**Note:** `act` uses Docker to simulate GitHub Actions runners. Make sure Docker is installed and running.
+
+#### 3. Running Specific Integration Tests
+
+To debug specific integration tests without running the full CI:
+
+```bash
+# Test notebook support locally
+mkdir -p test_notebook_local && cd test_notebook_local
+cat > experiment.ipynb << 'EOF'
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "import pandas as pd\n",
+        "import matplotlib.pyplot as plt\n",
+        "!pip install seaborn"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python",
+      "version": "3.11.0"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
+EOF
+pyuvstarter .
+# Check if pandas, matplotlib, seaborn, and ipykernel were added to pyproject.toml
+```
+
+#### 4. Common CI Debugging Tips
+
+- Check `pyuvstarter_setup_log.json` for detailed execution logs
+- Ensure `pyuvstarter` is installed as a tool: `uv tool install .`
+- Verify tool installation worked: `which pyuvstarter`
+- For notebook parsing issues, check if `jupyter` is available: `which jupyter`
+
 ## License
 
 This project (`pyuvstarter`) is licensed under the Apache License, Version 2.0.
