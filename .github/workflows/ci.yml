@@ -222,110 +222,20 @@ jobs:
     - name: Run integration test - New project
       if: runner.os != 'Windows'
       run: |
-        echo "🧪 INTEGRATION TEST: New project creation"
-        echo "========================================="
-        TEST_FAILED=0
-        mkdir -p test_new_project
-        cd test_new_project
-        echo "📁 Created test directory: $(pwd)"
-        echo "🚀 Running: pyuvstarter ."
-        pyuvstarter .
-        echo ""
-        echo "🔍 Verifying generated files:"
-        if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
-        if test -f .gitignore; then echo "  ✅ .gitignore exists"; else echo "  ❌ .gitignore NOT FOUND"; ((TEST_FAILED++)); fi
-        if test -d .venv; then echo "  ✅ .venv/ directory exists"; else echo "  ❌ .venv/ directory NOT FOUND"; ((TEST_FAILED++)); fi
-        if test -f uv.lock; then echo "  ✅ uv.lock exists"; else echo "  ❌ uv.lock NOT FOUND"; ((TEST_FAILED++)); fi
-        echo ""
-        if [ $TEST_FAILED -eq 0 ]; then
-          echo "✅ New project test passed"
-        else
-          echo "❌ New project test FAILED ($TEST_FAILED checks failed)"
-          exit $TEST_FAILED
-        fi
+        chmod +x tests/test_new_project.sh
+        cd "$(mktemp -d)"
+        ${{ github.workspace }}/tests/test_new_project.sh
 
     - name: Run integration test - Legacy project migration
       if: runner.os != 'Windows'
       run: |
-        echo "🧪 INTEGRATION TEST: Legacy project migration"
-        echo "============================================="
-        TEST_FAILED=0
-        # Create a legacy project with requirements.txt
-        mkdir -p test_legacy_project
-        cd test_legacy_project
-        echo "📁 Created test directory: $(pwd)"
-        echo "📝 Creating legacy project files..."
-        echo "# Legacy ML project" > README.md
-        echo "pandas==2.0.0" > requirements.txt
-        echo "numpy>=1.20" >> requirements.txt
-        echo "import pandas as pd" > analysis.py
-        echo "import numpy as np" >> analysis.py
-        echo "  ✅ Created: README.md, requirements.txt, analysis.py"
-
-        # Run pyuvstarter
-        echo ""
-        echo "🚀 Running: pyuvstarter --dependency-migration auto ."
-        pyuvstarter --dependency-migration auto .
-
-        # Verify migration
-        echo ""
-        echo "🔍 Verifying migration results:"
-        if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
-        if grep -q "pandas" pyproject.toml; then echo "  ✅ pandas found in pyproject.toml"; else echo "  ❌ pandas NOT FOUND in pyproject.toml"; ((TEST_FAILED++)); fi
-        if grep -q "numpy" pyproject.toml; then echo "  ✅ numpy found in pyproject.toml"; else echo "  ❌ numpy NOT FOUND in pyproject.toml"; ((TEST_FAILED++)); fi
-        echo ""
-        if [ $TEST_FAILED -eq 0 ]; then
-          echo "✅ Legacy project migration test passed"
-        else
-          echo "❌ Legacy project migration test FAILED ($TEST_FAILED checks failed)"
-          exit $TEST_FAILED
-        fi
+        chmod +x tests/test_legacy_migration.sh
+        cd "$(mktemp -d)"
+        ${{ github.workspace }}/tests/test_legacy_migration.sh
 
     - name: Run integration test - Notebook support
       if: runner.os != 'Windows'
       run: |
-        echo "🧪 INTEGRATION TEST: Notebook support"
-        echo "====================================="
-        TEST_FAILED=0
-        # Create project with notebook
-        mkdir -p test_notebook_project
-        cd test_notebook_project
-        echo "📁 Created test directory: $(pwd)"
-
-        # Create a simple notebook file
-        echo "📝 Creating Jupyter notebook..."
-        cat > experiment.ipynb << 'EOF'
-        {
-          "cells": [
-            {
-              "cell_type": "code",
-              "source": ["import pandas as pd\n", "import matplotlib.pyplot as plt\n", "!pip install seaborn"]
-            }
-          ],
-          "metadata": {},
-          "nbformat": 4,
-          "nbformat_minor": 5
-        }
-        EOF
-        echo "  ✅ Created: experiment.ipynb"
-
-        # Run pyuvstarter
-        echo ""
-        echo "🚀 Running: pyuvstarter ."
-        pyuvstarter .
-
-        # Verify notebook dependencies were found
-        echo ""
-        echo "🔍 Verifying notebook dependency discovery:"
-        if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
-        if grep -q "pandas" pyproject.toml; then echo "  ✅ pandas found (from import)"; else echo "  ❌ pandas NOT FOUND"; ((TEST_FAILED++)); fi
-        if grep -q "matplotlib" pyproject.toml; then echo "  ✅ matplotlib found (from import)"; else echo "  ❌ matplotlib NOT FOUND"; ((TEST_FAILED++)); fi
-        if grep -q "seaborn" pyproject.toml; then echo "  ✅ seaborn found (from !pip install)"; else echo "  ❌ seaborn NOT FOUND"; ((TEST_FAILED++)); fi
-        if grep -q "ipykernel" pyproject.toml; then echo "  ✅ ipykernel found (notebook support)"; else echo "  ❌ ipykernel NOT FOUND"; ((TEST_FAILED++)); fi
-        echo ""
-        if [ $TEST_FAILED -eq 0 ]; then
-          echo "✅ Notebook support test passed"
-        else
-          echo "❌ Notebook support test FAILED ($TEST_FAILED checks failed)"
-          exit $TEST_FAILED
-        fi
+        chmod +x tests/test_notebook_support.sh
+        cd "$(mktemp -d)"
+        ${{ github.workspace }}/tests/test_notebook_support.sh
