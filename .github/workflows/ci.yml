@@ -80,6 +80,9 @@ jobs:
     - name: Test pyuvstarter in isolated environment (Unix)
       if: runner.os != 'Windows'
       run: |
+        echo "🧪 INTEGRATION TEST: Isolated environment"
+        echo "========================================="
+        TEST_FAILED=0
         # Create a completely separate test environment
         cd ${{ runner.temp }}
         uv venv test-env
@@ -87,15 +90,28 @@ jobs:
         # Install from the built wheel using uv
         uv pip install ${{ github.workspace }}/dist/pyuvstarter-*.whl
         # Test the installed command
+        echo "🔍 Testing installed command:"
         pyuvstarter --version
         mkdir isolated-test
         cd isolated-test
+        echo "📁 Running pyuvstarter in isolated directory: $(pwd)"
         pyuvstarter
-        test -f pyproject.toml || exit 1
+        echo "🔍 Verifying generated files:"
+        if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
+        echo ""
+        if [ $TEST_FAILED -eq 0 ]; then
+          echo "✅ Isolated environment test passed"
+        else
+          echo "❌ Isolated environment test FAILED ($TEST_FAILED checks failed)"
+          exit $TEST_FAILED
+        fi
 
     - name: Test pyuvstarter in isolated environment (Windows)
       if: runner.os == 'Windows'
       run: |
+        Write-Host "🧪 INTEGRATION TEST: Isolated environment (Windows)"
+        Write-Host "================================================="
+        $TEST_FAILED = 0
         # Create a completely separate test environment
         cd $env:RUNNER_TEMP
         uv venv test-env
@@ -104,11 +120,26 @@ jobs:
         $wheel = Get-ChildItem "${{ github.workspace }}\dist\*.whl" | Select-Object -First 1
         uv pip install $wheel.FullName
         # Test the installed command
+        Write-Host "🔍 Testing installed command:"
         pyuvstarter --version
         mkdir isolated-test
         cd isolated-test
+        Write-Host "📁 Running pyuvstarter in isolated directory: $(Get-Location)"
         pyuvstarter
-        if (-not (Test-Path "pyproject.toml")) { exit 1 }
+        Write-Host "🔍 Verifying generated files:"
+        if (Test-Path "pyproject.toml") { 
+          Write-Host "  ✅ pyproject.toml exists" 
+        } else { 
+          Write-Host "  ❌ pyproject.toml NOT FOUND"
+          $TEST_FAILED++
+        }
+        Write-Host ""
+        if ($TEST_FAILED -eq 0) {
+          Write-Host "✅ Isolated environment test passed"
+        } else {
+          Write-Host "❌ Isolated environment test FAILED ($TEST_FAILED checks failed)"
+          exit $TEST_FAILED
+        }
 
     - name: Lint check with ruff (via uvx)
       # Only check for actual errors, not style issues
@@ -162,55 +193,107 @@ jobs:
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
       run: |
+        Write-Host "🧪 WINDOWS UNIT TEST: Basic project creation"
+        Write-Host "==========================================="
+        $TEST_FAILED = 0
         # Windows doesn't support the bash demo script, so run pyuvstarter directly
         uv run pyuvstarter --help
         mkdir test_windows
         cd test_windows
+        Write-Host "📁 Created test directory: $(Get-Location)"
+        Write-Host "🚀 Running: uv run --directory .. pyuvstarter"
         uv run --directory .. pyuvstarter
-        if (Test-Path "pyproject.toml") { echo "✅ Windows test passed" } else { exit 1 }
+        Write-Host ""
+        Write-Host "🔍 Verifying generated files:"
+        if (Test-Path "pyproject.toml") { 
+          Write-Host "  ✅ pyproject.toml exists" 
+        } else { 
+          Write-Host "  ❌ pyproject.toml NOT FOUND"
+          $TEST_FAILED++
+        }
+        Write-Host ""
+        if ($TEST_FAILED -eq 0) {
+          Write-Host "✅ Windows test passed"
+        } else {
+          Write-Host "❌ Windows test FAILED ($TEST_FAILED checks failed)"
+          exit $TEST_FAILED
+        }
 
     - name: Run integration test - New project
       if: runner.os != 'Windows'
       run: |
+        echo "🧪 INTEGRATION TEST: New project creation"
+        echo "========================================="
+        TEST_FAILED=0
         mkdir -p test_new_project
         cd test_new_project
-        uv run --directory .. pyuvstarter
-        # Verify key outputs
-        test -f pyproject.toml || exit 1
-        test -f .gitignore || exit 1
-        test -d .venv || exit 1
-        test -f uv.lock || exit 1
-        echo "✅ New project test passed"
+        echo "📁 Created test directory: $(pwd)"
+        echo "🚀 Running: uv run --directory .. pyuvstarter ."
+        uv run --directory .. pyuvstarter .
+        echo ""
+        echo "🔍 Verifying generated files:"
+        if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
+        if test -f .gitignore; then echo "  ✅ .gitignore exists"; else echo "  ❌ .gitignore NOT FOUND"; ((TEST_FAILED++)); fi
+        if test -d .venv; then echo "  ✅ .venv/ directory exists"; else echo "  ❌ .venv/ directory NOT FOUND"; ((TEST_FAILED++)); fi
+        if test -f uv.lock; then echo "  ✅ uv.lock exists"; else echo "  ❌ uv.lock NOT FOUND"; ((TEST_FAILED++)); fi
+        echo ""
+        if [ $TEST_FAILED -eq 0 ]; then
+          echo "✅ New project test passed"
+        else
+          echo "❌ New project test FAILED ($TEST_FAILED checks failed)"
+          exit $TEST_FAILED
+        fi
 
     - name: Run integration test - Legacy project migration
       if: runner.os != 'Windows'
       run: |
+        echo "🧪 INTEGRATION TEST: Legacy project migration"
+        echo "============================================="
+        TEST_FAILED=0
         # Create a legacy project with requirements.txt
         mkdir -p test_legacy_project
         cd test_legacy_project
+        echo "📁 Created test directory: $(pwd)"
+        echo "📝 Creating legacy project files..."
         echo "# Legacy ML project" > README.md
         echo "pandas==2.0.0" > requirements.txt
         echo "numpy>=1.20" >> requirements.txt
         echo "import pandas as pd" > analysis.py
         echo "import numpy as np" >> analysis.py
+        echo "  ✅ Created: README.md, requirements.txt, analysis.py"
 
         # Run pyuvstarter
-        uv run --directory .. pyuvstarter --dependency-migration auto
+        echo ""
+        echo "🚀 Running: uv run --directory .. pyuvstarter --dependency-migration auto ."
+        uv run --directory .. pyuvstarter --dependency-migration auto .
 
         # Verify migration
-        test -f pyproject.toml || exit 1
-        grep -q "pandas" pyproject.toml || exit 1
-        grep -q "numpy" pyproject.toml || exit 1
-        echo "✅ Legacy project migration test passed"
+        echo ""
+        echo "🔍 Verifying migration results:"
+        if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
+        if grep -q "pandas" pyproject.toml; then echo "  ✅ pandas found in pyproject.toml"; else echo "  ❌ pandas NOT FOUND in pyproject.toml"; ((TEST_FAILED++)); fi
+        if grep -q "numpy" pyproject.toml; then echo "  ✅ numpy found in pyproject.toml"; else echo "  ❌ numpy NOT FOUND in pyproject.toml"; ((TEST_FAILED++)); fi
+        echo ""
+        if [ $TEST_FAILED -eq 0 ]; then
+          echo "✅ Legacy project migration test passed"
+        else
+          echo "❌ Legacy project migration test FAILED ($TEST_FAILED checks failed)"
+          exit $TEST_FAILED
+        fi
 
     - name: Run integration test - Notebook support
       if: runner.os != 'Windows'
       run: |
+        echo "🧪 INTEGRATION TEST: Notebook support"
+        echo "====================================="
+        TEST_FAILED=0
         # Create project with notebook
         mkdir -p test_notebook_project
         cd test_notebook_project
+        echo "📁 Created test directory: $(pwd)"
 
         # Create a simple notebook file
+        echo "📝 Creating Jupyter notebook..."
         cat > experiment.ipynb << 'EOF'
         {
           "cells": [
@@ -224,14 +307,25 @@ jobs:
           "nbformat_minor": 5
         }
         EOF
+        echo "  ✅ Created: experiment.ipynb"
 
         # Run pyuvstarter
-        uv run --directory .. pyuvstarter
+        echo ""
+        echo "🚀 Running: uv run --directory .. pyuvstarter ."
+        uv run --directory .. pyuvstarter .
 
         # Verify notebook dependencies were found
-        test -f pyproject.toml || exit 1
-        grep -q "pandas" pyproject.toml || exit 1
-        grep -q "matplotlib" pyproject.toml || exit 1
-        grep -q "seaborn" pyproject.toml || exit 1
-        grep -q "ipykernel" pyproject.toml || exit 1
-        echo "✅ Notebook support test passed"
+        echo ""
+        echo "🔍 Verifying notebook dependency discovery:"
+        if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
+        if grep -q "pandas" pyproject.toml; then echo "  ✅ pandas found (from import)"; else echo "  ❌ pandas NOT FOUND"; ((TEST_FAILED++)); fi
+        if grep -q "matplotlib" pyproject.toml; then echo "  ✅ matplotlib found (from import)"; else echo "  ❌ matplotlib NOT FOUND"; ((TEST_FAILED++)); fi
+        if grep -q "seaborn" pyproject.toml; then echo "  ✅ seaborn found (from !pip install)"; else echo "  ❌ seaborn NOT FOUND"; ((TEST_FAILED++)); fi
+        if grep -q "ipykernel" pyproject.toml; then echo "  ✅ ipykernel found (notebook support)"; else echo "  ❌ ipykernel NOT FOUND"; ((TEST_FAILED++)); fi
+        echo ""
+        if [ $TEST_FAILED -eq 0 ]; then
+          echo "✅ Notebook support test passed"
+        else
+          echo "❌ Notebook support test FAILED ($TEST_FAILED checks failed)"
+          exit $TEST_FAILED
+        fi
