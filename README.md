@@ -255,111 +255,59 @@ Contributions are welcome! Please feel free to open an issue to report a bug or 
 
 ## Developer Notes
 
-### Running CI Tests Locally
+### Prerequisites
 
-For contributors who want to test changes before pushing, here are tools to validate and run the CI pipeline locally.
-
-**Quick Start:** Use the provided script to automatically install tools and run CI:
+Before running tests, ensure pyuvstarter is installed:
 ```bash
-./run_ci_locally.sh
+# Install pyuvstarter as a global tool
+uv tool install .
+
+# Verify installation
+which pyuvstarter
 ```
 
-Or follow the manual steps below:
+### Running Tests
 
-#### 1. Linting GitHub Actions Workflows
+#### Test Structure
+- `tests/` - Integration tests for core functionality
+- `create_demo.sh --unit-test` - Comprehensive test suite including notebook parsing
+- `create_demo2.sh --unit-test` - Extended tests with edge cases
 
-Install and run `actionlint` to check for syntax errors and common issues in the workflow files:
-
+#### Run Tests Locally
 ```bash
-# Install actionlint (macOS)
-brew install actionlint
+# Run all integration tests
+./tests/run_all_tests.sh
 
-# Install actionlint (other platforms)
-# See: https://github.com/rhysd/actionlint/blob/main/docs/install.md
+# Run specific tests
+./tests/test_new_project.sh      # Empty project initialization
+./tests/test_legacy_migration.sh  # Requirements.txt migration
 
-# Run the linter
-actionlint
-
-# Run with shellcheck integration for better shell script validation
-actionlint -shellcheck
+# Run comprehensive test suites (recommended)
+./create_demo.sh --unit-test
+./create_demo2.sh --unit-test
 ```
 
-#### 2. Running GitHub Actions Locally
+### CI Validation
 
-Use `act` to run the actual CI workflows on your machine:
-
+Check workflow syntax before pushing:
 ```bash
-# Install act (macOS)
-brew install act
+# Install actionlint
+brew install actionlint          # macOS/Linux with Homebrew
+# Other platforms: https://github.com/rhysd/actionlint
 
-# Install act (other platforms)
-# See: https://github.com/nektos/act#installation
-
-# List available workflows and jobs
-act --list
-
-# Run the entire CI workflow
-act
-
-# Run specific job (e.g., test job on ubuntu-latest)
-act -j test
-
-# Run with specific event (e.g., pull request)
-act pull_request
-
-# Dry run to see what would execute
-act -n
+# Validate workflows
+actionlint                       # Basic check
+actionlint -shellcheck          # With shell script validation
 ```
 
-**Note:** `act` uses Docker to simulate GitHub Actions runners. Make sure Docker is installed and running.
+### Debugging Failed Tests
 
-#### 3. Running Specific Integration Tests
-
-To debug specific integration tests without running the full CI:
-
-```bash
-# Test notebook support locally
-mkdir -p test_notebook_local && cd test_notebook_local
-cat > experiment.ipynb << 'EOF'
-{
-  "cells": [
-    {
-      "cell_type": "code",
-      "execution_count": null,
-      "metadata": {},
-      "outputs": [],
-      "source": [
-        "import pandas as pd\n",
-        "import matplotlib.pyplot as plt\n",
-        "!pip install seaborn"
-      ]
-    }
-  ],
-  "metadata": {
-    "kernelspec": {
-      "display_name": "Python 3",
-      "language": "python",
-      "name": "python3"
-    },
-    "language_info": {
-      "name": "python",
-      "version": "3.11.0"
-    }
-  },
-  "nbformat": 4,
-  "nbformat_minor": 5
-}
-EOF
-pyuvstarter .
-# Check if pandas, matplotlib, seaborn, and ipykernel were added to pyproject.toml
-```
-
-#### 4. Common CI Debugging Tips
-
-- Check `pyuvstarter_setup_log.json` for detailed execution logs
-- Ensure `pyuvstarter` is installed as a tool: `uv tool install .`
-- Verify tool installation worked: `which pyuvstarter`
-- For notebook parsing issues, check if `jupyter` is available: `which jupyter`
+1. **Check logs**: Look for `pyuvstarter_setup_log.json` in the test directory
+2. **Run verbose**: Set `PYUVSTARTER_LOG_LEVEL=DEBUG` before running tests
+3. **Test isolation**: Tests create temporary directories to avoid conflicts
+4. **Common issues**:
+   - Missing dependencies: Run `uv sync` in the project root
+   - Tool not found: Ensure `~/.local/bin` is in your PATH
 
 ## License
 
