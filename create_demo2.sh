@@ -40,8 +40,9 @@ SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # === CONFIGURATION ===
-# Use absolute path for demo directory to ensure consistent location
-DEMO_DIR="$SCRIPT_DIR/pyuvstarter_demo_project2"
+# Create demo directory outside workspace to prevent contamination
+DEMO_BASE=$(mktemp -d -t "pyuv_demo")
+DEMO_DIR="$DEMO_BASE/pyuvstarter_demo"
 OUTPUT_BASENAME="pyuvstarter_demo2"
 PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run pyuvstarter}"
 
@@ -321,18 +322,13 @@ EOF
         #       2. This will trigger conflict (numpy 2.3.1 requires Python 3.11+)
         #       3. The demo should show pyuvstarter automatically retrying with --mode no-pin
         cat > "$DEMO_DIR/requirements.txt" << 'EOF'
-# Production ML Dependencies - INCOMPLETE & OUTDATED
-# Last updated: 2021 (obviously needs work)
+# Production ML Dependencies - INCOMPLETE & OUTDATED (Last updated: 2021)
 
 # Core ML libraries
 numpy==1.19.0  # Old version - security vulnerabilities!
-# tensorflow>=2.0  # Too heavy for demos - commented out
+# pandas  # Commented out but used EVERYWHERE in the code
 # torch  # TODO: add pytorch (never got around to it)
 sklearn  # WRONG! Package is 'scikit-learn' not 'sklearn'
-
-# Data processing
-# pandas  # Commented out but used EVERYWHERE in the code
-# polars  # Modern alternative - forgot to add
 
 # Visualization (partially missing)
 matplotlib  # No version pin - risky!
@@ -341,22 +337,16 @@ matplotlib  # No version pin - risky!
 
 # Web frameworks
 requests==2.25.1
-# fastapi  # API server - missing
-# streamlit  # Dashboard - missing but used!
-# dash  # Alternative dashboard - also missing
+# fastapi, streamlit, dash  # API server, dashboards - missing
 
 # Utilities
 python-dotenv
-# rich  # Pretty printing - missing
-# typer  # CLI framework - missing
-# loguru  # Better logging - missing
+# rich, typer, loguru  # Pretty printing, CLI framework, logging - missing
 
 # Critical missing categories:
 # - Jupyter & notebook support
-# - Database drivers (psycopg2, pymongo, etc)
-# - Cloud SDKs (boto3, google-cloud, azure)
-# - Testing frameworks
-# - ML experiment tracking (wandb, mlflow)
+# - Database drivers (psycopg2, pymongo, etc), Cloud SDKs (boto3, google-cloud, azure)
+# - Testing frameworks, ML experiment tracking (wandb, mlflow)
 EOF
     fi
 }
@@ -862,7 +852,7 @@ $(
     # Parse TEST_RESULTS and create actionable test cases
     echo "$TEST_RESULTS" | tr ';' '\n' | while IFS=: read -r name result code; do
         [[ -z "$name" ]] && continue
-        
+
         # Map test names to actionable descriptions
         case "$name" in
             "structure") test_desc="Demo project structure creation" ;;
@@ -881,12 +871,12 @@ $(
             "all_requirements") test_desc="Requirements processing" ;;
             *) test_desc="$name" ;;
         esac
-        
+
         if [ "$result" = "PASSED" ]; then
             echo "    <testcase name=\"$test_desc\" classname=\"pyuvstarter.$name\"/>"
         else
             echo "    <testcase name=\"$test_desc\" classname=\"pyuvstarter.$name\">"
-            
+
             # Generate actionable failure messages
             case "$name" in
                 "structure")
@@ -941,7 +931,7 @@ $(
                     echo "      </failure>"
                     ;;
             esac
-            
+
             echo "    </testcase>"
         fi
     done
@@ -1045,11 +1035,12 @@ main() {
     sleep 0.5
 
     echo "Watch pyuvstarter discover and fix everything automatically..."
-    type_command "uv run --directory $PARENT_DIR pyuvstarter ."
+    type_command "pyuvstarter ."
     sleep 0.5
 
     # ACTUALLY RUN PYUVSTARTER - show real clean output!
-    uv run --directory "$PARENT_DIR" pyuvstarter .
+    # Run from demo directory using development version of pyuvstarter
+    (uv run --directory "$PARENT_DIR" pyuvstarter  "$DEMO_SCRIPT_DIR")
 
     echo ""
     sleep 3
@@ -1092,7 +1083,7 @@ main() {
     sleep 0.5
 
     echo "What pyuvstarter created:"
-    type_command "ls -la . | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
+    type_command "ls -la | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
 
     # Actually run the command and show real results
     ls -la . | grep -E '(pyproject|venv|lock|gitignore|vscode)' | while read -r line; do
@@ -1100,7 +1091,7 @@ main() {
     done
 
     echo ""
-    # Check and report what was actually created
+    # Check and report what was actually created (current directory in demo context)
     [ -f "pyproject.toml" ] && echo -e "${C_GREEN}   ✅ pyproject.toml   ${C_DIM}# Modern Python configuration${C_RESET}" || echo -e "${C_RED}   ❌ pyproject.toml   ${C_DIM}# Not found!${C_RESET}"
     [ -d ".venv" ] && echo -e "${C_GREEN}   ✅ .venv/           ${C_DIM}# Isolated virtual environment${C_RESET}" || echo -e "${C_RED}   ❌ .venv/           ${C_DIM}# Not found!${C_RESET}"
     [ -f "uv.lock" ] && echo -e "${C_GREEN}   ✅ uv.lock          ${C_DIM}# Reproducible dependency versions${C_RESET}" || echo -e "${C_RED}   ❌ uv.lock          ${C_DIM}# Not found!${C_RESET}"
