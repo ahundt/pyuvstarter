@@ -212,10 +212,46 @@ Contributions are welcome! Please feel free to open an issue to report a bug or 
 
 ## Troubleshooting
 
+### Common Issues
+
 *   If `uv` or other tools fail to install, check the console output for hints.
 *   If `pipreqs` misidentifies a dependency, you can manually edit `pyproject.toml` and then run `uv sync` to add the correct package or `uv remove <incorrect-package>` to remove it.
 *   **For notebook issues:** The script's most reliable detection method requires `jupyter`. If it's missing, `pyuvstarter` uses a fallback parser. For best results, install it via `uv pip install jupyter`.
 *   Always check the `pyuvstarter_setup_log.json` file for detailed error messages.
+
+### Running pyuvstarter in Different Contexts
+
+**Issue:** "command not found: pyuvstarter" or pyuvstarter creates files in the wrong directory.
+
+**Background:** `pyuvstarter` can be run in several ways, each with different implications for where it's available and which directory it operates on:
+
+1. **As a globally installed tool (Recommended)**
+   ```bash
+   # Install globally
+   uv tool install git+https://github.com/ahundt/pyuvstarter.git
+   # Run in any directory
+   pyuvstarter .
+   ```
+
+2. **Using uvx (Quick try without installation)**
+   ```bash
+   # Run directly without installing
+   uvx --from git+https://github.com/ahundt/pyuvstarter.git pyuvstarter .
+   ```
+
+3. **From within the pyuvstarter project directory**
+   ```bash
+   # If you've cloned pyuvstarter
+   cd /path/to/pyuvstarter
+   uv run pyuvstarter /path/to/your/project
+   ```
+
+**Important:** When using `uv run --directory <dir>`, be aware that this changes the working directory before executing the command. For example:
+- `uv run --directory .. pyuvstarter` runs pyuvstarter with the parent directory as the working directory
+- `uv run --directory .. pyuvstarter .` still operates on the parent directory (not the original directory)
+- To specify the target directory explicitly: `uv run --directory .. pyuvstarter "$(pwd)"`
+
+**Solution:** For most use cases, install pyuvstarter as a global tool (option 1) or use uvx (option 2) to avoid directory context issues.
 
 ## License
 

@@ -201,8 +201,8 @@ jobs:
         mkdir test_windows
         cd test_windows
         Write-Host "📁 Created test directory: $(Get-Location)"
-        Write-Host "🚀 Running: uv run --directory .. pyuvstarter"
-        uv run --directory .. pyuvstarter
+        Write-Host "🚀 Running: pyuvstarter ."
+        pyuvstarter .
         Write-Host ""
         Write-Host "🔍 Verifying generated files:"
         if (Test-Path "pyproject.toml") { 
@@ -228,8 +228,8 @@ jobs:
         mkdir -p test_new_project
         cd test_new_project
         echo "📁 Created test directory: $(pwd)"
-        echo "🚀 Running: uv run --directory .. pyuvstarter ."
-        uv run --directory .. pyuvstarter .
+        echo "🚀 Running: pyuvstarter ."
+        pyuvstarter .
         echo ""
         echo "🔍 Verifying generated files:"
         if test -f pyproject.toml; then echo "  ✅ pyproject.toml exists"; else echo "  ❌ pyproject.toml NOT FOUND"; ((TEST_FAILED++)); fi
@@ -264,8 +264,8 @@ jobs:
 
         # Run pyuvstarter
         echo ""
-        echo "🚀 Running: uv run --directory .. pyuvstarter --dependency-migration auto ."
-        uv run --directory .. pyuvstarter --dependency-migration auto .
+        echo "🚀 Running: pyuvstarter --dependency-migration auto ."
+        pyuvstarter --dependency-migration auto .
 
         # Verify migration
         echo ""
@@ -311,8 +311,8 @@ jobs:
 
         # Run pyuvstarter
         echo ""
-        echo "🚀 Running: uv run --directory .. pyuvstarter ."
-        uv run --directory .. pyuvstarter .
+        echo "🚀 Running: pyuvstarter ."
+        pyuvstarter .
 
         # Verify notebook dependencies were found
         echo ""
