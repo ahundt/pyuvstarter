@@ -276,7 +276,7 @@ try:
     HAS_IMPORTLIB_METADATA = True
 except ImportError:
     HAS_IMPORTLIB_METADATA = False
-    
+
 # --- Third-Party Imports ---
 # Handle missing dependencies gracefully
 
@@ -915,12 +915,31 @@ _log_data_global = {}
 
 # --- Intelligent Output System Global State ---
 # Global state for intelligent output system
+
+# Clean, scannable static mappings for action status
+ACTION_STATUS_MAPPING = {
+    "ensure_uv_installed": ("🔧 Verifying uv installation", "🔧 Verified uv installation"),
+    "ensure_project_initialized_with_pyproject": ("📁 Initializing project with pyproject.toml", "📁 Initialized project with pyproject.toml"),
+    "ensure_gitignore": ("📝 Setting up .gitignore", "📝 Set up .gitignore"),
+    "create_or_verify_venv": ("🐍 Creating virtual environment .venv/", "🐍 Created virtual environment .venv/"),
+    "ensure_tool_pipreqs": ("🔧 Installing pipreqs via uv tool install", "🔧 Installed pipreqs via uv tool install"),
+    "ensure_tool_ruff": ("🔧 Installing ruff via uv tool install", "🔧 Installed ruff via uv tool install"),
+    "ruff_unused_import_check": ("🔍 Running ruff pre-flight checks", "🔍 Completed ruff pre-flight checks"),
+    "manage_project_dependencies": ("📦 Installing project dependencies", "📦 Installed project dependencies"),
+    "ensure_notebook_execution_support": ("📓 Setting up notebook support", "📓 Set up notebook support"),
+    "configure_vscode_settings": ("⚙️ Configuring .vscode/settings.json", "⚙️ Configured .vscode/settings.json"),
+    "ensure_vscode_launch_json": ("⚙️ Setting up .vscode/launch.json", "⚙️ Set up .vscode/launch.json"),
+    "uv_final_sync": ("🔧 Syncing environment with uv.lock", "🔧 Synced environment with uv.lock"),
+    "version_conflict_resolved": ("⚡ Resolving version conflicts", "⚡ Resolved version conflicts"),
+    "script_end": ("🎉 Setup complete!", "🎉 Setup complete!"),
+}
+
 _progress_bar = None
 _current_config = None
 _progress_steps_seen = set()  # Track all progress steps as they occur
 _auto_intelligence = {
     "files_created": set(),
-    "files_modified": set(), 
+    "files_modified": set(),
     "commands_executed": [],
     "packages_discovered": 0,
     "packages_installed": 0,
@@ -937,15 +956,20 @@ PROGRESS_PATTERNS = [
 
 def _should_show_progress(action_name: str) -> bool:
     """Determine if action should show progress based on patterns."""
-    return any(action_name.startswith(pattern) or action_name == pattern 
+    # Exclude automatic command execution logs (they have suffixes like _exec, _version_check, etc.)
+    if any(suffix in action_name for suffix in ["_exec", "_version_check", "_cmd", "_uv_add", "_uv_tool_install"]):
+        return False
+
+    # script_end is included in progress tracking as the final step
+
+    return any(action_name.startswith(pattern) or action_name == pattern
                for pattern in PROGRESS_PATTERNS)
 
 def set_output_mode(config):
     """Initialize intelligent output system with config."""
-    global _current_config, _auto_intelligence, _pending_completion
+    global _current_config, _auto_intelligence
     _current_config = config
-    _pending_completion = None
-    
+
     # Reset intelligence for new run
     _auto_intelligence = {
         "files_created": set(),
@@ -960,10 +984,10 @@ def set_output_mode(config):
 def _extract_intelligence_automatically(action_name: str, status: str, message: str, details: dict):
     """Extract intelligence from existing _log_action patterns."""
     global _auto_intelligence, _current_config
-    
+
     if status != "SUCCESS":
         return
-    
+
     # File creation patterns (extracted from analysis of 191 _log_action calls)
     if action_name.endswith("_init") or "initialized" in message.lower():
         _auto_intelligence["files_created"].add("pyproject.toml")
@@ -976,15 +1000,15 @@ def _extract_intelligence_automatically(action_name: str, status: str, message: 
     elif "uv.lock" in message or ("uv_add" in action_name and "installed" in message.lower()):
         _auto_intelligence["files_created"].add("uv.lock")
         _auto_intelligence["files_modified"].add("pyproject.toml")
-    
+
     # Command result extraction
     if details and "command" in details:
         cmd = details["command"]
         _auto_intelligence["commands_executed"].append(cmd)
-        
+
         if "stdout" in details:
             _extract_results_from_command_output(cmd, details["stdout"])
-    
+
     # Issue detection
     if "unused imports" in message.lower():
         _extract_unused_imports_automatically(details)
@@ -994,13 +1018,13 @@ def _extract_intelligence_automatically(action_name: str, status: str, message: 
 def _extract_results_from_command_output(command: str, output: str):
     """Extract concrete results from command outputs automatically."""
     global _auto_intelligence
-    
+
     # Extract package counts from pipreqs output
     if "pipreqs" in command and output:
         package_lines = [line for line in output.split('\n') if '==' in line]
         _auto_intelligence["packages_discovered"] = len(package_lines)
-    
-    # Extract installation results from uv add output  
+
+    # Extract installation results from uv add output
     elif "uv add" in command and "installed" in output.lower():
         import re
         match = re.search(r'installed\s+(\d+)\s+package', output.lower())
@@ -1010,33 +1034,33 @@ def _extract_results_from_command_output(command: str, output: str):
 def _extract_unused_imports_automatically(details: dict):
     """Extract unused imports automatically from existing ruff details."""
     global _auto_intelligence
-    
+
     if details and "unused_imports_details" in details:
         for file_path, line_num, import_desc in details["unused_imports_details"]:
             rel_path = file_path.split("/")[-1] if "/" in file_path else file_path
             _auto_intelligence["issues"].append(f"Unused import: {rel_path}:{line_num} - {import_desc}")
-        
+
         # Automatically suggest fix since ruff --fix is safe for unused imports
         _auto_intelligence["auto_fixes_available"].append({
             "issue": "unused imports",
-            "command": "uvx ruff check . --fix", 
+            "command": "uvx ruff check . --fix",
             "description": "Remove unused imports automatically",
             "safe": True
         })
 
 def _init_progress_bar():
     """Initialize progress bar with dynamically counted total steps."""
-    global _progress_bar, _progress_steps_seen, _pending_completion
+    global _progress_bar, _progress_steps_seen, _previous_action_name
     version = _get_project_version()
     header = f"🚀 PYUVSTARTER v{version}"
-    
-    # Reset step tracking and pending completion for new run
+
+    # Reset step tracking and previous action for new run
     _progress_steps_seen.clear()
-    _pending_completion = None
-    
+    _previous_action_name = None
+
     # Count total progress steps by dry-run scanning the execution
     total_steps = _count_total_progress_steps()
-    
+
     try:
         _progress_bar = tqdm(
             total=total_steps,
@@ -1054,35 +1078,35 @@ def _count_total_progress_steps():
     # This is a simplified heuristic - in practice, you'd want to analyze
     # the current configuration and predict which steps will run
     global _current_config
-    
+
     # Core steps that always run - matched to actual SUCCESS log action names
     base_steps = [
         "ensure_uv_installed", "ensure_project_initialized_with_pyproject",
         "ensure_gitignore", "create_or_verify_venv", "ensure_tool_pipreqs",
         "ensure_tool_ruff", "ruff_unused_import_check", "discover_dependencies",
-        "manage_project_dependencies", "ensure_notebook_execution_support", 
-        "uv_final_sync", "configure_vscode_settings", "ensure_vscode_launch_json", 
+        "manage_project_dependencies", "ensure_notebook_execution_support",
+        "uv_final_sync", "configure_vscode_settings", "ensure_vscode_launch_json",
         "script_end"
     ]
-    
+
     # Add conditional steps that may occur during version conflict resolution
     conditional_steps = 0
-    
-    # Version conflict resolution attempts (when needed)
+
+    # Version conflict resolution attempts (when needed) - keep these to prevent progress reversal
     conditional_steps += 2  # version_conflict_resolution_attempt_2, attempt_3
-    
+
     # Note: "discover_dependencies" represents pattern-matched dynamic steps like "discover_deps_{path}"
     # Pattern matching in _should_show_progress() handles the dynamic action names correctly
-    
+
     return len(base_steps) + conditional_steps
 
 def _handle_intelligent_output(action_name: str, status: str, message: str, details: dict):
     """Handle output with automatic intelligence."""
     global _progress_bar, _current_config
-    
+
     # Get verbose mode safely
     verbose_mode = getattr(_current_config, 'verbose', False)  # Default to clean for Progressive Disclosure
-    
+
     if verbose_mode:
         # EXISTING OUTPUT - exactly as before (lines 861-865)
         console_prefix = status.upper()
@@ -1090,8 +1114,12 @@ def _handle_intelligent_output(action_name: str, status: str, message: str, deta
             console_prefix = "INFO"
         details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
         print(f"{console_prefix}: ({action_name}) {message}{details_str}")
+
+        # Still show summary at script end even in verbose mode
+        if action_name == "script_end":
+            _show_intelligent_summary()
         return
-    
+
     # INTELLIGENT OUTPUT with automatic details
     if action_name == "script_start":
         _init_progress_bar()
@@ -1099,66 +1127,53 @@ def _handle_intelligent_output(action_name: str, status: str, message: str, deta
         _write_intelligent_error(message)
     elif _should_show_progress(action_name) and status == "SUCCESS":
         _update_progress_with_auto_intelligence(action_name)
-    elif action_name == "script_end":
-        _show_intelligent_summary()
+        # Show summary after script_end progress update
+        if action_name == "script_end":
+            _show_intelligent_summary()
 
 # Global state for proper temporal flow
-_pending_completion = None
+_previous_action_name = None
 
 def _update_progress_with_auto_intelligence(action_name: str):
     """Update progress with hourglass/checkmark visual indicators and proper temporal flow."""
-    global _progress_bar, _pending_completion, _progress_steps_seen
-    
+    global _progress_bar, _previous_action_name, _progress_steps_seen
+
     # Only update if this is a new step we haven't seen before
     if action_name not in _progress_steps_seen:
         _progress_steps_seen.add(action_name)
-        
+
         if _progress_bar:
             # 1. Write completion of previous step (with checkmark)
-            if _pending_completion:
-                _progress_bar.write(f"✅ {_pending_completion}")
-            
-            # 2. Get current step information
-            present_status, past_status = _get_intelligent_status_detail(action_name)
-            
+            if _previous_action_name:
+                _, past_status = _get_intelligent_status_detail(_previous_action_name)
+                _progress_bar.write(f"✅ {past_status}")
+
+            # 2. Get current step information and show progress
+            present_status, _ = _get_intelligent_status_detail(action_name)
+
             # 3. Show current progress with appropriate icon
             if action_name == "script_end":
                 _progress_bar.set_description(f"✅ {present_status}")
             else:
                 _progress_bar.set_description(f"⏳ {present_status}")
             _progress_bar.update(1)
-            
-            # 4. Save completion for next iteration
-            _pending_completion = past_status
-            
+
+            # 4. Remember this action for next iteration
+            _previous_action_name = action_name
+
         else:
             # Non-progress-bar mode
-            if _pending_completion:
-                print(f"✅ {_pending_completion}")
-            
-            _, past_status = _get_intelligent_status_detail(action_name)
-            _pending_completion = past_status
+            if _previous_action_name:
+                _, past_status = _get_intelligent_status_detail(_previous_action_name)
+                print(f"✅ {past_status}")
 
-# Clean, scannable static mappings for action status
-ACTION_STATUS_MAPPING = {
-    "ensure_uv_installed": ("🔧 Verifying uv installation", "🔧 Verified uv installation"),
-    "ensure_project_initialized_with_pyproject": ("📁 Initializing project with pyproject.toml", "📁 Initialized project with pyproject.toml"),
-    "ensure_gitignore": ("📝 Setting up .gitignore", "📝 Set up .gitignore"),
-    "create_or_verify_venv": ("🐍 Creating virtual environment .venv/", "🐍 Created virtual environment .venv/"),
-    "ensure_tool_pipreqs": ("🔧 Installing pipreqs via uv tool install", "🔧 Installed pipreqs via uv tool install"),
-    "ensure_tool_ruff": ("🔧 Installing ruff via uv tool install", "🔧 Installed ruff via uv tool install"),
-    "ruff_unused_import_check": ("🔍 Running ruff pre-flight checks", "🔍 Completed ruff pre-flight checks"),
-    "ensure_notebook_execution_support": ("📓 Setting up notebook support", "📓 Set up notebook support"),
-    "configure_vscode_settings": ("⚙️ Configuring .vscode/settings.json", "⚙️ Configured .vscode/settings.json"),
-    "ensure_vscode_launch_json": ("⚙️ Setting up .vscode/launch.json", "⚙️ Set up .vscode/launch.json"),
-    "uv_final_sync": ("🔧 Syncing environment with uv.lock", "🔧 Synced environment with uv.lock"),
-    "script_end": ("🎉 Setup complete!", "🎉 Setup complete!"),
-}
+            _previous_action_name = action_name
+
 
 def _get_dynamic_status(action_name: str) -> tuple:
     """Handle actions with dynamic content (dependency counts, project names)."""
     global _auto_intelligence
-    
+
     if action_name.startswith("discover_deps_"):
         project_name = action_name.replace("discover_deps_", "")
         count = _auto_intelligence.get("packages_discovered", 0)
@@ -1168,7 +1183,13 @@ def _get_dynamic_status(action_name: str) -> tuple:
         else:
             past = f"📂 Scanned {project_name} for dependencies"
         return present, past
-    
+
+    elif action_name.startswith("ensure_tool_"):
+        tool_name = action_name.replace("ensure_tool_", "")
+        present = f"🔧 Installing {tool_name} via uv tool install"
+        past = f"🔧 Installed {tool_name} via uv tool install"
+        return present, past
+
     elif action_name == "manage_project_dependencies":
         count = _auto_intelligence.get("packages_installed", 0)
         present = "📦 Installing project dependencies"
@@ -1177,10 +1198,10 @@ def _get_dynamic_status(action_name: str) -> tuple:
         else:
             past = "📦 Installed project dependencies"
         return present, past
-    
+
     elif "version_conflict_resolution" in action_name:
         return "⚡ Resolving version conflicts", "⚡ Resolved version conflicts"
-    
+
     return None
 
 def _generate_fallback(action_name: str) -> tuple:
@@ -1196,26 +1217,27 @@ def _get_intelligent_status_detail(action_name: str) -> tuple:
     dynamic_result = _get_dynamic_status(action_name)
     if dynamic_result:
         return dynamic_result
-    
+
     # Try static mapping (most common case)
     if action_name in ACTION_STATUS_MAPPING:
         return ACTION_STATUS_MAPPING[action_name]
-    
+
     # Fallback for unmapped actions
     return _generate_fallback(action_name)
 
 def _write_intelligent_error(message: str):
-    """Write errors with pending completion flush."""
-    global _progress_bar, _pending_completion
-    
-    # Flush any pending completion before showing error
-    if _pending_completion:
+    """Write errors with previous completion flush."""
+    global _progress_bar, _previous_action_name
+
+    # Flush any previous completion before showing error
+    if _previous_action_name:
+        _, past_status = _get_intelligent_status_detail(_previous_action_name)
         if _progress_bar:
-            _progress_bar.write(f"✅ {_pending_completion}")
+            _progress_bar.write(f"✅ {past_status}")
         else:
-            print(f"✅ {_pending_completion}")
-        _pending_completion = None
-    
+            print(f"✅ {past_status}")
+        _previous_action_name = None
+
     # Show error
     error_msg = f"❌ {message}"
     if _progress_bar:
@@ -1225,70 +1247,113 @@ def _write_intelligent_error(message: str):
 
 
 def _show_intelligent_summary():
-    """Show summary with final step completion."""
-    global _progress_bar, _auto_intelligence, _pending_completion
-    
+    """Show actionable summary with next steps."""
+    global _progress_bar, _auto_intelligence, _previous_action_name, _current_config
+
     if _progress_bar:
         # Write completion of the final step
-        if _pending_completion:
-            _progress_bar.write(f"✅ {_pending_completion}")
-        
+        if _previous_action_name:
+            _, past_status = _get_intelligent_status_detail(_previous_action_name)
+            _progress_bar.write(f"✅ {past_status}")
+
         # Show final celebration (not progress - this is completion)
         _progress_bar.set_description("🎉 Setup complete!")
         _progress_bar.close()
-        _pending_completion = None
+        _previous_action_name = None
     else:
-        if _pending_completion:
-            print(f"✅ {_pending_completion}")
+        if _previous_action_name:
+            _, past_status = _get_intelligent_status_detail(_previous_action_name)
+            print(f"✅ {past_status}")
         print("🎉 Setup complete!")
-        _pending_completion = None
-    
+        _previous_action_name = None
+
     print("\n" + "="*60)
-    print("✅ PYUVSTARTER SETUP COMPLETE")
+    print("🎉 PYUVSTARTER SETUP COMPLETE")
     print("="*60)
-    
-    # Automatically collected files
-    print("\n📁 FILES CREATED:")
-    for file_path in sorted(_auto_intelligence["files_created"]):
-        print(f"   📄 {file_path}")
-    
-    if _auto_intelligence["files_modified"]:
-        print("\n📝 FILES MODIFIED:")
-        for file_path in sorted(_auto_intelligence["files_modified"]):
-            print(f"   📝 {file_path}")
-    
-    # Automatically extracted dependency info
+
+    # Most actionable information first - what the user needs to know RIGHT NOW
+    import sys
+    from pathlib import Path
+
+    # Get current config for paths
+    if _current_config:
+        project_dir = Path(_current_config.project_dir)
+        venv_name = getattr(_current_config, 'venv_name', '.venv')
+        venv_path = project_dir / venv_name
+
+        # Platform-aware activation command
+        if sys.platform == "win32":
+            activate_cmd = f"{venv_path}\\Scripts\\activate"
+        else:
+            activate_cmd = f"source {venv_path}/bin/activate"
+    else:
+        activate_cmd = "source .venv/bin/activate"
+        venv_path = Path(".venv")
+
+    print(f"\n🚀 PROJECT READY:")
+    print(f"   📁 Project: {project_dir.name if _current_config else 'Current directory'}")
+    print(f"   🐍 Virtual environment: {venv_path}")
+    if Path("pyproject.toml").exists():
+        print(f"   📦 Configuration: pyproject.toml (modern Python)")
+    if Path("uv.lock").exists():
+        print(f"   🔒 Dependencies: locked in uv.lock")
+    if Path(".vscode").exists():
+        print(f"   🔧 VS Code: configured and ready")
+
+    # Dependency info - concrete numbers
     if _auto_intelligence["packages_discovered"] > 0:
         print(f"\n📦 DEPENDENCIES:")
-        print(f"   🔍 Discovered: {_auto_intelligence['packages_discovered']} packages")
+        print(f"   🔍 Found {_auto_intelligence['packages_discovered']} packages from your code")
         if _auto_intelligence["packages_installed"] > 0:
-            print(f"   📥 Installed: {_auto_intelligence['packages_installed']} packages")
-        print(f"   🔒 Locked in: uv.lock")
-    
-    # Automatically detected issues
+            print(f"   ➕ Added {_auto_intelligence['packages_installed']} packages to project")
+        print(f"   ✅ All dependencies locked in uv.lock")
+
+    # Show critical files created (only the important ones)
+    key_files = []
+    for file_path in _auto_intelligence["files_created"]:
+        if any(key in file_path for key in ["pyproject.toml", "uv.lock", ".gitignore", ".vscode"]):
+            key_files.append(file_path)
+
+    if key_files:
+        print(f"\n📄 KEY FILES CREATED:")
+        for file_path in sorted(key_files):
+            if "pyproject.toml" in file_path:
+                print(f"   📦 {file_path} - Modern Python configuration")
+            elif "uv.lock" in file_path:
+                print(f"   🔒 {file_path} - Locked dependency versions")
+            elif ".gitignore" in file_path:
+                print(f"   🙈 {file_path} - Git ignore patterns")
+            elif ".vscode" in file_path:
+                print(f"   🔧 {file_path} - VS Code configuration")
+            else:
+                print(f"   📄 {file_path}")
+
+    # Issues - only show if there are any
     if _auto_intelligence["issues"]:
-        print(f"\n⚠️  ISSUES DETECTED:")
-        for issue in _auto_intelligence["issues"][:5]:  # Show first 5
+        print(f"\n⚠️  ISSUES TO REVIEW:")
+        for issue in _auto_intelligence["issues"][:3]:  # Show first 3 only
             print(f"   • {issue}")
-        if len(_auto_intelligence["issues"]) > 5:
-            print(f"   ... and {len(_auto_intelligence['issues']) - 5} more")
-    
-    # Automatically available fixes
-    if _auto_intelligence["auto_fixes_available"]:
-        print(f"\n🔧 AVAILABLE AUTO-FIXES:")
-        for fix in _auto_intelligence["auto_fixes_available"]:
-            print(f"   💡 {fix['description']}: {fix['command']}")
-    
-    # Next steps (only things that CAN'T be automated)
-    print(f"\n🚀 NEXT STEPS:")
-    print(f"   1. Activate environment: source .venv/bin/activate")
-    if _auto_intelligence["auto_fixes_available"]:
-        for fix in _auto_intelligence["auto_fixes_available"]:
-            print(f"   2. {fix['description']}: {fix['command']}")
-    print(f"   3. Start coding: Your environment is ready!")
-    print(f"   4. Commit when ready: git add . && git commit")
-    
-    print(f"\n📋 FULL DETAILS: pyuvstarter_setup_log.json")
+        if len(_auto_intelligence["issues"]) > 3:
+            print(f"   ... +{len(_auto_intelligence['issues']) - 3} more (see log)")
+
+    # Next steps - prioritize activation and immediate use
+    print(f"\n🎯 NEXT STEPS:")
+    print(f"   1. 🐍 Activate virtual environment:")
+    print(f"      {activate_cmd}")
+    print(f"   2. 🚀 Run your Python code (all dependencies ready)")
+    print(f"   3. 🔧 Open in VS Code (optional):")
+    print(f"      code .")
+    if Path(".git").exists():
+        print(f"   4. 📝 Commit your changes:")
+        print(f"      git add .")
+        print(f"      git commit -m 'Set up Python project with uv'")
+    else:
+        print(f"   4. 📝 Initialize git (optional):")
+        print(f"      git init")
+        print(f"      git add .")
+        print(f"      git commit -m 'Set up Python project with uv'")
+
+    print(f"\n📋 Details: pyuvstarter_setup_log.json")
     print("="*60)
 
 
@@ -1382,7 +1447,7 @@ def _log_action(action_name: str, status: str, message: str = "", details: dict 
         if details and "command" in details:
             error_summary += f", Command: {details['command']}"
         _log_data_global["errors_encountered_summary"].append(error_summary)
-    
+
     # === NEW: AUTOMATIC INTELLIGENCE EXTRACTION ===
     _extract_intelligence_automatically(action_name, status, message, details)
     _handle_intelligent_output(action_name, status, message, details)
@@ -2136,6 +2201,10 @@ def discover_dependencies_in_scope(scan_path: Path, ignore_manager: Optional[Git
             except Exception as e:
                 _log_action(action_name, "CRITICAL", f"Unrecoverable error parsing '{nb_path.name}'.", details={"exception": str(e)})
 
+    # Update global intelligence with final comprehensive count
+    global _auto_intelligence
+    _auto_intelligence["packages_discovered"] = len(result.all_unique_dependencies)
+
     _log_action(action_name, "SUCCESS", f"Discovery complete. {result}")
     # log the discovery summary
     summary = generate_discovery_summary(result)
@@ -2211,12 +2280,12 @@ def _ensure_project_initialized(project_root: Path, dry_run: bool):
         main_py_exists_after_init = main_py_path.exists()
         if main_py_exists_after_init and not main_py_existed_before_init: # `uv init` created main.py
             if project_had_py_files_before_init: # And there were other .py files
-                _log_action(f"{action_name}_remove_main_py", "INFO", f"`uv init` created '{main_py_path.name}', but other .py files existed. Removing '{main_py_path.name}'.")
+                _log_action(action_name, "INFO", f"`uv init` created '{main_py_path.name}', but other .py files existed. Removing '{main_py_path.name}'.")
                 try:
                     main_py_path.unlink()
-                    _log_action(f"{action_name}_remove_main_py", "SUCCESS", f"Successfully removed '{main_py_path.name}' created by `uv init`.")
+                    # This is part of the same logical step, don't log separate SUCCESS
                 except OSError as e:
-                    _log_action(f"{action_name}_remove_main_py", "ERROR", f"Failed to remove '{main_py_path.name}': {e}.")
+                    _log_action(action_name, "ERROR", f"Failed to remove '{main_py_path.name}': {e}.")
             else: # Project was empty of .py files, so main.py from uv init is fine
                 _log_action(f"{action_name}_keep_main_py", "INFO", f"`uv init` created '{main_py_path.name}' in an otherwise empty Python project. It will be kept as standard for a new project.")
         return True
@@ -3466,7 +3535,7 @@ class CLICommand(BaseSettings):
 
         # Initialize intelligent output system with config
         set_output_mode(self)
-        
+
         # Initialize the global logging mechanism.
         _init_log(self.project_dir)
 
@@ -3511,12 +3580,14 @@ class CLICommand(BaseSettings):
             _log_action("ensure_uv_installed", "INFO", "Verifying 'uv' installation.")
             if not _ensure_uv_installed(self.dry_run):
                 raise SystemExit("`uv` could not be installed or verified.")
+            _log_action("ensure_uv_installed", "SUCCESS", "uv installation verified successfully.")
             major_action_results.append(("uv_installed", "SUCCESS"))
 
             # Step 2: Ensure pyproject.toml exists and project is initialized.
             _log_action("ensure_project_initialized_with_pyproject", "INFO", "Initializing project structure and 'pyproject.toml'.")
             if not _ensure_project_initialized(self.project_dir, self.dry_run):
                 raise SystemExit("Project could not be initialized with 'pyproject.toml'.")
+            _log_action("ensure_project_initialized_with_pyproject", "SUCCESS", "Project structure and pyproject.toml initialized successfully.")
             major_action_results.append(("project_initialized", "SUCCESS"))
 
             # Step 3: Instantiate GitIgnore manager and setup .gitignore.
@@ -3535,6 +3606,7 @@ class CLICommand(BaseSettings):
                         _log_action("ignore_patterns", "INFO", f"Additional ignore patterns: {self.ignore_patterns}")
                     # Call the controller function to manage the .gitignore file.
                     _perform_gitignore_setup(self, ignore_manager)
+                    _log_action("ensure_gitignore", "SUCCESS", ".gitignore setup completed successfully.")
                     major_action_results.append(("gitignore", "SUCCESS"))
                 else:
                     _log_action("manual_patterns_only", "INFO", f"Using manual ignore patterns only (no .gitignore files): {self.ignore_patterns}")
@@ -3628,21 +3700,21 @@ class CLICommand(BaseSettings):
                 else:
                     # Phase 3: Third fallback - try with NO version constraints at all
                     # This implements the philosophy: "Solve Problems Automatically"
-                    
+
                     # Preserve conflict information from phase 2 for paper trail
                     conflicts_from_phase2 = result.get("conflicts", [])
-                    
+
                     _log_action("version_conflict_resolution_attempt_3", "INFO",
                               "⚡ Flexible ranges still have conflicts. "
                               "Final attempt - removing ALL version constraints...")
-                    
+
                     # Extract bare package names - strip ALL version info
                     packages_no_versions = set()
                     for dep in discovery_unpinned.all_unique_dependencies:
                         pkg_name = _extract_package_name_from_specifier(dep)
                         if pkg_name:
                             packages_no_versions.add(pkg_name)
-                    
+
                     # Log exactly what we're attempting (Philosophy: "Transparent Operations")
                     _log_action("packages_being_installed", "INFO",
                               f"Installing {len(packages_no_versions)} packages without version numbers",
@@ -3650,7 +3722,7 @@ class CLICommand(BaseSettings):
                                   "packages": sorted(packages_no_versions),
                                   "strategy": "Package manager (uv) will choose compatible versions"
                               })
-                    
+
                     # Final attempt with bare package names
                     result_phase3 = _manage_project_dependencies(
                         project_root=self.project_dir,
@@ -3661,7 +3733,7 @@ class CLICommand(BaseSettings):
                         declared_deps_before_management=declared_deps,
                         project_imported_packages=packages_no_versions
                     )
-                    
+
                     if not isinstance(result_phase3, dict) or result_phase3.get("status") != "NEEDS_UNPINNED_RETRY":
                         # Success! Provide detailed success message with warnings
                         _log_action("version_conflict_resolved_without_constraints", "WARN",
@@ -3691,7 +3763,7 @@ class CLICommand(BaseSettings):
                     else:
                         # All three attempts failed
                         phase3_conflicts = result_phase3.get("conflicts", [])
-                        
+
                         _log_action("dependency_resolution_failed", "ERROR",
                                   "Unable to automatically resolve package dependencies",
                                   details={
@@ -3708,17 +3780,17 @@ class CLICommand(BaseSettings):
                                           "Could not reach PyPI servers to download packages"
                                       ]
                                   })
-                        
+
                         # Update conflicts for manual guidance section
                         # Prefer phase 2 conflicts as they're usually more informative
                         if conflicts_from_phase2:
                             conflicts = conflicts_from_phase2
                         else:
                             conflicts = phase3_conflicts or []
-                        
+
                         # Pass through the error for manual guidance
                         result = result_phase3
-                
+
                 # Only show manual fix guidance if all attempts failed
                 if isinstance(result, dict) and result.get("status") == "NEEDS_UNPINNED_RETRY":
                     # Retry also failed - provide comprehensive manual fix guidance
@@ -3796,7 +3868,7 @@ class CLICommand(BaseSettings):
                 major_action_results.append(("dependency_management", "SUCCESS"))
 
             # Step 9: Ensure Jupyter notebook execution support is configured.
-            _log_action("ensure_notebook_support", "INFO", "Ensuring Jupyter notebook execution support.")
+            _log_action("ensure_notebook_execution_support", "INFO", "Ensuring Jupyter notebook execution support.")
             notebook_exec_success = _ensure_notebook_execution_support(self.project_dir, ignore_manager, self.dry_run)
             major_action_results.append(("notebook_exec_support", "SUCCESS" if notebook_exec_success else "FAILED"))
 
@@ -3838,7 +3910,7 @@ class CLICommand(BaseSettings):
                 "uv_final_sync": "Environment Sync",
                 "vscode_config": "VS Code Setup"
             }
-            
+
             summary_lines = [
                 "\n--- Project Setup Summary ---",
                 "Step                         | Status",
