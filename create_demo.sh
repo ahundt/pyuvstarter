@@ -26,6 +26,7 @@
 #   --no-cleanup       Keep demo project directory after completion
 #   --unit-test        Run unit tests to verify pyuvstarter functionality
 #   --record-demo      Record and generate demo GIF
+#   --demo-dir DIR     Specify custom location for demo project (default: pyuvstarter_demo_project)
 #   --help            Show this help and exit
 #
 # EXAMPLES:
@@ -33,6 +34,7 @@
 #   ./create_demo.sh --no-cleanup              # Show demo, keep demo project
 #   ./create_demo.sh --unit-test               # Run unit tests
 #   ./create_demo.sh --record-demo             # Show demo AND record GIF
+#   ./create_demo.sh --demo-dir /tmp/my_demo   # Use custom demo directory
 #
 # PREREQUISITES:
 #   Script will auto-install: t-rec (via brew/snap/cargo if available)
@@ -68,6 +70,35 @@ while [[ $# -gt 0 ]]; do
         --no-cleanup) NO_CLEANUP=true; shift ;;
         --unit-test) UNIT_TEST_MODE=true; NO_CLEANUP=true; shift ;;
         --record-demo) RECORD_DEMO=true; shift ;;
+        --demo-dir) 
+            if [[ -n "$2" && "$2" != --* ]]; then
+                # Validate path length and characters
+                if [[ ${#2} -gt 255 ]]; then
+                    echo "❌ --demo-dir path too long (max 255 characters)"
+                    exit 1
+                fi
+                # Check for null bytes and other problematic characters
+                if [[ "$2" =~ $'\0' ]]; then
+                    echo "❌ --demo-dir path contains invalid characters"
+                    exit 1
+                fi
+                # Check for problematic characters that could cause issues
+                if [[ "$2" =~ [\;\&\|\`\$\(\)\<\>] ]]; then
+                    echo "❌ --demo-dir path contains shell metacharacters"
+                    exit 1
+                fi
+                # Validate parent directory can be determined
+                if ! dirname "$2" >/dev/null 2>&1; then
+                    echo "❌ --demo-dir path format is invalid"
+                    exit 1
+                fi
+                DEMO_DIR="$2"
+                shift 2
+            else
+                echo "❌ --demo-dir requires a directory path"
+                exit 1
+            fi
+            ;;
         --help|-h) show_help ;;
         *) echo "❌ Unknown option: $1"; echo "Use --help for usage information"; exit 1 ;;
     esac
@@ -249,9 +280,23 @@ run_unit_tests() {
     # Use uv run to ensure pyuvstarter runs with proper dependencies
     local pyuvstarter_cmd="uv run pyuvstarter"
 
+    # Helper function to construct correct demo directory path
+    # Handles both absolute and relative DEMO_DIR values
+    get_demo_path() {
+        if [[ "$DEMO_DIR" = /* ]]; then
+            # DEMO_DIR is absolute, use it directly
+            echo "$DEMO_DIR"
+        else
+            # DEMO_DIR is relative, combine with original_cwd
+            echo "$original_cwd/$DEMO_DIR"
+        fi
+    }
+    local demo_path
+    demo_path=$(get_demo_path)
+
     # Test 1: Run from project root (normal case)
     run_test 1 "Running pyuvstarter from project root directory" \
-        eval "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
+        bash -c "$pyuvstarter_cmd $(printf %q "$demo_path")" || \
         echo "   ACTION: Check if pyuvstarter.py exists and has proper permissions"
 
     # Test 2: Run from different directory (edge case)
@@ -260,13 +305,13 @@ run_unit_tests() {
     cd "$temp_dir"
     # Always use local version by going back to original directory
     run_test 2 "Running pyuvstarter from different working directory" \
-        eval "cd '$original_cwd' && $pyuvstarter_cmd '$original_cwd/$DEMO_DIR'"
+        bash -c "cd $(printf %q "$original_cwd") && $pyuvstarter_cmd $(printf %q "$demo_path")"
     cd "$original_cwd"
     rm -rf "$temp_dir"
 
     # Test 3: Test idempotency - run pyuvstarter again on same project
     run_test 3 "Testing idempotency (running pyuvstarter again)" \
-        eval "$pyuvstarter_cmd '$original_cwd/$DEMO_DIR'" || \
+        bash -c "$pyuvstarter_cmd $(printf %q "$demo_path")" || \
         echo "   ACTION: pyuvstarter should be able to run multiple times without failing"
 
     # Test 4: Verify transformation results
@@ -311,7 +356,7 @@ run_unit_tests() {
             fi
         done
 
-        if [ $found_deps -ge 3 ]; then
+        if [ "$found_deps" -ge 3 ]; then
             echo "   ✅ Found $found_deps/4 key dependencies (pandas, numpy, scikit-learn, matplotlib)"
             return 0
         else
@@ -372,7 +417,7 @@ run_the_demo() {
     echo ''
     sleep 3
     echo '💥 THE PAIN: Let us try to run this project...'
-    echo "$ cd $DEMO_DIR && python scripts/data_analysis.py"
+    echo "$ cd $(printf %q "$DEMO_DIR") && python scripts/data_analysis.py"
     echo '   💥 ModuleNotFoundError: No module named pandas'
     echo '   ☝️  TYPICAL ERROR: Missing dependencies everywhere!'
     echo '   😤 This is what everyone experiences with incomplete requirements!'
@@ -383,7 +428,7 @@ run_the_demo() {
     echo "🔥 RUNNING PYUVSTARTER - WATCH THE MAGIC..."
     echo "============================================"
     echo ""
-    echo "$ uv run pyuvstarter \"$(pwd)/$DEMO_DIR\""
+    echo "$ uv run pyuvstarter $(printf %q "$(pwd)/$DEMO_DIR")"
     echo "🔍 pyuvstarter scanning your project..."
     echo "   📄 Reading scripts/data_analysis.py..."
     echo "   📓 Reading notebooks/ml_experiment.ipynb..."
@@ -417,7 +462,7 @@ run_the_demo() {
         fi
         echo ""
         echo '🎉 PROOF IT WORKS: Let us run the SAME code that failed before...'
-        echo "$ cd $DEMO_DIR && source .venv/bin/activate && python scripts/data_analysis.py"
+        echo "$ cd $(printf %q "$DEMO_DIR") && source .venv/bin/activate && python scripts/data_analysis.py"
         (cd "$DEMO_DIR" && source .venv/bin/activate && python scripts/data_analysis.py)
         echo '   ✅ SUCCESS: All dependencies work perfectly!'
         echo ''
@@ -457,7 +502,7 @@ cleanup() {
             cleanup_action="keep"
         fi
 
-        echo "   📂 Demo project ($cleanup_action): $DEMO_DIR"
+        echo "   📂 Demo project ($cleanup_action): $(printf %q "$DEMO_DIR")"
         [ "$cleanup_action" = "remove" ] && rm -rf "$DEMO_DIR"
     fi
 
@@ -698,7 +743,7 @@ EOF
 set -e
 
 # Recreate essential functions and variables needed for the demo
-DEMO_DIR="pyuvstarter_demo_project"
+DEMO_DIR="${DEMO_DIR:-pyuvstarter_demo_project}"
 has_file() { [ -f "$1" ]; }
 has_dir() { [ -d "$1" ]; }
 
@@ -1040,11 +1085,11 @@ fi
 
 _create_demo_completion() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    local opts="--no-cleanup --unit-test --record-demo --help -h"
+    local opts="--no-cleanup --unit-test --record-demo --demo-dir --help -h"
 
     case "${cur}" in
         -*)
-            COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
+            mapfile -t COMPREPLY < <(compgen -W "${opts}" -- "${cur}")
             ;;
         *)
             COMPREPLY=()

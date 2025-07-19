@@ -27,6 +27,7 @@
 #   --record-demo      Record demo as GIF/MP4 using t-rec
 #   --no-cleanup       Keep demo project directory after completion
 #   --verbose          Show detailed output and debug information
+#   --demo-dir DIR     Specify custom location for demo project (default: temporary directory)
 #   --help            Show this help and exit
 #
 # PREREQUISITES:
@@ -35,13 +36,14 @@
 # ==============================================================================
 
 # Initial settings - will be adjusted based on mode
-set -x  # Show commands for debugging
+set -e  # Exit on error
 SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # === CONFIGURATION ===
 # Create demo directory outside workspace to prevent contamination
-DEMO_BASE=$(mktemp -d -t "pyuv_demo")
+ORIGINAL_DEMO_BASE=$(mktemp -d -t "pyuv_demo")
+DEMO_BASE="$ORIGINAL_DEMO_BASE"
 DEMO_DIR="$DEMO_BASE/pyuvstarter_demo"
 OUTPUT_BASENAME="pyuvstarter_demo2"
 PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run pyuvstarter}"
@@ -49,6 +51,7 @@ PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run pyuvstarter}"
 # === STATE VARIABLES ===
 UNIT_TEST_MODE=false
 NO_CLEANUP=false
+IS_CUSTOM_DEMO_DIR=false
 RECORD_DEMO=false
 SIMULATE_INSTALLS=true
 VERBOSE=false
@@ -74,7 +77,7 @@ detect_platform() {
     esac
     export PLATFORM
     if [ "${VERBOSE:-false}" = "true" ]; then
-        echo "Platform detected: $PLATFORM"
+        echo "Platform detected: $(printf %q "$PLATFORM")"
     fi
 }
 
@@ -134,6 +137,7 @@ OPTIONS:
   --record-demo      Record demo as GIF/MP4 using t-rec
   --no-cleanup       Keep demo project directory after completion
   --verbose          Show detailed output and debug information
+  --demo-dir DIR     Specify custom location for demo project (default: temporary directory)
   --help            Show this help and exit
 
 EXAMPLES:
@@ -145,6 +149,9 @@ EXAMPLES:
 
   # Record demo GIF
   ./create_demo.sh --record-demo
+
+  # Use custom demo directory
+  ./create_demo.sh --demo-dir /tmp/my_demo
 
 ENVIRONMENT VARIABLES:
   PYUVSTARTER_CMD - Override pyuvstarter command (default: uv run pyuvstarter)
@@ -174,6 +181,40 @@ parse_arguments() {
             --verbose)
                 VERBOSE=true
                 log_verbose "Verbose mode enabled"
+                ;;
+            --demo-dir)
+                if [[ -n "$2" && "$2" != --* ]]; then
+                    # Validate path length and characters
+                    if [[ ${#2} -gt 255 ]]; then
+                        log_error "--demo-dir path too long (max 255 characters)"
+                        exit 1
+                    fi
+                    # Check for null bytes and other problematic characters
+                    if [[ "$2" =~ $'\0' ]]; then
+                        log_error "--demo-dir path contains invalid characters"
+                        exit 1
+                    fi
+                    # Check for problematic characters that could cause issues
+                    if [[ "$2" =~ [\;\&\|\`\$\(\)\<\>] ]]; then
+                        log_error "--demo-dir path contains shell metacharacters"
+                        exit 1
+                    fi
+                    # Validate parent directory can be determined
+                    local parent_dir
+                    if ! parent_dir="$(dirname "$2" 2>/dev/null)"; then
+                        log_error "--demo-dir path format is invalid"
+                        exit 1
+                    fi
+                    # Override the demo directory settings
+                    DEMO_BASE="$parent_dir"
+                    DEMO_DIR="$2"
+                    IS_CUSTOM_DEMO_DIR=true
+                    log_verbose "Using custom demo directory: $(printf %q "$DEMO_DIR")"
+                    shift 2
+                else
+                    log_error "--demo-dir requires a directory path"
+                    exit 1
+                fi
                 ;;
             --help|-h)
                 show_help
@@ -268,22 +309,22 @@ create_demo_project() {
     local mode="${1:-demo}"  # "demo" or "test"
 
     log_info "Creating demo project structure..."
-    log_verbose "SCRIPT_DIR: $SCRIPT_DIR"
-    log_verbose "DEMO_DIR: $DEMO_DIR"
-    log_verbose "Current directory: $(pwd)"
+    log_verbose "SCRIPT_DIR: $(printf %q "$SCRIPT_DIR")"
+    log_verbose "DEMO_DIR: $(printf %q "$DEMO_DIR")"
+    log_verbose "Current directory: $(printf %q "$(pwd)")"
 
     # Clean and create directory structure
     rm -rf "$DEMO_DIR" || true  # Don't fail if directory doesn't exist
 
     # Create base directory first
     mkdir -p "$DEMO_DIR" || {
-        log_error "Failed to create demo directory: $DEMO_DIR"
+        log_error "Failed to create demo directory: $(printf %q "$DEMO_DIR")"
         return 1
     }
 
     # Create subdirectories
     mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts" "$DEMO_DIR/src" "$DEMO_DIR/tests" "$DEMO_DIR/data" || {
-        log_error "Failed to create subdirectories in: $DEMO_DIR"
+        log_error "Failed to create subdirectories in: $(printf %q "$DEMO_DIR")"
         return 1
     }
 
@@ -293,7 +334,7 @@ create_demo_project() {
     create_notebooks "$mode"
     create_supporting_files "$mode"
 
-    log_verbose "Demo project created with mode: $mode"
+    log_verbose "Demo project created with mode: $(printf %q "$mode")"
 }
 
 create_requirements_file() {
@@ -638,7 +679,8 @@ run_test() {
     # Run test with output capture
     local output
     local exit_code
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
 
     if output=$("$@" 2>&1); then
         exit_code=0
@@ -646,7 +688,8 @@ run_test() {
         exit_code=$?
     fi
 
-    local end_time=$(date +%s)
+    local end_time
+    end_time=$(date +%s)
     local duration=$(( end_time - start_time ))  # Duration in seconds
 
     if [[ $exit_code -eq 0 ]]; then
@@ -675,7 +718,8 @@ run_unit_tests() {
     echo "Directory: $(pwd)"
     echo "============================================="
 
-    local suite_start=$(date +%s)
+    local suite_start
+    suite_start=$(date +%s)
 
     # Setup test environment
     log_info "Setting up test environment..."
@@ -786,7 +830,8 @@ EOF
     run_test "all_requirements" "Processes new requirements.txt correctly" \
         bash -c "grep -q 'django' '$DEMO_DIR/pyproject.toml' 2>/dev/null"
 
-    local suite_end=$(date +%s)
+    local suite_end
+    suite_end=$(date +%s)
     local suite_duration=$((suite_end - suite_start))
 
     # Generate summary
@@ -1202,7 +1247,7 @@ run_demo_engine() {
 }
 
 count_files() {
-    ls ${OUTPUT_BASENAME}*.$1 2>/dev/null | wc -l | tr -d ' '
+    ls "${OUTPUT_BASENAME}"*."$1" 2>/dev/null | wc -l | tr -d ' '
 }
 
 record_demo() {
@@ -1216,12 +1261,16 @@ record_demo() {
     fi
 
     # Count existing files
-    local gif_before=$(count_files gif)
-    local mp4_before=$(count_files mp4)
+    local gif_before
+    gif_before=$(count_files gif)
+    local mp4_before
+    mp4_before=$(count_files mp4)
 
     # Check current terminal size
-    local current_rows=$(tput lines)
-    local current_cols=$(tput cols)
+    local current_rows
+    current_rows=$(tput lines)
+    local current_cols
+    current_cols=$(tput cols)
 
     if [ "$current_rows" -eq 30 ] && [ "$current_cols" -eq 100 ]; then
         echo "✅ Terminal already at optimal size: 30x100"
@@ -1242,7 +1291,7 @@ record_demo() {
             echo "   1. Allow the resize request if prompted"
             echo "   2. Or disable the prompt in: Preferences > Advanced > 'Terminal windows resize smoothly'"
             echo ""
-            read -p "Press Enter when ready to continue (or Ctrl+C to cancel)... "
+            read -r -p "Press Enter when ready to continue (or Ctrl+C to cancel)... "
 
         else
             echo "✅ Terminal resized successfully to 30x100"
@@ -1263,8 +1312,10 @@ record_demo() {
     # Check results
     echo -e "\n📦 Recording complete. Generated files:"
 
-    local gif_after=$(count_files gif)
-    local mp4_after=$(count_files mp4)
+    local gif_after
+    gif_after=$(count_files gif)
+    local mp4_after
+    mp4_after=$(count_files mp4)
 
     for ext in gif mp4; do
         local before_var="${ext}_before"
@@ -1273,9 +1324,11 @@ record_demo() {
         local after=${!after_var}
 
         if [ "$after" -gt "$before" ]; then
-            local latest=$(ls -t ${OUTPUT_BASENAME}*.${ext} | head -1)
-            local size=$(get_file_size "$latest")
-            log_success "$latest ($(human_readable_size $size))"
+            local latest
+            latest=$(find . -maxdepth 1 -name "${OUTPUT_BASENAME}*.${ext}" -print0 | xargs -0 ls -t | head -1)
+            local size
+            size=$(get_file_size "$latest")
+            log_success "$latest ($(human_readable_size "$size"))"
         else
             log_error "No new ${ext^^} file created"
         fi
@@ -1306,18 +1359,36 @@ cleanup() {
         done
         echo "=============================" >&2
         echo "🛑 Skipping cleanup to preserve all artifacts for debugging."
-        echo "   📂 Demo project preserved: $DEMO_DIR"
+        echo "   📂 Demo project preserved: $(printf %q "$DEMO_DIR")"
+        if [ "$IS_CUSTOM_DEMO_DIR" = "false" ] && [ -d "$ORIGINAL_DEMO_BASE" ]; then
+            echo "   📂 Original temp directory preserved: $(printf %q "$ORIGINAL_DEMO_BASE")"
+        fi
         echo "   🗂️  Temp files preserved: /tmp/trec-*"
     elif [ "$NO_CLEANUP" = "true" ]; then
-        log_info "🗂️  NO_CLEANUP enabled. Artifacts preserved: $DEMO_DIR"
+        log_info "🗂️  NO_CLEANUP enabled. Artifacts preserved: $(printf %q "$DEMO_DIR")"
+        if [ "$IS_CUSTOM_DEMO_DIR" = "false" ] && [ -d "$ORIGINAL_DEMO_BASE" ]; then
+            echo "   📂 Original temp directory preserved: $(printf %q "$ORIGINAL_DEMO_BASE")"
+        fi
         echo "   🗂️  Temp files preserved: /tmp/trec-*"
         log_success "✨ Demo completed successfully!"
     else
-        log_verbose "🧹 Cleaning up all demo artifacts and temp files..."
-        if [ -d "$DEMO_DIR" ]; then
-            echo "   📂 Removing demo project: $DEMO_DIR"
+        log_verbose "🧹 Cleaning up demo artifacts and temp files..."
+        
+        # Clean up demo directory (only if it's not a custom directory)
+        if [ "$IS_CUSTOM_DEMO_DIR" = "false" ] && [ -d "$DEMO_DIR" ]; then
+            echo "   📂 Removing demo project: $(printf %q "$DEMO_DIR")"
             rm -rf "$DEMO_DIR"
+        elif [ "$IS_CUSTOM_DEMO_DIR" = "true" ]; then
+            log_info "   📂 Preserving custom demo directory: $(printf %q "$DEMO_DIR")"
         fi
+        
+        # Always clean up the original temporary directory if it's different from current DEMO_DIR
+        if [ "$IS_CUSTOM_DEMO_DIR" = "true" ] && [ -d "$ORIGINAL_DEMO_BASE" ] && [ "$ORIGINAL_DEMO_BASE" != "$DEMO_BASE" ]; then
+            echo "   📂 Removing original temp directory: $(printf %q "$ORIGINAL_DEMO_BASE")"
+            rm -rf "$ORIGINAL_DEMO_BASE"
+        fi
+        
+        # Clean up other temporary files
         rm -rf /tmp/trec-* 2>/dev/null || true
         rm -f "$DEMO_DIR/../demo_script.sh" 2>/dev/null || true
         rm -f .pyuv_done pyuvstarter_run.log
@@ -1363,7 +1434,7 @@ main() {
         exit $test_exit_code
     else
         create_demo_project "demo"
-        run_demo_engine $([ "$RECORD_DEMO" == "true" ] && echo "record" || echo "live")
+        run_demo_engine "$([ "$RECORD_DEMO" == "true" ] && echo "record" || echo "live")"
     fi
 }
 

@@ -163,14 +163,14 @@ jobs:
         echo ""
         echo "Running create_demo2.sh unit tests..."
         echo "DEBUG: UNIT_TEST_MODE and file generation check:"
-        ./create_demo2.sh --unit-test
+        ./create_demo2.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo2"
         DEMO2_EXIT_CODE=$?
         
         echo "DEBUG: Checking for test_results.xml..."
         ls -la test_results* || echo "No test_results* files found"
 
         echo "Running create_demo.sh unit tests..."
-        ./create_demo.sh --unit-test
+        ./create_demo.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo1"
         DEMO1_EXIT_CODE=$?
         # Note: create_demo.sh doesn't generate test_results.xml
 
