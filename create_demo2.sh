@@ -36,7 +36,15 @@
 # ==============================================================================
 
 # Initial settings - will be adjusted based on mode
-set -x  # Exit on error
+# Default settings (must be set before the set -e check)
+UNIT_TEST_MODE=false
+
+# Disable exit on error in CI to see all test results
+# Unit test mode check happens after argument parsing
+if [[ -z "${CI:-}" ]]; then
+    set -e  # Exit on error for local development
+fi
+# set -x  # Uncomment for debugging
 SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -49,7 +57,6 @@ OUTPUT_BASENAME="pyuvstarter_demo2"
 PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run pyuvstarter}"
 
 # === STATE VARIABLES ===
-UNIT_TEST_MODE=false
 NO_CLEANUP=false
 IS_CUSTOM_DEMO_DIR=false
 RECORD_DEMO=false
@@ -232,6 +239,14 @@ parse_arguments() {
         shift
     done
     log_verbose "parse_arguments completed"
+}
+
+# Disable set -e if unit test mode was specified (called after argument parsing)
+disable_exit_on_error_if_unit_test() {
+    if [[ "$UNIT_TEST_MODE" = "true" ]]; then
+        set +e  # Turn off exit on error for unit tests
+        log_verbose "Unit test mode: disabled exit on error"
+    fi
 }
 
 # === INSTALLATION SIMULATION ===
@@ -1432,6 +1447,9 @@ main() {
     parse_arguments "$@"
     log_verbose "Arguments parsed"
 
+    # Disable exit on error if unit test mode was specified
+    disable_exit_on_error_if_unit_test
+
     # Initialize demo directory after argument parsing
     initialize_demo_directory
     log_verbose "Demo directory initialized"
@@ -1444,15 +1462,21 @@ main() {
         log_info "Running in unit test mode"
         # In unit test mode, don't exit on errors - we want to capture all test results
         set +e  # Disable exit on error
-        set -x   # Keep command tracing for debugging
+        # set -x   # Uncomment for debugging
     elif [ "$RECORD_DEMO" = "true" ]; then
         log_info "Running in recording mode"
-        # In recording mode, use strict error handling
-        set -ex  # Exit on error and show commands
+        # In recording mode, use strict error handling but respect CI and unit test settings
+        if [[ -z "${CI:-}" && "$UNIT_TEST_MODE" != "true" ]]; then
+            set -e  # Exit on error for local development
+        fi
+        # set -x  # Uncomment for debugging
     else
         log_info "Running in live demo mode"
-        # In live demo mode, use strict error handling
-        set -ex  # Exit on error and show commands
+        # In live demo mode, use strict error handling but respect CI and unit test settings
+        if [[ -z "${CI:-}" && "$UNIT_TEST_MODE" != "true" ]]; then
+            set -e  # Exit on error for local development
+        fi
+        # set -x  # Uncomment for debugging
     fi
 
     # Create the demo project

@@ -47,13 +47,20 @@
 #     complete -F _create_demo_completion ./create_demo.sh
 # ==============================================================================
 
-set -x # Exit on any error
+# Default settings (must be set before the set -e check)
+UNIT_TEST_MODE=false
+
+# Disable exit on error in CI to see all test results
+# Unit test mode check happens after argument parsing
+if [[ -z "${CI:-}" ]]; then
+    set -e  # Exit on error for local development
+fi
+# set -x  # Uncomment for debugging
 
 # === CONFIGURATION ===
 GIF_FILE="pyuvstarter_demo"
 
-# Default settings
-UNIT_TEST_MODE=false
+# Additional settings
 NO_CLEANUP=false
 RECORD_DEMO=false
 PYUVSTARTER_EXIT_CODE=0
@@ -94,6 +101,11 @@ done
 # Set default demo directory if not specified
 if [ -z "$DEMO_DIR" ]; then
     DEMO_DIR="pyuvstarter_demo_project"
+fi
+
+# Disable set -e if unit test mode was specified
+if [[ "$UNIT_TEST_MODE" = "true" ]]; then
+    set +e  # Turn off exit on error for unit tests
 fi
 
 # Demo always shows unless unit test mode is explicitly requested
