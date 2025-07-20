@@ -41,10 +41,10 @@ SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # === CONFIGURATION ===
-# Create demo directory outside workspace to prevent contamination
-ORIGINAL_DEMO_BASE=$(mktemp -d -t "pyuv_demo")
-DEMO_BASE="$ORIGINAL_DEMO_BASE"
-DEMO_DIR="$DEMO_BASE/pyuvstarter_demo"
+# Demo directory will be set after argument parsing
+ORIGINAL_DEMO_BASE=""  # Will be set after argument parsing
+DEMO_BASE=""  # Will be set after argument parsing
+DEMO_DIR=""  # Will be set after argument parsing
 OUTPUT_BASENAME="pyuvstarter_demo2"
 PYUVSTARTER_CMD="${PYUVSTARTER_CMD:-uv run pyuvstarter}"
 
@@ -98,6 +98,22 @@ log_success() {
 
 log_info() {
     echo -e "${C_BLUE}ℹ️  $*${C_RESET}"
+}
+
+# Safe directory/file removal with trash fallback
+safe_remove() {
+    local path="$1"
+    
+    # Return early if path doesn't exist
+    [ ! -e "$path" ] && return 0
+    
+    # Use trash if available, otherwise fall back to rm
+    # Always silent and never fail
+    if command -v trash >/dev/null 2>&1; then
+        trash "$path" >/dev/null 2>&1 || true
+    else
+        rm -rf "$path" >/dev/null 2>&1 || true
+    fi
 }
 
 # Cross-platform file size
@@ -314,7 +330,7 @@ create_demo_project() {
     log_verbose "Current directory: $(printf %q "$(pwd)")"
 
     # Clean and create directory structure
-    rm -rf "$DEMO_DIR" || true  # Don't fail if directory doesn't exist
+    safe_remove "$DEMO_DIR"
 
     # Create base directory first
     mkdir -p "$DEMO_DIR" || {
@@ -1377,7 +1393,7 @@ cleanup() {
         # Clean up demo directory (only if it's not a custom directory)
         if [ "$IS_CUSTOM_DEMO_DIR" = "false" ] && [ -d "$DEMO_DIR" ]; then
             echo "   📂 Removing demo project: $(printf %q "$DEMO_DIR")"
-            rm -rf "$DEMO_DIR"
+            safe_remove "$DEMO_DIR"
         elif [ "$IS_CUSTOM_DEMO_DIR" = "true" ]; then
             log_info "   📂 Preserving custom demo directory: $(printf %q "$DEMO_DIR")"
         fi
@@ -1385,16 +1401,39 @@ cleanup() {
         # Always clean up the original temporary directory if it's different from current DEMO_DIR
         if [ "$IS_CUSTOM_DEMO_DIR" = "true" ] && [ -d "$ORIGINAL_DEMO_BASE" ] && [ "$ORIGINAL_DEMO_BASE" != "$DEMO_BASE" ]; then
             echo "   📂 Removing original temp directory: $(printf %q "$ORIGINAL_DEMO_BASE")"
-            rm -rf "$ORIGINAL_DEMO_BASE"
+            safe_remove "$ORIGINAL_DEMO_BASE"
         fi
         
         # Clean up other temporary files
-        rm -rf /tmp/trec-* 2>/dev/null || true
-        rm -f "$DEMO_DIR/../demo_script.sh" 2>/dev/null || true
-        rm -f .pyuv_done pyuvstarter_run.log
+        find /tmp -name "trec-*" -type d 2>/dev/null | while read -r dir; do
+            safe_remove "$dir"
+        done
+        safe_remove "$DEMO_DIR/../demo_script.sh"
+        safe_remove ".pyuv_done"; safe_remove "pyuvstarter_run.log"
         log_success "✨ Cleanup complete!"
     fi
     exit $exit_code
+}
+
+# === DIRECTORY INITIALIZATION ===
+initialize_demo_directory() {
+    log_verbose "Initializing demo directory..."
+    
+    if [ "$IS_CUSTOM_DEMO_DIR" = "true" ]; then
+        log_verbose "Using custom demo directory: $(printf %q "$DEMO_DIR")"
+        # DEMO_BASE and DEMO_DIR are already set by parse_arguments
+        ORIGINAL_DEMO_BASE="$DEMO_BASE"  # No temp directory needed
+    else
+        log_verbose "Creating temporary demo directory..."
+        # Create demo directory outside workspace to prevent contamination
+        # Only call mktemp if we actually need a temporary directory
+        ORIGINAL_DEMO_BASE=$(mktemp -d -t "pyuv_demo.XXXXXX")
+        DEMO_BASE="$ORIGINAL_DEMO_BASE"
+        DEMO_DIR="$DEMO_BASE/pyuvstarter_demo"
+        log_verbose "Created temporary directory: $(printf %q "$ORIGINAL_DEMO_BASE")"
+    fi
+    
+    log_verbose "Final demo directory: $(printf %q "$DEMO_DIR")"
 }
 
 # === MAIN EXECUTION ===
@@ -1405,6 +1444,10 @@ main() {
     log_verbose "Platform detected: $PLATFORM"
     parse_arguments "$@"
     log_verbose "Arguments parsed"
+    
+    # Initialize demo directory after argument parsing
+    initialize_demo_directory
+    log_verbose "Demo directory initialized"
 
     # Set up exit handler
     trap cleanup EXIT INT TERM

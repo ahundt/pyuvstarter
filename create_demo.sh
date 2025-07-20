@@ -50,7 +50,6 @@
 set -e # Exit on any error
 
 # === CONFIGURATION ===
-DEMO_DIR="pyuvstarter_demo_project"
 GIF_FILE="pyuvstarter_demo"
 
 # Default settings
@@ -58,6 +57,7 @@ UNIT_TEST_MODE=false
 NO_CLEANUP=false
 RECORD_DEMO=false
 PYUVSTARTER_EXIT_CODE=0
+DEMO_DIR=""  # Will be set after argument parsing
 
 # === ARGUMENT PARSING ===
 show_help() {
@@ -104,6 +104,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Set default demo directory if not specified
+if [ -z "$DEMO_DIR" ]; then
+    DEMO_DIR="pyuvstarter_demo_project"
+fi
+
 # Demo always shows unless unit test mode is explicitly requested
 
 # === UTILITY FUNCTIONS ===
@@ -120,6 +125,22 @@ has_command() { command -v "$1" &>/dev/null; }
 has_file() { [ -f "$1" ]; }
 has_dir() { [ -d "$1" ]; }
 is_true() { [ "$1" = true ]; }
+
+# Safe directory/file removal with trash fallback
+safe_remove() {
+    local path="$1"
+    
+    # Return early if path doesn't exist
+    [ ! -e "$path" ] && return 0
+    
+    # Use trash if available, otherwise fall back to rm
+    # Always silent and never fail
+    if command -v trash >/dev/null 2>&1; then
+        trash "$path" >/dev/null 2>&1 || true
+    else
+        rm -rf "$path" >/dev/null 2>&1 || true
+    fi
+}
 
 # Smart tool management with auto-installation
 ensure_tool() {
@@ -307,7 +328,7 @@ run_unit_tests() {
     run_test 2 "Running pyuvstarter from different working directory" \
         bash -c "cd $(printf %q "$original_cwd") && $pyuvstarter_cmd $(printf %q "$demo_path")"
     cd "$original_cwd"
-    rm -rf "$temp_dir"
+    safe_remove "$temp_dir"
 
     # Test 3: Test idempotency - run pyuvstarter again on same project
     run_test 3 "Testing idempotency (running pyuvstarter again)" \
@@ -503,15 +524,19 @@ cleanup() {
         fi
 
         echo "   📂 Demo project ($cleanup_action): $(printf %q "$DEMO_DIR")"
-        [ "$cleanup_action" = "remove" ] && rm -rf "$DEMO_DIR"
+        if [ "$cleanup_action" = "remove" ]; then
+            safe_remove "$DEMO_DIR"
+        fi
     fi
 
     # Handle intermediate files - remove any leftover temp files unless no-cleanup is specified
     if ! is_true "$NO_CLEANUP"; then
         # Clean up any t-rec temporary files
-        rm -rf /tmp/trec-* 2>/dev/null || true
+        find /tmp -name "trec-*" -type d 2>/dev/null | while read -r dir; do
+            safe_remove "$dir"
+        done
         # Clean up demo script if it exists (in case recording was interrupted)
-        rm -f "$DEMO_DIR/../demo_script.sh" 2>/dev/null || true
+        safe_remove "$DEMO_DIR/../demo_script.sh"
     fi
 
     if [ $exit_code -eq 0 ]; then
@@ -530,7 +555,7 @@ trap cleanup EXIT INT TERM
 
 # === CREATE DEMO PROJECT (shared by both unit test and demo modes) ===
 echo "📁 Setting up realistic ML project (the 'before' state)..."
-rm -rf "$DEMO_DIR"
+safe_remove "$DEMO_DIR"
 mkdir -p "$DEMO_DIR/notebooks" "$DEMO_DIR/scripts"
 
 # Incomplete requirements.txt (the problem pyuvstarter solves)
@@ -990,7 +1015,7 @@ DEMO_SCRIPT_EOF
 
         # Clean up temporary script if cleanup is enabled
         if ! is_true "$NO_CLEANUP"; then
-            rm -f "$DEMO_DIR/../demo_script.sh"
+            safe_remove "$DEMO_DIR/../demo_script.sh"
         fi
         echo "✅ Recording complete: $GIF_FILE"
     else
