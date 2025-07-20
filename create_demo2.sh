@@ -36,7 +36,7 @@
 # ==============================================================================
 
 # Initial settings - will be adjusted based on mode
-set -e  # Exit on error
+set -x  # Exit on error
 SCRIPT_VERSION="3.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -103,10 +103,10 @@ log_info() {
 # Safe directory/file removal with trash fallback
 safe_remove() {
     local path="$1"
-    
+
     # Return early if path doesn't exist
     [ ! -e "$path" ] && return 0
-    
+
     # Use trash if available, otherwise fall back to rm
     # Always silent and never fail
     if command -v trash >/dev/null 2>&1; then
@@ -207,7 +207,7 @@ parse_arguments() {
                     fi
                     # Removed overly strict path validation that was causing CI failures
                     # Trust user-provided paths and let the filesystem handle validation
-                    
+
                     # Override the demo directory settings
                     DEMO_BASE="$(dirname "$2" 2>/dev/null || echo ".")"
                     DEMO_DIR="$2"
@@ -1376,7 +1376,7 @@ cleanup() {
         log_success "✨ Demo completed successfully!"
     else
         log_verbose "🧹 Cleaning up demo artifacts and temp files..."
-        
+
         # Clean up demo directory (only if it's not a custom directory)
         if [ "$IS_CUSTOM_DEMO_DIR" = "false" ] && [ -d "$DEMO_DIR" ]; then
             echo "   📂 Removing demo project: $(printf %q "$DEMO_DIR")"
@@ -1384,13 +1384,13 @@ cleanup() {
         elif [ "$IS_CUSTOM_DEMO_DIR" = "true" ]; then
             log_info "   📂 Preserving custom demo directory: $(printf %q "$DEMO_DIR")"
         fi
-        
+
         # Always clean up the original temporary directory if it's different from current DEMO_DIR
         if [ "$IS_CUSTOM_DEMO_DIR" = "true" ] && [ -d "$ORIGINAL_DEMO_BASE" ] && [ "$ORIGINAL_DEMO_BASE" != "$DEMO_BASE" ]; then
             echo "   📂 Removing original temp directory: $(printf %q "$ORIGINAL_DEMO_BASE")"
             safe_remove "$ORIGINAL_DEMO_BASE"
         fi
-        
+
         # Clean up other temporary files
         find /tmp -name "trec-*" -type d 2>/dev/null | while read -r dir; do
             safe_remove "$dir"
@@ -1405,7 +1405,7 @@ cleanup() {
 # === DIRECTORY INITIALIZATION ===
 initialize_demo_directory() {
     log_verbose "Initializing demo directory..."
-    
+
     if [ "$IS_CUSTOM_DEMO_DIR" = "true" ]; then
         log_verbose "Using custom demo directory: $(printf %q "$DEMO_DIR")"
         # DEMO_BASE and DEMO_DIR are already set by parse_arguments
@@ -1419,7 +1419,7 @@ initialize_demo_directory() {
         DEMO_DIR="$DEMO_BASE/pyuvstarter_demo"
         log_verbose "Created temporary directory: $(printf %q "$ORIGINAL_DEMO_BASE")"
     fi
-    
+
     log_verbose "Final demo directory: $(printf %q "$DEMO_DIR")"
 }
 
@@ -1431,7 +1431,7 @@ main() {
     log_verbose "Platform detected: $PLATFORM"
     parse_arguments "$@"
     log_verbose "Arguments parsed"
-    
+
     # Initialize demo directory after argument parsing
     initialize_demo_directory
     log_verbose "Demo directory initialized"

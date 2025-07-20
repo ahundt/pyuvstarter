@@ -47,7 +47,7 @@
 #     complete -F _create_demo_completion ./create_demo.sh
 # ==============================================================================
 
-set -e # Exit on any error
+set -x # Exit on any error
 
 # === CONFIGURATION ===
 GIF_FILE="pyuvstarter_demo"
@@ -70,7 +70,7 @@ while [[ $# -gt 0 ]]; do
         --no-cleanup) NO_CLEANUP=true; shift ;;
         --unit-test) UNIT_TEST_MODE=true; NO_CLEANUP=true; shift ;;
         --record-demo) RECORD_DEMO=true; shift ;;
-        --demo-dir) 
+        --demo-dir)
             if [[ -n "$2" && "$2" != --* ]]; then
                 # Basic path length check (keep reasonable limit)
                 if [[ ${#2} -gt 255 ]]; then
@@ -116,10 +116,10 @@ is_true() { [ "$1" = true ]; }
 # Safe directory/file removal with trash fallback
 safe_remove() {
     local path="$1"
-    
+
     # Return early if path doesn't exist
     [ ! -e "$path" ] && return 0
-    
+
     # Use trash if available, otherwise fall back to rm
     # Always silent and never fail
     if command -v trash >/dev/null 2>&1; then
@@ -354,7 +354,7 @@ run_unit_tests() {
         # Check for specific expected dependencies from the demo project
         local missing_deps=()
         local found_deps=0
-        
+
         # Key dependencies that should be discovered from demo files
         for dep in "pandas" "numpy" "scikit-learn" "matplotlib"; do
             if grep -q "\"$dep" "$DEMO_DIR/pyproject.toml"; then
