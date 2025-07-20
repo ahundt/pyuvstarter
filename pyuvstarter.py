@@ -258,6 +258,23 @@ import functools
 from pathlib import Path
 from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
 
+# --- Windows Unicode Encoding Setup ---
+# Handle Windows Unicode encoding issues at module import time
+# This must happen early, before any Unicode content is processed
+if platform.system() == 'Windows':
+    # Reconfigure stdout and stderr to use UTF-8 encoding on Windows
+    # This prevents UnicodeEncodeError when emoji/Unicode characters are displayed
+    try:
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, OSError):
+        # Fallback for older Python versions or environments where reconfigure fails
+        # Set environment variables that influence Python's encoding behavior
+        os.environ.setdefault('PYTHONUTF8', '1')
+        os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+
 # --- Optional Built-in Imports ---
 # Handle version-specific modules
 
@@ -319,6 +336,109 @@ except ImportError as e:
     print("If pydantic is installed, the error above will show the specific import issue.")
     sys.exit(1)
 
+
+# ==============================================================================
+# SECTION 0: CROSS-PLATFORM UNICODE SAFE OUTPUT
+# ==============================================================================
+
+def _is_windows_with_limited_unicode() -> bool:
+    """
+    Detect if we're on Windows with limited Unicode support in the console.
+    
+    Returns True if we should use ASCII fallbacks for emoji characters.
+    """
+    if platform.system() != 'Windows':
+        return False
+    
+    # Check if stdout encoding supports Unicode properly
+    try:
+        # Try to encode a test emoji to the current stdout encoding
+        # Use Unicode escape to avoid encoding issues during script import
+        test_emoji = "\u2705"  # ✅ emoji using Unicode escape
+        test_emoji.encode(sys.stdout.encoding or 'utf-8')
+        return False  # If encoding succeeds, Unicode is supported
+    except (UnicodeEncodeError, LookupError):
+        return True  # If encoding fails, use ASCII fallbacks
+
+
+def _get_safe_emoji_mapping() -> Dict[str, str]:
+    """
+    Get mapping of Unicode emoji characters to ASCII-safe alternatives for Windows.
+    
+    Returns:
+        Dictionary mapping emoji to ASCII alternatives
+    """
+    return {
+        "\u2705": "[OK]",        # ✅
+        "\u274c": "[ERROR]",     # ❌
+        "\u26a0\ufe0f": "[WARNING]",  # ⚠️
+        "\U0001f4a5": "[CRITICAL]",   # 💥
+        "\U0001f9ea": "[TEST]",       # 🧪
+        "\U0001f50d": "[SEARCH]",     # 🔍
+        "\U0001f4c1": "[FOLDER]",     # 📁
+        "\U0001f4c2": "[SCAN]",       # 📂
+        "\U0001f680": "[RUN]",        # 🚀
+        "\u2699\ufe0f": "[CONFIG]",   # ⚙️
+        "\U0001f389": "[SUCCESS]",    # 🎉
+        "\U0001f527": "[TOOL]",       # 🔧
+        "\U0001f4c4": "[FILE]",       # 📄
+        "\u23f3": "[WORKING]",        # ⏳
+        "\U0001f40d": "[PYTHON]",     # 🐍
+        "\U0001f4e6": "[PACKAGE]",    # 📦
+        "\U0001f512": "[LOCKED]",     # 🔒
+        "\U0001f648": "[IGNORED]",    # 🙈
+        "\u2795": "[ADDED]",          # ➕
+        "\U0001f3af": "[NEXT]",       # 🎯
+        "\U0001f4dd": "[GIT]",        # 📝
+        "\u26a1": "[RESOLVE]",        # ⚡
+        "\U0001f4d3": "[NOTEBOOK]"    # 📓
+    }
+
+
+def _make_text_safe_for_console(text: str) -> str:
+    """
+    Convert text with emoji characters to console-safe version if needed.
+    
+    Args:
+        text: Text that may contain emoji characters
+        
+    Returns:
+        Console-safe version of the text
+    """
+    if not _is_windows_with_limited_unicode():
+        return text
+    
+    safe_text = text
+    emoji_mapping = _get_safe_emoji_mapping()
+    
+    for emoji, replacement in emoji_mapping.items():
+        safe_text = safe_text.replace(emoji, replacement)
+    
+    return safe_text
+
+
+def safe_typer_secho(message: str, **kwargs) -> None:
+    """
+    Safe wrapper for typer.secho that handles Unicode characters on Windows.
+    
+    Args:
+        message: The message to display
+        **kwargs: Additional arguments to pass to typer.secho
+    """
+    safe_message = _make_text_safe_for_console(message)
+    typer.secho(safe_message, **kwargs)
+
+
+def safe_print(message: str = "", **kwargs) -> None:
+    """
+    Safe wrapper for print that handles Unicode characters on Windows.
+    
+    Args:
+        message: The message to display
+        **kwargs: Additional arguments to pass to print
+    """
+    safe_message = _make_text_safe_for_console(message)
+    print(safe_message, **kwargs)
 
 
 # ==============================================================================
@@ -918,19 +1038,19 @@ _log_data_global = {}
 
 # Single source of truth for progress step definitions
 ACTION_STATUS_MAPPING = {
-    "ensure_uv_installed": ("🔧 Verifying uv installation", "🔧 Verified uv installation"),
-    "ensure_project_initialized_with_pyproject": ("📁 Initializing project with pyproject.toml", "📁 Initialized project with pyproject.toml"),
-    "ensure_gitignore": ("📝 Setting up .gitignore", "📝 Set up .gitignore"),
-    "create_or_verify_venv": ("🐍 Creating virtual environment .venv/", "🐍 Created virtual environment .venv/"),
-    "ensure_tool_pipreqs": ("🔧 Installing pipreqs via uv tool install", "🔧 Installed pipreqs via uv tool install"),
-    "ensure_tool_ruff": ("🔧 Installing ruff via uv tool install", "🔧 Installed ruff via uv tool install"),
-    "ruff_unused_import_check": ("🔍 Running ruff pre-flight checks", "🔍 Completed ruff pre-flight checks"),
-    "manage_project_dependencies": ("📦 Installing project dependencies", "📦 Installed project dependencies"),
-    "ensure_notebook_execution_support": ("📓 Setting up notebook support", "📓 Set up notebook support"),
-    "configure_vscode_settings": ("⚙️ Configuring .vscode/settings.json", "⚙️ Configured .vscode/settings.json"),
-    "ensure_vscode_launch_json": ("⚙️ Setting up .vscode/launch.json", "⚙️ Set up .vscode/launch.json"),
-    "uv_final_sync": ("🔧 Syncing environment with uv.lock", "🔧 Synced environment with uv.lock"),
-    "script_end": ("🎉 Setup complete!", "🎉 Setup complete!"),
+    "ensure_uv_installed": ("\U0001f527 Verifying uv installation", "\U0001f527 Verified uv installation"),  # 🔧
+    "ensure_project_initialized_with_pyproject": ("\U0001f4c1 Initializing project with pyproject.toml", "\U0001f4c1 Initialized project with pyproject.toml"),  # 📁
+    "ensure_gitignore": ("\U0001f4dd Setting up .gitignore", "\U0001f4dd Set up .gitignore"),  # 📝
+    "create_or_verify_venv": ("\U0001f40d Creating virtual environment .venv/", "\U0001f40d Created virtual environment .venv/"),  # 🐍
+    "ensure_tool_pipreqs": ("\U0001f527 Installing pipreqs via uv tool install", "\U0001f527 Installed pipreqs via uv tool install"),  # 🔧
+    "ensure_tool_ruff": ("\U0001f527 Installing ruff via uv tool install", "\U0001f527 Installed ruff via uv tool install"),  # 🔧
+    "ruff_unused_import_check": ("\U0001f50d Running ruff pre-flight checks", "\U0001f50d Completed ruff pre-flight checks"),  # 🔍
+    "manage_project_dependencies": ("\U0001f4e6 Installing project dependencies", "\U0001f4e6 Installed project dependencies"),  # 📦
+    "ensure_notebook_execution_support": ("\U0001f4d3 Setting up notebook support", "\U0001f4d3 Set up notebook support"),  # 📓
+    "configure_vscode_settings": ("\u2699\ufe0f Configuring .vscode/settings.json", "\u2699\ufe0f Configured .vscode/settings.json"),  # ⚙️
+    "ensure_vscode_launch_json": ("\u2699\ufe0f Setting up .vscode/launch.json", "\u2699\ufe0f Set up .vscode/launch.json"),  # ⚙️
+    "uv_final_sync": ("\U0001f527 Syncing environment with uv.lock", "\U0001f527 Synced environment with uv.lock"),  # 🔧
+    "script_end": ("\U0001f389 Setup complete!", "\U0001f389 Setup complete!"),  # 🎉
 }
 
 # WORKFLOW_STEPS removed - redundant with ACTION_STATUS_MAPPING
@@ -1050,8 +1170,8 @@ class ProgressTracker:
         
         # Fallback generation for unmapped actions
         base_name = action_name.replace('_', ' ').replace('ensure ', '').title()
-        present = f"⚙️ Setting up {base_name.lower()}"
-        past = f"⚙️ Set up {base_name.lower()}"
+        present = f"\u2699\ufe0f Setting up {base_name.lower()}"  # ⚙️
+        past = f"\u2699\ufe0f Set up {base_name.lower()}"  # ⚙️
         return present, past
     
     def init_progress_bar(self):
@@ -1071,15 +1191,17 @@ class ProgressTracker:
         
         try:
             from tqdm import tqdm
+            # Ensure header is safe for console output
+            safe_header = _make_text_safe_for_console(header)
             self._progress_bar = tqdm(
                 total=total_steps,
-                desc=header,
+                desc=safe_header,
                 bar_format='{desc} {percentage:3.0f}%|{bar}| {n}/{total} steps',
                 ncols=80
             )
         except Exception as e:
             # Fallback to simple output if any progress bar creation fails
-            print(header)
+            safe_print(header)
             self._progress_bar = None
         
         self._initialized = True
@@ -1094,16 +1216,16 @@ class ProgressTracker:
                 # 1. Write completion of previous step (with checkmark)
                 if self._previous_action_name:
                     _, past_status = self.get_status_messages(self._previous_action_name)
-                    self._progress_bar.write(f"✅ {past_status}")
+                    self._progress_bar.write(_make_text_safe_for_console(f"\u2705 {past_status}"))  # ✅
                 
                 # 2. Get current step information and show progress
                 present_status, _ = self.get_status_messages(action_name)
                 
                 # 3. Show current progress with appropriate icon
                 if action_name == "script_end":
-                    self._progress_bar.set_description(f"✅ {present_status}")
+                    self._progress_bar.set_description(_make_text_safe_for_console(f"\u2705 {present_status}"))  # ✅
                 else:
-                    self._progress_bar.set_description(f"⏳ {present_status}")
+                    self._progress_bar.set_description(_make_text_safe_for_console(f"\u23f3 {present_status}"))  # ⏳
                 self._progress_bar.update(1)
                 
                 # 4. Remember this action for next iteration
@@ -1113,7 +1235,7 @@ class ProgressTracker:
                 # Non-progress-bar mode
                 if self._previous_action_name:
                     _, past_status = self.get_status_messages(self._previous_action_name)
-                    print(f"✅ {past_status}")
+                    safe_print(f"\u2705 {past_status}")  # ✅
                 
                 self._previous_action_name = action_name
     
@@ -1123,17 +1245,17 @@ class ProgressTracker:
         if self._previous_action_name:
             _, past_status = self.get_status_messages(self._previous_action_name)
             if self._progress_bar:
-                self._progress_bar.write(f"✅ {past_status}")
+                self._progress_bar.write(_make_text_safe_for_console(f"\u2705 {past_status}"))  # ✅
             else:
-                print(f"✅ {past_status}")
+                safe_print(f"\u2705 {past_status}")  # ✅
             self._previous_action_name = None
         
-        # Show error
-        error_msg = f"❌ {message}"
+        # Show error with safe console handling
+        error_msg = f"\u274c {message}"  # ❌
         if self._progress_bar:
-            self._progress_bar.write(error_msg)
+            self._progress_bar.write(_make_text_safe_for_console(error_msg))
         else:
-            print(error_msg)
+            safe_print(error_msg)
     
     def extract_intelligence_automatically(self, action_name: str, status: str, message: str, details: dict):
         """Extract intelligence from existing _log_action patterns."""
@@ -1232,7 +1354,7 @@ class ProgressTracker:
             # Don't write it again as a completion line
             if self._previous_action_name and self._previous_action_name != "script_end":
                 _, past_status = self.get_status_messages(self._previous_action_name)
-                self._progress_bar.write(f"✅ {past_status}")
+                self._progress_bar.write(_make_text_safe_for_console(f"\u2705 {past_status}"))  # ✅
             
             # Close progress bar without duplicate message
             self._progress_bar.close()
@@ -1241,11 +1363,11 @@ class ProgressTracker:
             # In non-progress-bar mode, still show the completion
             if self._previous_action_name:
                 _, past_status = self.get_status_messages(self._previous_action_name)
-                print(f"✅ {past_status}")
+                safe_print(f"\u2705 {past_status}")  # ✅
             self._previous_action_name = None
         
         print("\n" + "="*60)
-        print("🎉 PYUVSTARTER SETUP COMPLETE")
+        safe_print("\U0001f389 PYUVSTARTER SETUP COMPLETE")  # 🎉
         print("="*60)
         
         # Most actionable information first - what the user needs to know RIGHT NOW
@@ -1267,23 +1389,23 @@ class ProgressTracker:
             activate_cmd = "source .venv/bin/activate"
             venv_path = Path(".venv")
         
-        print(f"\n🚀 PROJECT READY:")
-        print(f"   📁 Project: {project_dir.name if self.config else 'Current directory'}")
-        print(f"   🐍 Virtual environment: {venv_path}")
+        safe_print(f"\n\U0001f680 PROJECT READY:")  # 🚀
+        safe_print(f"   \U0001f4c1 Project: {project_dir.name if self.config else 'Current directory'}")  # 📁
+        safe_print(f"   \U0001f40d Virtual environment: {venv_path}")  # 🐍
         if Path("pyproject.toml").exists():
-            print(f"   📦 Configuration: pyproject.toml (modern Python)")
+            safe_print(f"   \U0001f4e6 Configuration: pyproject.toml (modern Python)")  # 📦
         if Path("uv.lock").exists():
-            print(f"   🔒 Dependencies: locked in uv.lock")
+            safe_print(f"   \U0001f512 Dependencies: locked in uv.lock")  # 🔒
         if Path(".vscode").exists():
-            print(f"   🔧 VS Code: configured and ready")
+            safe_print(f"   \U0001f527 VS Code: configured and ready")  # 🔧
         
         # Dependency info - concrete numbers
         if self._auto_intelligence["packages_discovered"] > 0:
-            print(f"\n📦 DEPENDENCIES:")
-            print(f"   🔍 Found {self._auto_intelligence['packages_discovered']} packages from your code")
+            safe_print(f"\n\U0001f4e6 DEPENDENCIES:")  # 📦
+            safe_print(f"   \U0001f50d Found {self._auto_intelligence['packages_discovered']} packages from your code")  # 🔍
             if self._auto_intelligence["packages_installed"] > 0:
-                print(f"   ➕ Added {self._auto_intelligence['packages_installed']} packages to project")
-            print(f"   ✅ All dependencies locked in uv.lock")
+                safe_print(f"   \u2795 Added {self._auto_intelligence['packages_installed']} packages to project")  # ➕
+            safe_print(f"   \u2705 All dependencies locked in uv.lock")  # ✅
         
         # Show critical files created (only the important ones)
         key_files = []
@@ -1292,45 +1414,45 @@ class ProgressTracker:
                 key_files.append(file_path)
         
         if key_files:
-            print(f"\n📄 KEY FILES CREATED:")
+            safe_print(f"\n\U0001f4c4 KEY FILES CREATED:")  # 📄
             for file_path in sorted(key_files):
                 if "pyproject.toml" in file_path:
-                    print(f"   📦 {file_path} - Modern Python configuration")
+                    safe_print(f"   \U0001f4e6 {file_path} - Modern Python configuration")  # 📦
                 elif "uv.lock" in file_path:
-                    print(f"   🔒 {file_path} - Locked dependency versions")
+                    safe_print(f"   \U0001f512 {file_path} - Locked dependency versions")  # 🔒
                 elif ".gitignore" in file_path:
-                    print(f"   🙈 {file_path} - Git ignore patterns")
+                    safe_print(f"   \U0001f648 {file_path} - Git ignore patterns")  # 🙈
                 elif ".vscode" in file_path:
-                    print(f"   🔧 {file_path} - VS Code configuration")
+                    safe_print(f"   \U0001f527 {file_path} - VS Code configuration")  # 🔧
                 else:
-                    print(f"   📄 {file_path}")
+                    safe_print(f"   \U0001f4c4 {file_path}")  # 📄
         
         # Issues - only show if there are any
         if self._auto_intelligence["issues"]:
-            print(f"\n⚠️  ISSUES TO REVIEW:")
+            safe_print(f"\n\u26a0\ufe0f  ISSUES TO REVIEW:")  # ⚠️
             for issue in self._auto_intelligence["issues"][:3]:  # Show first 3 only
                 print(f"   • {issue}")
             if len(self._auto_intelligence["issues"]) > 3:
                 print(f"   ... +{len(self._auto_intelligence['issues']) - 3} more (see log)")
         
         # Next steps - prioritize activation and immediate use
-        print(f"\n🎯 NEXT STEPS:")
-        print(f"   1. 🐍 Activate virtual environment:")
+        safe_print(f"\n\U0001f3af NEXT STEPS:")  # 🎯
+        safe_print(f"   1. \U0001f40d Activate virtual environment:")  # 🐍
         print(f"      {activate_cmd}")
-        print(f"   2. 🚀 Run your Python code (all dependencies ready)")
-        print(f"   3. 🔧 Open in VS Code (optional):")
+        safe_print(f"   2. \U0001f680 Run your Python code (all dependencies ready)")  # 🚀
+        safe_print(f"   3. \U0001f527 Open in VS Code (optional):")  # 🔧
         print(f"      code .")
         if Path(".git").exists():
-            print(f"   4. 📝 Commit your changes:")
+            safe_print(f"   4. \U0001f4dd Commit your changes:")  # 📝
             print(f"      git add .")
             print(f"      git commit -m 'Set up Python project with uv'")
         else:
-            print(f"   4. 📝 Initialize git (optional):")
+            safe_print(f"   4. \U0001f4dd Initialize git (optional):")  # 📝
             print(f"      git init")
             print(f"      git add .")
             print(f"      git commit -m 'Set up Python project with uv'")
         
-        print(f"\n📋 Details: pyuvstarter_setup_log.json")
+        print(f"\n\U0001f4cb Details: pyuvstarter_setup_log.json")  # 📋
         print("="*60)
 
 # Global instance for backward compatibility during migration
@@ -2219,7 +2341,7 @@ def generate_discovery_summary(result: DiscoveryResult) -> str:
     """Generates a detailed summary of the discovery phase results."""
     summary_lines = [
         "\n--- Discovery Phase Summary ---",
-        f"✅ Scope Scanned: '{result.scan_path}'",
+        f"\u2705 Scope Scanned: '{result.scan_path}'",  # ✅
     ]
 
     if result.from_scripts:
@@ -3140,7 +3262,7 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_manager: Optio
     action_name = "ensure_notebook_execution_support"
     notebook_paths = _find_all_notebooks(project_root, ignore_manager)
     if not notebook_paths:
-        _log_action(action_name, "SUCCESS", "✅ No notebooks found - notebook execution support not needed.")
+        _log_action(action_name, "SUCCESS", "\u2705 No notebooks found - notebook execution support not needed.")  # ✅
         return True
 
     _log_action(action_name, "INFO", "Checking for notebook execution support dependencies (e.g., ipykernel).")
@@ -3151,7 +3273,7 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_manager: Optio
         systems_needed.update(_detect_notebook_systems(nb_path))
 
     if not systems_needed:
-        _log_action(action_name, "SUCCESS", "✅ No specific notebook execution system detected - support packages not needed.")
+        _log_action(action_name, "SUCCESS", "\u2705 No specific notebook execution system detected - support packages not needed.")  # ✅
         return True
 
     _log_action(action_name, "INFO", f"Detected required notebook systems: {sorted(list(systems_needed))}.")
@@ -3182,7 +3304,7 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_manager: Optio
                 _log_action(action_name, "ERROR", f"Failed to add notebook support packages: {e}\n      ACTION: Please try adding them manually: uv add {' '.join(sorted(list(packages_to_add)))}")
                 return False
     else:
-        _log_action(action_name, "SUCCESS", "✅ All required notebook execution support packages are already available.")
+        _log_action(action_name, "SUCCESS", "\u2705 All required notebook execution support packages are already available.")  # ✅
         return True
 
 
@@ -3502,13 +3624,13 @@ class CLICommand(BaseSettings):
                     sources.append(file_settings)
                     _log_action("config_load", "INFO", f"Loaded settings from config file: '{p}'")
                 except json.JSONDecodeError as e:
-                    typer.secho(f"ERROR: Could not parse config file '{p}': {e}", fg=typer.colors.RED, err=True)
+                    safe_typer_secho(f"ERROR: Could not parse config file '{p}': {e}", fg=typer.colors.RED, err=True)
                     raise typer.Exit(code=1)
                 except IOError as e:
-                    typer.secho(f"ERROR: Could not read config file '{p}': {e}", fg=typer.colors.RED, err=True)
+                    safe_typer_secho(f"ERROR: Could not read config file '{p}': {e}", fg=typer.colors.RED, err=True)
                     raise typer.Exit(code=1)
             else:
-                typer.secho(f"WARNING: Config file not found or is not a file: '{p}'", fg=typer.colors.YELLOW, err=True)
+                safe_typer_secho(f"WARNING: Config file not found or is not a file: '{p}'", fg=typer.colors.YELLOW, err=True)
 
         # Add environment variables with higher precedence than config file but lower than CLI.
         sources.append(env_settings)
@@ -3693,7 +3815,7 @@ class CLICommand(BaseSettings):
                 if not isinstance(result, dict) or result.get("status") != "NEEDS_UNPINNED_RETRY":
                     # Success!
                     _log_action("version_conflict_resolved", "SUCCESS",
-                              "✅ Successfully resolved dependencies using flexible version ranges!")
+                              "\u2705 Successfully resolved dependencies using flexible version ranges!")  # ✅
                     major_action_results.append(("dependency_management", "SUCCESS"))
                 else:
                     # Phase 3: Third fallback - try with NO version constraints at all
@@ -3735,7 +3857,7 @@ class CLICommand(BaseSettings):
                     if not isinstance(result_phase3, dict) or result_phase3.get("status") != "NEEDS_UNPINNED_RETRY":
                         # Success! Provide detailed success message with warnings
                         _log_action("version_conflict_resolved_without_constraints", "WARN",
-                                  "✅ Dependencies resolved by removing version numbers!",
+                                  "\u2705 Dependencies resolved by removing version numbers!",  # ✅
                                   details={
                                       "packages_installed": sorted(packages_no_versions),
                                       "packages_count": len(packages_no_versions),
@@ -3931,7 +4053,7 @@ class CLICommand(BaseSettings):
                 for a in _log_data_global.get("actions", [])
             )
             if errors_or_warnings:
-                warn_msg = f"\n⚠️  Some warnings/errors occurred during setup. See '{log_file_path.name}' for details."
+                warn_msg = f"\n\u26a0\ufe0f  Some warnings/errors occurred during setup. See '{log_file_path.name}' for details."  # ⚠️
                 _log_action("final_warning", "WARN", warn_msg)
                 # Indicate overall status as WARNING if not already ERROR.
                 if _log_data_global.get("overall_status") != "ERROR":
@@ -3949,7 +4071,7 @@ class CLICommand(BaseSettings):
             _log_action("script_halted_by_logic", "ERROR", f"SCRIPT HALTED: {e}")
             _log_data_global["overall_status"] = "HALTED_BY_SCRIPT_LOGIC"
             _log_data_global["final_summary"] = f"Script halted by explicit exit: {e}"
-            typer.secho(f"\n💥 Script halted: {e}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"\n💥 Script halted: {e}", fg=typer.colors.RED, bold=True)
             raise typer.Exit(code=1) # Re-raise to exit Typer properly.
         except subprocess.CalledProcessError as e:
             failed_cmd_str = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
@@ -3964,7 +4086,7 @@ class CLICommand(BaseSettings):
             _log_data_global["final_summary"] = error_message
 
             # Provide specific, actionable hints based on the failed command.
-            typer.secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
             cmd_str_lower = failed_cmd_str.lower()
             if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_lower or "uv sync" in cmd_str_lower:
                 _log_action("install_sync_hint", "WARN", f"INSTALLATION/SYNC HINT: A package operation with `uv` failed.\n  - Review `uv`'s error output (logged as FAIL_STDOUT/FAIL_STDERR for the command) for specific package names or reasons.\n  - Ensure the package name is correct and exists on PyPI (https://pypi.org) or your configured index.\n  - Some packages require system-level (non-Python) libraries to be installed first. Check the package's documentation.\n  - You might need to manually edit 'pyproject.toml' and then run `uv sync --python {venv_python_executable}`.")
@@ -3979,7 +4101,7 @@ class CLICommand(BaseSettings):
             elif "brew" in cmd_str_lower:
                 _log_action("brew_hint", "WARN", "Homebrew might be required for some installations. Ensure it's installed and working.")
 
-            typer.secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED)
+            safe_typer_secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED)
             raise typer.Exit(code=1)
         except FileNotFoundError as e:
             # Caught for missing external executables (e.g., 'uv' itself, 'brew', 'curl').
@@ -3991,12 +4113,12 @@ class CLICommand(BaseSettings):
             _log_data_global["overall_status"] = "MISSING_SYSTEM_COMMAND"
             _log_data_global["final_summary"] = error_message
 
-            typer.secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
             if cmd_name == "brew":
-                typer.secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW)
+                safe_typer_secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW)
             elif cmd_name == "curl":
-                typer.secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW)
-            typer.secho("Setup aborted.", fg=typer.colors.RED)
+                safe_typer_secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW)
+            safe_typer_secho("Setup aborted.", fg=typer.colors.RED)
             raise typer.Exit(code=1)
         except Exception as e:
             # Catch-all for any unexpected errors.
@@ -4010,8 +4132,8 @@ class CLICommand(BaseSettings):
             _log_data_global["overall_status"] = "UNEXPECTED_ERROR"
             _log_data_global["final_summary"] = error_message
 
-            typer.secho(f"\n💥 AN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", fg=typer.colors.RED, bold=True)
-            typer.secho(f"{tb_str}\nSetup aborted due to an unexpected error. Please review the traceback and the JSON log.", fg=typer.colors.RED)
+            safe_typer_secho(f"\n💥 AN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"{tb_str}\nSetup aborted due to an unexpected error. Please review the traceback and the JSON log.", fg=typer.colors.RED)
             raise typer.Exit(code=1)
         finally:
             # Ensure the log file is always saved at the end of the execution,
@@ -4075,14 +4197,14 @@ def main(
     try:
         command = CLICommand(**cli_kwargs)  # noqa: F841 - Instance creation triggers validation
     except ValidationError as e:
-        typer.secho("❌ Configuration validation error:", fg=typer.colors.RED, bold=True)
+        safe_typer_secho("\u274c Configuration validation error:", fg=typer.colors.RED, bold=True)  # ❌
         for error in e.errors():
             field = " -> ".join(str(loc) for loc in error['loc'])
-            typer.secho(f"  • {field}: {error['msg']}", fg=typer.colors.RED)
+            safe_typer_secho(f"  • {field}: {error['msg']}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
     except Exception as e:
-        typer.secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True)
-        typer.secho(traceback.format_exc(), fg=typer.colors.RED)
+        safe_typer_secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True)
+        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
 # new main with app() is new functionality to repair and keep
@@ -4097,7 +4219,7 @@ if __name__ == "__main__":
         # This is a last-resort error handler for issues *before* the model_post_init
         # can log them (e.g., Typer internal errors or Pydantic ValidationError
         # if the CLI input format is totally wrong).
-        typer.secho(f"\n💥 A critical error occurred during application startup: {e}", fg=typer.colors.RED, bold=True)
-        typer.secho(traceback.format_exc(), fg=typer.colors.RED)
-        typer.secho("Setup aborted due to an unexpected startup error.", fg=typer.colors.RED)
+        safe_typer_secho(f"\n💥 A critical error occurred during application startup: {e}", fg=typer.colors.RED, bold=True)
+        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED)
+        safe_typer_secho("Setup aborted due to an unexpected startup error.", fg=typer.colors.RED)
         sys.exit(1)
