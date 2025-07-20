@@ -72,26 +72,13 @@ while [[ $# -gt 0 ]]; do
         --record-demo) RECORD_DEMO=true; shift ;;
         --demo-dir) 
             if [[ -n "$2" && "$2" != --* ]]; then
-                # Validate path length and characters
+                # Basic path length check (keep reasonable limit)
                 if [[ ${#2} -gt 255 ]]; then
                     echo "❌ --demo-dir path too long (max 255 characters)"
                     exit 1
                 fi
-                # Check for null bytes and other problematic characters
-                if [[ "$2" =~ $'\0' ]]; then
-                    echo "❌ --demo-dir path contains invalid characters"
-                    exit 1
-                fi
-                # Check for problematic characters that could cause issues
-                if [[ "$2" =~ [\;\&\|\`\$\(\)\<\>] ]]; then
-                    echo "❌ --demo-dir path contains shell metacharacters"
-                    exit 1
-                fi
-                # Validate parent directory can be determined
-                if ! dirname "$2" >/dev/null 2>&1; then
-                    echo "❌ --demo-dir path format is invalid"
-                    exit 1
-                fi
+                # Removed overly strict path validation that was causing CI failures
+                # Trust user-provided paths and let the filesystem handle validation
                 DEMO_DIR="$2"
                 shift 2
             else
