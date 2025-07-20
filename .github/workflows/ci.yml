@@ -190,6 +190,21 @@ jobs:
         comment_title: "PyUVStarter Test Results"
         github_token: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Set UTF-8 code page (Windows only)
+      if: runner.os == 'Windows'
+      run: chcp 65001
+      shell: cmd
+
+    - name: Set PYTHONIOENCODING (Windows only)
+      if: runner.os == 'Windows'
+      run: set PYTHONIOENCODING=utf-8
+      shell: cmd
+
+    - name: Enable Python UTF-8 mode (Windows only)
+      if: runner.os == 'Windows'
+      run: set PYTHONUTF8=1
+      shell: cmd
+
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
       run: |
