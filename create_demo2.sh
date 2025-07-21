@@ -192,18 +192,22 @@ parse_arguments() {
                 UNIT_TEST_MODE=true
                 NO_CLEANUP=true  # Keep artifacts for inspection
                 log_verbose "Unit test mode enabled"
+                shift
                 ;;
             --record-demo)
                 RECORD_DEMO=true
                 log_verbose "Recording mode enabled"
+                shift
                 ;;
             --no-cleanup)
                 NO_CLEANUP=true
                 log_verbose "Cleanup disabled"
+                shift
                 ;;
             --verbose)
                 VERBOSE=true
                 log_verbose "Verbose mode enabled"
+                shift
                 ;;
             --demo-dir)
                 if [[ -n "$2" && "$2" != --* ]]; then
@@ -236,7 +240,6 @@ parse_arguments() {
                 exit 1
                 ;;
         esac
-        shift
     done
     log_verbose "parse_arguments completed"
 }
@@ -1162,7 +1165,7 @@ main() {
     [ -d ".vscode" ] && echo -e "${C_GREEN}   ✅ .vscode/         ${C_DIM}# IDE configuration${C_RESET}" || echo -e "${C_RED}   ❌ .vscode/         ${C_DIM}# Not found!${C_RESET}"
     sleep 1.5
 
-    echo -e "\n${C_GREEN}Let's run that script again:${C_RESET}"
+    echo -e "\n${C_GREEN}Let's run the data analysis script again:${C_RESET}"
     type_command "source .venv/bin/activate && python scripts/data_analysis.py"
     sleep 0.3
 

@@ -74,9 +74,19 @@ show_help() {
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --no-cleanup) NO_CLEANUP=true; shift ;;
-        --unit-test) UNIT_TEST_MODE=true; NO_CLEANUP=true; shift ;;
-        --record-demo) RECORD_DEMO=true; shift ;;
+        --no-cleanup) 
+            NO_CLEANUP=true
+            shift
+            ;;
+        --unit-test) 
+            UNIT_TEST_MODE=true
+            NO_CLEANUP=true
+            shift
+            ;;
+        --record-demo) 
+            RECORD_DEMO=true
+            shift
+            ;;
         --demo-dir)
             if [[ -n "$2" && "$2" != --* ]]; then
                 # Basic path length check (keep reasonable limit)
@@ -93,8 +103,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
-        --help|-h) show_help ;;
-        *) echo "❌ Unknown option: $1"; echo "Use --help for usage information"; exit 1 ;;
+        --help|-h) 
+            show_help
+            ;;
+        *) 
+            echo "❌ Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
     esac
 done
 
