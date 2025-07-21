@@ -344,12 +344,12 @@ except ImportError as e:
 def _is_windows_with_limited_unicode() -> bool:
     """
     Detect if we're on Windows with limited Unicode support in the console.
-    
+
     Returns True if we should use ASCII fallbacks for emoji characters.
     """
     if platform.system() != 'Windows':
         return False
-    
+
     # Check if stdout encoding supports Unicode properly
     try:
         # Try to encode a test emoji to the current stdout encoding
@@ -364,7 +364,7 @@ def _is_windows_with_limited_unicode() -> bool:
 def _get_safe_emoji_mapping() -> Dict[str, str]:
     """
     Get mapping of Unicode emoji characters to ASCII-safe alternatives for Windows.
-    
+
     Returns:
         Dictionary mapping emoji to ASCII alternatives
     """
@@ -398,29 +398,29 @@ def _get_safe_emoji_mapping() -> Dict[str, str]:
 def _make_text_safe_for_console(text: str) -> str:
     """
     Convert text with emoji characters to console-safe version if needed.
-    
+
     Args:
         text: Text that may contain emoji characters
-        
+
     Returns:
         Console-safe version of the text
     """
     if not _is_windows_with_limited_unicode():
         return text
-    
+
     safe_text = text
     emoji_mapping = _get_safe_emoji_mapping()
-    
+
     for emoji, replacement in emoji_mapping.items():
         safe_text = safe_text.replace(emoji, replacement)
-    
+
     return safe_text
 
 
 def safe_typer_secho(message: str, **kwargs) -> None:
     """
     Safe wrapper for typer.secho that handles Unicode characters on Windows.
-    
+
     Args:
         message: The message to display
         **kwargs: Additional arguments to pass to typer.secho
@@ -432,7 +432,7 @@ def safe_typer_secho(message: str, **kwargs) -> None:
 def safe_print(message: str = "", **kwargs) -> None:
     """
     Safe wrapper for print that handles Unicode characters on Windows.
-    
+
     Args:
         message: The message to display
         **kwargs: Additional arguments to pass to print
@@ -1058,14 +1058,14 @@ ACTION_STATUS_MAPPING = {
 
 class ProgressTracker:
     """Modern progress tracking using self-registering workflow steps.
-    
+
     Philosophy: "Automatic and Correct" + "Easy to Use Correctly"
     - Steps register themselves automatically
-    - Progress tracking happens automatically  
+    - Progress tracking happens automatically
     - No manual coordination required
     - Type-safe through WorkflowStep objects
     """
-    
+
     def __init__(self, config):
         self.config = config
         # Encapsulated versions of previously global state
@@ -1074,7 +1074,7 @@ class ProgressTracker:
         self._previous_action_name = None
         self._auto_intelligence = {
             "files_created": set(),
-            "files_modified": set(), 
+            "files_modified": set(),
             "commands_executed": [],
             "packages_discovered": 0,
             "packages_installed": 0,
@@ -1082,10 +1082,10 @@ class ProgressTracker:
             "auto_fixes_available": []
         }
         self._initialized = False
-    
+
     def should_show_progress(self, action_name: str) -> bool:
         """Progress detection using ACTION_STATUS_MAPPING as single source of truth.
-        
+
         Fixed filtering logic to avoid false positives.
         """
         # Whitelist legitimate steps that contain excluded substrings
@@ -1094,45 +1094,45 @@ class ProgressTracker:
         ]
         if action_name in whitelisted_steps:
             return True
-        
+
         # Exclude automatic command execution logs with precise patterns
         import re
         excluded_patterns = [
             r"_exec$",           # Ends with _exec
-            r"_version_check$",  # Ends with _version_check  
+            r"_version_check$",  # Ends with _version_check
             r"_cmd$",            # Ends with _cmd
             r"_uv_add$",         # Ends with _uv_add
             r"_uv_tool_install$" # Ends with _uv_tool_install
         ]
         if any(re.search(pattern, action_name) for pattern in excluded_patterns):
             return False
-        
+
         # Check if this action is in ACTION_STATUS_MAPPING
         if action_name in ACTION_STATUS_MAPPING:
             return True
-        
+
         # Handle dynamic patterns
         if action_name.startswith("discover_deps_"):
             return True
         if action_name.startswith("ensure_tool_"):
-            return True  
+            return True
         if "version_conflict_resolution" in action_name:
             return True
-        
+
         return False
-    
+
     def count_total_progress_steps(self) -> int:
         """Count based on ACTION_STATUS_MAPPING entries only.
-        
+
         No conditional steps in base count - they're added dynamically when they execute.
         """
         # Base steps = only entries that actually get logged in normal execution
         base_steps = len(ACTION_STATUS_MAPPING)
-        
+
         # Don't add conditional steps to base count - they'll be counted when they execute
-        
+
         return base_steps
-    
+
     def get_status_messages(self, action_name: str) -> tuple:
         """Get (present, past) status messages with intelligence integration."""
         # Handle dynamic patterns with auto-intelligence
@@ -1145,13 +1145,13 @@ class ProgressTracker:
             else:
                 past = f"📂 Scanned {project_name} for dependencies"
             return present, past
-        
+
         elif action_name.startswith("ensure_tool_"):
             tool_name = action_name.replace("ensure_tool_", "")
             present = f"🔧 Installing {tool_name} via uv tool install"
             past = f"🔧 Installed {tool_name} via uv tool install"
             return present, past
-        
+
         elif action_name == "manage_project_dependencies":
             count = self._auto_intelligence.get("packages_installed", 0)
             present = "📦 Installing project dependencies"
@@ -1160,35 +1160,35 @@ class ProgressTracker:
             else:
                 past = "📦 Installed project dependencies"
             return present, past
-        
+
         elif "version_conflict_resolution" in action_name:
             return "⚡ Resolving version conflicts", "⚡ Resolved version conflicts"
-        
+
         # Static mapping lookup (single source of truth)
         if action_name in ACTION_STATUS_MAPPING:
             return ACTION_STATUS_MAPPING[action_name]
-        
+
         # Fallback generation for unmapped actions
         base_name = action_name.replace('_', ' ').replace('ensure ', '').title()
         present = f"\u2699\ufe0f Setting up {base_name.lower()}"  # ⚙️
         past = f"\u2699\ufe0f Set up {base_name.lower()}"  # ⚙️
         return present, past
-    
+
     def init_progress_bar(self):
         """Initialize progress bar with dynamically counted total steps."""
         if self._initialized:
             return
-            
+
         version = _get_project_version()
         header = f"🚀 PYUVSTARTER v{version}"
-        
+
         # Reset step tracking and previous action for new run
         self._progress_steps_seen.clear()
         self._previous_action_name = None
-        
+
         # Count total progress steps from ACTION_STATUS_MAPPING (single source)
         total_steps = self.count_total_progress_steps()
-        
+
         try:
             from tqdm import tqdm
             # Ensure header is safe for console output
@@ -1203,42 +1203,42 @@ class ProgressTracker:
             # Fallback to simple output if any progress bar creation fails
             safe_print(header)
             self._progress_bar = None
-        
+
         self._initialized = True
-    
+
     def update_progress_with_auto_intelligence(self, action_name: str):
         """Update progress with temporal flow and intelligence."""
         # Only update if this is a new step we haven't seen before
         if action_name not in self._progress_steps_seen:
             self._progress_steps_seen.add(action_name)
-            
+
             if self._progress_bar:
                 # 1. Write completion of previous step (with checkmark)
                 if self._previous_action_name:
                     _, past_status = self.get_status_messages(self._previous_action_name)
                     self._progress_bar.write(_make_text_safe_for_console(f"\u2705 {past_status}"))  # ✅
-                
+
                 # 2. Get current step information and show progress
                 present_status, _ = self.get_status_messages(action_name)
-                
+
                 # 3. Show current progress with appropriate icon
                 if action_name == "script_end":
                     self._progress_bar.set_description(_make_text_safe_for_console(f"\u2705 {present_status}"))  # ✅
                 else:
                     self._progress_bar.set_description(_make_text_safe_for_console(f"\u23f3 {present_status}"))  # ⏳
                 self._progress_bar.update(1)
-                
+
                 # 4. Remember this action for next iteration
                 self._previous_action_name = action_name
-            
+
             else:
                 # Non-progress-bar mode
                 if self._previous_action_name:
                     _, past_status = self.get_status_messages(self._previous_action_name)
                     safe_print(f"\u2705 {past_status}")  # ✅
-                
+
                 self._previous_action_name = action_name
-    
+
     def write_intelligent_error(self, message: str):
         """Write errors with previous completion flush."""
         # Flush any previous completion before showing error
@@ -1249,19 +1249,19 @@ class ProgressTracker:
             else:
                 safe_print(f"\u2705 {past_status}")  # ✅
             self._previous_action_name = None
-        
+
         # Show error with safe console handling
         error_msg = f"\u274c {message}"  # ❌
         if self._progress_bar:
             self._progress_bar.write(_make_text_safe_for_console(error_msg))
         else:
             safe_print(error_msg)
-    
+
     def extract_intelligence_automatically(self, action_name: str, status: str, message: str, details: dict):
         """Extract intelligence from existing _log_action patterns."""
         if status != "SUCCESS":
             return
-        
+
         # File creation patterns (extracted from analysis of 191 _log_action calls)
         if action_name.endswith("_init") or "initialized" in message.lower():
             self._auto_intelligence["files_created"].add("pyproject.toml")
@@ -1274,42 +1274,42 @@ class ProgressTracker:
         elif "uv.lock" in message or ("uv_add" in action_name and "installed" in message.lower()):
             self._auto_intelligence["files_created"].add("uv.lock")
             self._auto_intelligence["files_modified"].add("pyproject.toml")
-        
+
         # Command result extraction
         if details and "command" in details:
             cmd = details["command"]
             self._auto_intelligence["commands_executed"].append(cmd)
-            
+
             if "stdout" in details:
                 self._extract_results_from_command_output(cmd, details["stdout"])
-        
+
         # Issue detection
         if "unused imports" in message.lower():
             self._extract_unused_imports_automatically(details)
         elif "conflict" in message.lower():
             self._auto_intelligence["issues"].append(f"Dependency conflict: {message.split('|')[0].strip()}")
-    
+
     def _extract_results_from_command_output(self, command: str, output: str):
         """Extract concrete results from command outputs automatically."""
         # Extract package counts from pipreqs output
         if "pipreqs" in command and output:
             package_lines = [line for line in output.split('\n') if '==' in line]
             self._auto_intelligence["packages_discovered"] = len(package_lines)
-        
+
         # Extract installation results from uv add output
         elif "uv add" in command and "installed" in output.lower():
             import re
             match = re.search(r'installed\s+(\d+)\s+package', output.lower())
             if match:
                 self._auto_intelligence["packages_installed"] = int(match.group(1))
-    
+
     def _extract_unused_imports_automatically(self, details: dict):
         """Extract unused imports automatically from existing ruff details."""
         if details and "unused_imports_details" in details:
             for file_path, line_num, import_desc in details["unused_imports_details"]:
                 rel_path = file_path.split("/")[-1] if "/" in file_path else file_path
                 self._auto_intelligence["issues"].append(f"Unused import: {rel_path}:{line_num} - {import_desc}")
-            
+
             # Automatically suggest fix since ruff --fix is safe for unused imports
             self._auto_intelligence["auto_fixes_available"].append({
                 "issue": "unused imports",
@@ -1317,12 +1317,12 @@ class ProgressTracker:
                 "description": "Remove unused imports automatically",
                 "safe": True
             })
-    
+
     def handle_intelligent_output(self, action_name: str, status: str, message: str, details: dict):
         """Handle output with automatic intelligence - main entry point."""
         # Get verbose mode safely
         verbose_mode = getattr(self.config, 'verbose', False)  # Default to clean for Progressive Disclosure
-        
+
         if verbose_mode:
             # EXISTING OUTPUT - exactly as before (lines 861-865)
             console_prefix = status.upper()
@@ -1330,12 +1330,12 @@ class ProgressTracker:
                 console_prefix = "INFO"
             details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
             print(f"{console_prefix}: ({action_name}) {message}{details_str}")
-            
+
             # Still show summary at script end even in verbose mode
             if action_name == "script_end":
                 self.show_intelligent_summary()
             return
-        
+
         # INTELLIGENT OUTPUT with automatic details
         if action_name == "script_start":
             self.init_progress_bar()
@@ -1346,7 +1346,7 @@ class ProgressTracker:
             # Show summary after script_end progress update
             if action_name == "script_end":
                 self.show_intelligent_summary()
-    
+
     def show_intelligent_summary(self):
         """Show actionable summary with next steps."""
         if self._progress_bar:
@@ -1355,7 +1355,7 @@ class ProgressTracker:
             if self._previous_action_name and self._previous_action_name != "script_end":
                 _, past_status = self.get_status_messages(self._previous_action_name)
                 self._progress_bar.write(_make_text_safe_for_console(f"\u2705 {past_status}"))  # ✅
-            
+
             # Close progress bar without duplicate message
             self._progress_bar.close()
             self._previous_action_name = None
@@ -1365,21 +1365,21 @@ class ProgressTracker:
                 _, past_status = self.get_status_messages(self._previous_action_name)
                 safe_print(f"\u2705 {past_status}")  # ✅
             self._previous_action_name = None
-        
+
         print("\n" + "="*60)
         safe_print("\U0001f389 PYUVSTARTER SETUP COMPLETE")  # 🎉
         print("="*60)
-        
+
         # Most actionable information first - what the user needs to know RIGHT NOW
         import sys
         from pathlib import Path
-        
+
         # Get current config for paths
         if self.config:
             project_dir = Path(self.config.project_dir)
             venv_name = getattr(self.config, 'venv_name', '.venv')
             venv_path = project_dir / venv_name
-            
+
             # Platform-aware activation command
             if sys.platform == "win32":
                 activate_cmd = f"{venv_path}\\Scripts\\activate"
@@ -1388,71 +1388,57 @@ class ProgressTracker:
         else:
             activate_cmd = "source .venv/bin/activate"
             venv_path = Path(".venv")
-        
-        safe_print(f"\n\U0001f680 PROJECT READY:")  # 🚀
+
+        safe_print("\n\U0001f680 PROJECT SUMMARY:")  # 🚀
         safe_print(f"   \U0001f4c1 Project: {project_dir.name if self.config else 'Current directory'}")  # 📁
-        safe_print(f"   \U0001f40d Virtual environment: {venv_path}")  # 🐍
-        if Path("pyproject.toml").exists():
-            safe_print(f"   \U0001f4e6 Configuration: pyproject.toml (modern Python)")  # 📦
-        if Path("uv.lock").exists():
-            safe_print(f"   \U0001f512 Dependencies: locked in uv.lock")  # 🔒
-        if Path(".vscode").exists():
-            safe_print(f"   \U0001f527 VS Code: configured and ready")  # 🔧
-        
+        # List of (file_path, icon, description)
+        summary_files = [
+            (venv_path, "\U0001f40d", "Virtual environment"),
+            ("pyproject.toml", "\U0001f4e6", "Modern Python configuration"),
+            ("uv.lock", "\U0001f512", "Locked dependency versions"),
+            (".gitignore", "\U0001f648", "Git ignore patterns"),
+            (".vscode", "\U0001f527", "VS Code configuration"),
+        ]
+        files_created = set(self._auto_intelligence.get("files_created", []))
+        for file_path, icon, desc in summary_files:
+            # file_path may be Path or str
+            path_obj = Path(file_path) if not isinstance(file_path, Path) else file_path
+            exists = path_obj.exists()
+            created = str(file_path) in files_created or (isinstance(file_path, Path) and str(file_path) in files_created)
+            marker = "[created]" if created else "[existing]" if exists else ""
+            if exists:
+                safe_print(f"   {icon} {file_path} — {desc} {marker}")
         # Dependency info - concrete numbers
         if self._auto_intelligence["packages_discovered"] > 0:
-            safe_print(f"\n\U0001f4e6 DEPENDENCIES:")  # 📦
+            safe_print("\n\U0001f4e6 DEPENDENCIES:")  # 📦
             safe_print(f"   \U0001f50d Found {self._auto_intelligence['packages_discovered']} packages from your code")  # 🔍
             if self._auto_intelligence["packages_installed"] > 0:
-                safe_print(f"   \u2795 Added {self._auto_intelligence['packages_installed']} packages to project")  # ➕
-            safe_print(f"   \u2705 All dependencies locked in uv.lock")  # ✅
-        
-        # Show critical files created (only the important ones)
-        key_files = []
-        for file_path in self._auto_intelligence["files_created"]:
-            if any(key in file_path for key in ["pyproject.toml", "uv.lock", ".gitignore", ".vscode"]):
-                key_files.append(file_path)
-        
-        if key_files:
-            safe_print(f"\n\U0001f4c4 KEY FILES CREATED:")  # 📄
-            for file_path in sorted(key_files):
-                if "pyproject.toml" in file_path:
-                    safe_print(f"   \U0001f4e6 {file_path} - Modern Python configuration")  # 📦
-                elif "uv.lock" in file_path:
-                    safe_print(f"   \U0001f512 {file_path} - Locked dependency versions")  # 🔒
-                elif ".gitignore" in file_path:
-                    safe_print(f"   \U0001f648 {file_path} - Git ignore patterns")  # 🙈
-                elif ".vscode" in file_path:
-                    safe_print(f"   \U0001f527 {file_path} - VS Code configuration")  # 🔧
-                else:
-                    safe_print(f"   \U0001f4c4 {file_path}")  # 📄
-        
+                safe_print(f"   \u2795 Ensured {self._auto_intelligence['packages_installed']} packages are in uv's .venv and pyproject.toml")  # ➕
+            safe_print("   \u2705 All dependencies locked in uv.lock")  # ✅
+
         # Issues - only show if there are any
         if self._auto_intelligence["issues"]:
-            safe_print(f"\n\u26a0\ufe0f  ISSUES TO REVIEW:")  # ⚠️
+            safe_print("\n\u26a0\ufe0f  ISSUES TO REVIEW:")  # ⚠️
             for issue in self._auto_intelligence["issues"][:3]:  # Show first 3 only
                 print(f"   • {issue}")
             if len(self._auto_intelligence["issues"]) > 3:
                 print(f"   ... +{len(self._auto_intelligence['issues']) - 3} more (see log)")
-        
+
         # Next steps - prioritize activation and immediate use
-        safe_print(f"\n\U0001f3af NEXT STEPS:")  # 🎯
-        safe_print(f"   1. \U0001f40d Activate virtual environment:")  # 🐍
+        safe_print("\n\U0001f3af NEXT STEPS:")  # 🎯
+        safe_print("   1. \U0001f40d Activate virtual environment:")  # 🐍
         print(f"      {activate_cmd}")
-        safe_print(f"   2. \U0001f680 Run your Python code (all dependencies ready)")  # 🚀
-        safe_print(f"   3. \U0001f527 Open in VS Code (optional):")  # 🔧
-        print(f"      code .")
+        safe_print("   2. \U0001f680 Run your Python code:\n      uv run your_script.py")  # 🚀
+        safe_print("   3. \U0001f527 Open in VS Code (optional):")  # 🔧
+        print("      code .")
         if Path(".git").exists():
-            safe_print(f"   4. \U0001f4dd Commit your changes:")  # 📝
-            print(f"      git add .")
-            print(f"      git commit -m 'Set up Python project with uv'")
+            safe_print("   4. \U0001f4dd Commit your changes:")  # 📝
+            print("      git add . && git commit -m 'Set up Python project with uv'")
         else:
-            safe_print(f"   4. \U0001f4dd Initialize git (optional):")  # 📝
-            print(f"      git init")
-            print(f"      git add .")
-            print(f"      git commit -m 'Set up Python project with uv'")
-        
-        print(f"\n\U0001f4cb Details: pyuvstarter_setup_log.json")  # 📋
+            safe_print("   4. \U0001f4dd Initialize git (optional):")  # 📝
+            print("      git init && git add . && git commit -m 'Set up Python project with pyuvstarter for uv'")
+
+        print("\n\U0001f4cb Details: pyuvstarter_setup_log.json")  # 📋
         print("="*60)
 
 # Global instance for backward compatibility during migration
