@@ -1044,7 +1044,7 @@ ACTION_STATUS_MAPPING = {
     "create_or_verify_venv": ("\U0001f40d Creating virtual environment .venv/", "\U0001f40d Created virtual environment .venv/"),  # 🐍
     "ensure_tool_pipreqs": ("\U0001f527 Installing pipreqs via uv tool install", "\U0001f527 Installed pipreqs via uv tool install"),  # 🔧
     "ensure_tool_ruff": ("\U0001f527 Installing ruff via uv tool install", "\U0001f527 Installed ruff via uv tool install"),  # 🔧
-    "ruff_unused_import_check": ("\U0001f50d Running ruff pre-flight checks", "\U0001f50d Completed ruff pre-flight checks"),  # 🔍
+    "ruff_unused_import_check": ("\U0001f50d Running ruff unused import checks", "\U0001f50d Completed ruff unused import checks"),  # 🔍
     "manage_project_dependencies": ("\U0001f4e6 Installing project dependencies", "\U0001f4e6 Installed project dependencies"),  # 📦
     "ensure_notebook_execution_support": ("\U0001f4d3 Setting up notebook support", "\U0001f4d3 Set up notebook support"),  # 📓
     "configure_vscode_settings": ("\u2699\ufe0f Configuring .vscode/settings.json", "\u2699\ufe0f Configured .vscode/settings.json"),  # ⚙️
@@ -1328,7 +1328,7 @@ class ProgressTracker:
             console_prefix = status.upper()
             if console_prefix == "SUCCESS":
                 console_prefix = "INFO"
-            details_str = f" | Details: {json.dumps(details)}" if details and details != {} else ""
+            details_str = f" | For details open: {json.dumps(details)}" if details and details != {} else ""
             print(f"{console_prefix}: ({action_name}) {message}{details_str}")
 
             # Still show summary at script end even in verbose mode
@@ -1410,11 +1410,11 @@ class ProgressTracker:
                 safe_print(f"   {icon} {file_path} — {desc} {marker}")
         # Dependency info - concrete numbers
         if self._auto_intelligence["packages_discovered"] > 0:
-            safe_print("\n\U0001f4e6 DEPENDENCIES:")  # 📦
+            safe_print("\n\U0001f4e6 DEPENDENCIES found and in uv.lock:")  # 📦
             safe_print(f"   \U0001f50d Found {self._auto_intelligence['packages_discovered']} packages from your code")  # 🔍
             if self._auto_intelligence["packages_installed"] > 0:
                 safe_print(f"   \u2795 Ensured {self._auto_intelligence['packages_installed']} packages are in uv's .venv and pyproject.toml")  # ➕
-            safe_print("   \u2705 All dependencies locked in uv.lock")  # ✅
+            # safe_print("   \u2705 All dependencies locked in uv.lock")  # ✅
 
         # Issues - only show if there are any
         if self._auto_intelligence["issues"]:
@@ -1438,7 +1438,7 @@ class ProgressTracker:
             safe_print("   4. \U0001f4dd Initialize git (optional):")  # 📝
             print("      git init && git add . && git commit -m 'Set up Python project with pyuvstarter for uv'")
 
-        print("\n\U0001f4cb Details: pyuvstarter_setup_log.json")  # 📋
+        print("\n\U0001f4cb For details open: pyuvstarter_setup_log.json")  # 📋
         print("="*60)
 
 # Global instance for backward compatibility during migration
@@ -3742,7 +3742,7 @@ class CLICommand(BaseSettings):
             _ensure_tool_available("pipreqs", major_action_results, self.dry_run, website="https://github.com/bndr/pipreqs")
             _ensure_tool_available("ruff", major_action_results, self.dry_run, website="https://docs.astral.sh/ruff/")
 
-            # Step 6: Run pre-flight checks, e.g., Ruff unused import detection.
+            # Step 6: Run unused import checks, e.g., Ruff unused import detection.
             _run_ruff_unused_import_check(self.project_dir, major_action_results, self.dry_run)
 
             # Step 7: Discover dependencies from all code sources.

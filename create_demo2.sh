@@ -104,7 +104,7 @@ log_success() {
 }
 
 log_info() {
-    echo -e "${C_BLUE}ℹ️  $*${C_RESET}"
+    echo -e "${C_CYAN}ℹ️  $*${C_RESET}"
 }
 
 # Safe directory/file removal with trash fallback
@@ -1074,15 +1074,15 @@ main() {
     type_command "tree -L 2 ."
     # Show REAL directory structure
     tree -L 2 . -I '__pycache__' --dirsfirst 2>/dev/null || ls -la .
-    sleep 1
+    sleep 5
 
     echo -e "\n${C_YELLOW}Let's check the requirements:${C_RESET}"
     type_command "cat requirements.txt"
     cat requirements.txt
     echo -e "\n${C_RED}   ⚠️  Missing 24 critical dependencies!${C_RESET}"
-    sleep 1.5
+    sleep 5
 
-    echo -e "\n${C_CYAN}Let's try running the analysis script:${C_RESET}"
+    echo -e "\n${C_CYAN}Let's try running the data analysis script:${C_RESET}"
     type_command "python3 scripts/data_analysis.py"
     sleep 0.3
 
@@ -1108,8 +1108,7 @@ main() {
     # Run from demo directory using development version of pyuvstarter
     (uv run --directory "$PARENT_DIR" pyuvstarter  "$DEMO_SCRIPT_DIR")
 
-    echo ""
-    sleep 3
+    sleep 0.5
 
     # NOTE: Previously simulated progress for demo purposes - now using real output above
     # The following was the original simulated version (kept for reference):
@@ -1142,7 +1141,7 @@ main() {
     # done
 
     echo -e "\n${C_GREEN}✨ Project modernization complete!${C_RESET}"
-    sleep 1.5
+    sleep 5
 
     # Act 3: The Result (10 seconds)
     echo -e "\n${C_BOLD}3️⃣  The Result: A Modern Python Project${C_RESET}\n"
@@ -1165,7 +1164,7 @@ main() {
     [ -d ".vscode" ] && echo -e "${C_GREEN}   ✅ .vscode/         ${C_DIM}# IDE configuration${C_RESET}" || echo -e "${C_RED}   ❌ .vscode/         ${C_DIM}# Not found!${C_RESET}"
     sleep 1.5
 
-    echo -e "\n${C_GREEN}Let's run the data analysis script again:${C_RESET}"
+    echo -e "\n${C_CYAN}Let's run the data analysis script again:${C_RESET}"
     type_command "source .venv/bin/activate && python scripts/data_analysis.py"
     sleep 0.3
 
@@ -1181,7 +1180,7 @@ main() {
         fi
     else
         echo -e "${C_GREEN}✅ All dependencies are now properly installed!"
-        echo -e "${C_BLUE}Running data analysis pipeline..."
+        echo -e "${C_CYAN}Running data analysis pipeline..."
         echo -e "Processed 1000 records successfully!${C_RESET}"
     fi
     sleep 1.5
@@ -1194,8 +1193,10 @@ main() {
     fi
     echo -e "\nYour project is now:"
     echo "  ✅ Using modern pyproject.toml"
-    echo "  ✅ Fully reproducible with uv.lock"
+    echo "  ✅ Fully reproducible with uv.lock & .venv"
     echo "  ✅ All 25+ dependencies found & installed"
+    echo "  ✅ If you import new packages,"
+    echo "     just run pyuvstarter again!"
     echo "  ✅ Ready for development!"
 
     sleep 2
@@ -1211,11 +1212,11 @@ main() {
 
     # Call to action with star request
     echo -e "\n${C_BOLD}${C_CYAN}🌟 Love what you saw?${C_RESET}"
-    echo "  ⭐ Star us on GitHub: github.com/ahundt/pyuvstarter"
-    echo "  🔄 Share with fellow Python developers"
+    echo "  ⭐ Star us on GitHub: ${C_BOLD}github.com/ahundt/pyuvstarter${C_RESET}"
+    echo "  🔄 Share with fellow Python researchers and developers"
     echo "  💬 Join our community & contribute features"
 
-    sleep 3
+    sleep 7
 }
 
 main
