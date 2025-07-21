@@ -1413,7 +1413,7 @@ cleanup() {
         find /tmp -name "trec-*" -type d 2>/dev/null | while read -r dir; do
             safe_remove "$dir"
         done
-        safe_remove "$DEMO_DIR/../demo_script.sh"
+        safe_remove "$DEMO_DIR/.demo_script.sh"
         safe_remove ".pyuv_done"; safe_remove "pyuvstarter_run.log"
         log_success "✨ Cleanup complete!"
     fi

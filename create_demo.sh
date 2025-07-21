@@ -551,7 +551,7 @@ cleanup() {
             safe_remove "$dir"
         done
         # Clean up demo script if it exists (in case recording was interrupted)
-        safe_remove "$DEMO_DIR/../demo_script.sh"
+        safe_remove "$DEMO_DIR/demo_script.sh"
     fi
 
     if [ $exit_code -eq 0 ]; then
@@ -778,7 +778,7 @@ EOF
         export DEMO_DIR
         # Create a temporary script that contains the demo logic
         # This is more reliable than trying to pass functions to asciinema
-        cat > "$DEMO_DIR/../demo_script.sh" << 'DEMO_SCRIPT_EOF'
+        cat > "$DEMO_DIR/demo_script.sh" << 'DEMO_SCRIPT_EOF'
 #!/bin/bash
 set -e
 
@@ -1010,7 +1010,7 @@ sleep 4
 exit $PYUVSTARTER_EXIT_CODE
 DEMO_SCRIPT_EOF
 
-        chmod +x "$DEMO_DIR/../demo_script.sh"
+        chmod +x "$DEMO_DIR/demo_script.sh"
 
         echo "🎬 Starting t-rec recording. The demo will run automatically."
         echo "💡 Press Ctrl+D when the demo completes to stop recording."
@@ -1026,11 +1026,11 @@ DEMO_SCRIPT_EOF
             --end-pause 5s \
             --start-pause 3s \
             --natural \
-            "$DEMO_DIR/../demo_script.sh"
+            "$DEMO_DIR/demo_script.sh"
 
         # Clean up temporary script if cleanup is enabled
         if ! is_true "$NO_CLEANUP"; then
-            safe_remove "$DEMO_DIR/../demo_script.sh"
+            safe_remove "$DEMO_DIR/demo_script.sh"
         fi
         echo "✅ Recording complete: $GIF_FILE"
     else
