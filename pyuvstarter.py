@@ -245,7 +245,6 @@ import json
 import os
 import shutil
 import subprocess
-import importlib
 import datetime
 import platform
 import re
@@ -278,13 +277,38 @@ if platform.system() == 'Windows':
 # --- Optional Built-in Imports ---
 # Handle version-specific modules
 
-# tomllib is the standard TOML parser in Python 3.11+
-# We import it at module level to avoid UnboundLocalError issues
-# Setting to None when not available allows clean version checking
-try:
-    import tomllib  # Python 3.11+
-except ImportError:
-    tomllib = None
+
+
+# --- Robust TOML Parser Import (Python 3.11+ and older) ---
+# Always provide a tomllib-compatible interface as 'tomllib'.
+tomllib = None
+if sys.version_info >= (3, 11):
+    try:
+        import tomllib as _tomllib
+        tomllib = _tomllib
+    except ImportError:
+        tomllib = None
+else:
+    try:
+        import toml as _toml
+        class _TomlLibCompat:
+            @staticmethod
+            def load(fp):
+                # toml.load expects str, not bytes
+                if hasattr(fp, 'read'):
+                    content = fp.read()
+                    if isinstance(content, bytes):
+                        content = content.decode('utf-8')
+                    return _toml.loads(content)
+                raise TypeError("Expected a file-like object for tomllib.load")
+            @staticmethod
+            def loads(s):
+                if isinstance(s, bytes):
+                    s = s.decode('utf-8')
+                return _toml.loads(s)
+        tomllib = _TomlLibCompat
+    except ImportError:
+        tomllib = None
 
 # importlib.metadata provides package version info (Python 3.8+)
 # Using a flag instead of setting to None avoids modifying module namespace
@@ -1030,6 +1054,132 @@ def _get_project_version(pyproject_path: Path = Path(__file__), project_name: st
             _log_action("get_project_version", "ERROR", f"Failed to read version from '{pyproject_path.name}'", details={"exception": str(e)})
     return "unknown"
 
+
+# --- UV Run Command Suggestion ---
+def get_uv_run_command(pyproject_path="pyproject.toml", script_not_found_message="uv run your_script.py # add '[project.scripts] your_script' to your pyproject.toml."):
+    """
+    Suggest the correct `uv run <script>` command by reading [project.scripts] from pyproject.toml.
+
+    This function uses the global `tomllib` import logic for robust TOML parsing across Python versions.
+    - If `tomllib` is available (Python 3.11+ or via the compatibility wrapper), it is used to parse the TOML file.
+    - If `tomllib` is None, the value of `script_not_found_message` is returned.
+    - The function checks that the referenced module and function in each script entry are importable and exist in the current environment before suggesting it.
+    - If multiple valid candidates exist, it lists them and asks the user to pick one.
+    - If no valid script is found, but scripts exist, it suggests the first script with a warning comment.
+    - If no scripts are found or TOML cannot be parsed, the value of `script_not_found_message` is returned.
+
+    Args:
+        pyproject_path (str or Path or None): Path to the pyproject.toml file. If None, attempts to resolve from project root or current directory.
+        script_not_found_message (str): The fallback message to return if no script can be suggested (default: "uv run your_script.py # add '[project.scripts] your_script=\"your_script\"' to your pyproject.toml.").
+
+    Returns:
+        str: The recommended `uv run <script>` command, or the fallback message if not possible.
+    """
+    # Defensive: ensure pyproject_path is a Path and not None
+    if pyproject_path is None:
+        return script_not_found_message
+    pyproject_path = Path(pyproject_path)
+    if tomllib is None:
+        return script_not_found_message  # Can't parse TOML
+    try:
+        if not pyproject_path.exists():
+            return script_not_found_message
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+        scripts = data.get("project", {}).get("scripts", {})
+
+        def prefer_main_candidates(names):
+            """Return a list of names, preferring those with 'main' in the name if any exist."""
+            main_names = [k for k in names if "main" in k.lower()]
+            return main_names if main_names else list(names)
+
+        if scripts:
+            import importlib.util
+            import importlib
+
+            candidates = prefer_main_candidates(scripts.keys())
+
+            valid_candidates = []  # List of (script_name, entry_point, mod, func, found_mod, found_func)
+            for script_name in candidates:
+                entry_point = scripts[script_name]
+                # Split entry point as 'module:function' or just 'module'
+                parts = entry_point.split(":")
+                mod = parts[0].strip()
+                func = parts[1].strip() if len(parts) > 1 else None
+                # Check if module exists
+                try:
+                    found_mod = importlib.util.find_spec(mod) is not None
+                except Exception:
+                    found_mod = False
+                # Check if function exists in module (if specified)
+                found_func = False
+                if found_mod and func:
+                    try:
+                        module_obj = importlib.import_module(mod)
+                        found_func = hasattr(module_obj, func)
+                    except Exception:
+                        found_func = False
+                elif found_mod:
+                    found_func = True  # If no function specified, just module is enough
+                valid_candidates.append((script_name, entry_point, mod, func, found_mod, found_func))
+
+            # Filter for candidates where both module and function (if specified) exist
+            working = [c for c in valid_candidates if c[4] and c[5]]
+
+            if len(working) == 1:
+                # Exactly one valid candidate: recommend it
+                script_name, entry_point, mod, func, _, _ = working[0]
+                return f"uv run {script_name}"
+            elif len(working) > 1:
+                # Multiple valid candidates: list them and ask user to pick
+                script_list = ", ".join([c[0] for c in working])
+                return f"uv run <script>  # Multiple valid scripts found: {script_list}. Pick the one you want to run."
+            else:
+                # No fully valid candidates, but maybe some with just module present
+                mod_only = [c for c in valid_candidates if c[4]]
+                if len(mod_only) == 1:
+                    script_name, entry_point, mod, func, _, _ = mod_only[0]
+                    # Suggest with a concrete, actionable one-liner
+                    return (
+                        f"uv run {script_name}  # (guess) Check that '{mod}.py' exists and that [project.scripts] {script_name} = \"{mod}:main\" matches your code."
+                    )
+                elif len(mod_only) > 1:
+                    script_list = ", ".join([c[0] for c in mod_only])
+                    return f"uv run <script>  # Multiple script modules found: {script_list}. Check that each has a callable 'main' function."
+                # If no candidates, fallback
+                return script_not_found_message
+        # --- ENHANCEMENT: If no scripts, scan for likely entry points ---
+        # Look for .py files in src/, scripts/, and project root (excluding __init__.py)
+        project_root = pyproject_path.parent
+        candidate_files = []
+        for subdir in [project_root / "src", project_root / "scripts", project_root]:
+            if subdir.exists() and subdir.is_dir():
+                for pyfile in subdir.glob("*.py"):
+                    # Exclude __init__.py and files with leading dot (e.g. .simulate.py)
+                    if pyfile.name != "__init__.py" and not pyfile.name.startswith('.'):
+                        candidate_files.append(pyfile)
+        # Remove duplicates and sort
+        candidate_files = sorted(set(candidate_files))
+        # Prefer files with 'main' in the name if any
+        preferred_files = prefer_main_candidates([f for f in candidate_files if "main" in f.name.lower()])
+        files_to_suggest = preferred_files if preferred_files else candidate_files
+        if len(files_to_suggest) == 1:
+            rel_path = files_to_suggest[0].relative_to(project_root)
+            return f"uv run {rel_path}  # (guess) No [project.scripts] found. Consider adding one for reproducibility."
+        elif 1 < len(files_to_suggest) <= 3:
+            rels = [str(f.relative_to(project_root)) for f in files_to_suggest]
+            candidates_block = "\n".join(f"      uv run {rel}" for rel in rels)
+            return (
+                "# Pick one to run, or add a [project.scripts] <your_script> entry to pyproject.toml:\n"
+                f"{candidates_block}"
+            )
+        # If no candidates, fallback
+        return script_not_found_message
+    except Exception:
+        # Catch-all for TOML or import errors
+        return script_not_found_message
+
+
 # --- JSON Logging Utilities ---
 _log_data_global = {}
 
@@ -1199,7 +1349,7 @@ class ProgressTracker:
                 bar_format='{desc} {percentage:3.0f}%|{bar}| {n}/{total} steps',
                 ncols=80
             )
-        except Exception as e:
+        except Exception:
             # Fallback to simple output if any progress bar creation fails
             safe_print(header)
             self._progress_bar = None
@@ -1370,27 +1520,28 @@ class ProgressTracker:
         safe_print("\U0001f389 PYUVSTARTER SETUP COMPLETE")  # 🎉
         print("="*60)
 
-        # Most actionable information first - what the user needs to know RIGHT NOW
-        import sys
-        from pathlib import Path
 
-        # Get current config for paths
-        if self.config:
-            project_dir = Path(self.config.project_dir)
+        # Robustly determine project_dir and venv_path
+        project_dir = None
+        venv_name = '.venv'
+        if self.config and hasattr(self.config, 'project_dir'):
+            try:
+                project_dir = Path(self.config.project_dir)
+            except Exception:
+                project_dir = Path.cwd()
             venv_name = getattr(self.config, 'venv_name', '.venv')
-            venv_path = project_dir / venv_name
-
-            # Platform-aware activation command
-            if sys.platform == "win32":
-                activate_cmd = f"{venv_path}\\Scripts\\activate"
-            else:
-                activate_cmd = f"source {venv_path}/bin/activate"
         else:
-            activate_cmd = "source .venv/bin/activate"
-            venv_path = Path(".venv")
+            project_dir = Path.cwd()
+        venv_path = project_dir / venv_name
+
+        # Platform-aware activation command
+        if sys.platform == "win32":
+            activate_cmd = f"{venv_path}\\Scripts\\activate"
+        else:
+            activate_cmd = f"source {venv_path}/bin/activate"
 
         safe_print("\n\U0001f680 PROJECT SUMMARY:")  # 🚀
-        safe_print(f"   \U0001f4c1 Project: {project_dir.name if self.config else 'Current directory'}")  # 📁
+        safe_print(f"   \U0001f4c1 Project: {project_dir.name if project_dir else 'Current directory'}")  # 📁
         # List of (file_path, icon, description)
         summary_files = [
             (venv_path, "\U0001f40d", "Virtual environment"),
@@ -1428,7 +1579,12 @@ class ProgressTracker:
         safe_print("\n\U0001f3af NEXT STEPS:")  # 🎯
         safe_print("   1. \U0001f40d Activate virtual environment:")  # 🐍
         print(f"      {activate_cmd}")
-        safe_print("   2. \U0001f680 Run your Python code:\n      uv run your_script.py")  # 🚀
+        # Use get_uv_run_command to suggest the correct script, passing the resolved pyproject.toml path
+        pyproject_path = project_dir / PYPROJECT_TOML_NAME
+        # print debug info about pyproject_path
+        safe_print(f"      (pyproject.toml path: {pyproject_path})")
+        uv_run_cmd = get_uv_run_command(pyproject_path=pyproject_path)
+        safe_print(f"   2. \U0001f680 Run your Python code:\n      {uv_run_cmd}")  # 🚀
         safe_print("   3. \U0001f527 Open in VS Code (optional):")  # 🔧
         print("      code .")
         if Path(".git").exists():
