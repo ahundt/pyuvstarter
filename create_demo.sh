@@ -74,16 +74,16 @@ show_help() {
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --no-cleanup) 
+        --no-cleanup)
             NO_CLEANUP=true
             shift
             ;;
-        --unit-test) 
+        --unit-test)
             UNIT_TEST_MODE=true
             NO_CLEANUP=true
             shift
             ;;
-        --record-demo) 
+        --record-demo)
             RECORD_DEMO=true
             shift
             ;;
@@ -103,10 +103,10 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
-        --help|-h) 
+        --help|-h)
             show_help
             ;;
-        *) 
+        *)
             echo "❌ Unknown option: $1"
             echo "Use --help for usage information"
             exit 1

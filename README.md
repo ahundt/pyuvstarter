@@ -24,7 +24,9 @@ Whether you are starting a new application or modernizing a years-old codebase, 
 
 ## Quick Look
 
-![Demo showing pyuvstarter automatically discovering and installing 20+ hidden dependencies from a legacy Python ML project, including imports from Jupyter notebooks, handling comments in requirements.txt, and creating a modern reproducible environment with pyproject.toml](https://github.com/ahundt/pyuvstarter/releases/download/v0.2.0-rc1/pyuvstarter_demo_0_2_0.gif)
+
+![pyuvstarter demo v0.2.0 Demo showing pyuvstarter automatically discovering and installing 20+ hidden dependencies from a legacy Python ML project, including imports from Jupyter notebooks, handling comments in requirements.txt, and creating a modern reproducible environment with pyproject.toml](https://github.com/user-attachments/assets/af8c45ff-c97b-4c95-a11f-c58024cfecec)
+
 
 Watch `pyuvstarter` rescue a legacy ML project by automatically finding ALL dependencies (even those hidden in notebooks), fixing incorrect package names, and creating a modern reproducible environment - all in under 30 seconds.
 
