@@ -72,6 +72,7 @@ C_RED='\033[0;31m'
 C_BLUE='\033[0;34m'
 C_YELLOW='\033[0;33m'
 C_CYAN='\033[0;36m'
+C_WHITE='\033[1;37m'
 C_GRAY='\033[0;90m'
 
 # === PLATFORM DETECTION ===
@@ -452,7 +453,7 @@ def analyze_data():
     """Run analysis - will fail without proper deps"""
     console = Console()
     console.print("[bold green]✅ All dependencies are now properly installed![/bold green]")
-    console.print("[blue]Running data analysis pipeline...[/blue]")
+    console.print("[cyan]Running data analysis pipeline...[/cyan]")
 
     # Simulate some work
     data = pd.DataFrame({
@@ -1035,6 +1036,7 @@ cd "$DEMO_SCRIPT_DIR" || {
 setup_colors() {
     C_RESET='\033[0m'
     C_BOLD='\033[1m'
+    C_WHITE='\033[1;37m'
     C_GREEN='\033[0;32m'
     C_RED='\033[0;31m'
     C_BLUE='\033[0;34m'
@@ -1149,10 +1151,10 @@ main() {
     sleep 0.5
 
     echo "What pyuvstarter created:"
-    type_command "ls -la | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
+    type_command "ls -alh | grep -E '(pyproject|venv|lock|gitignore|vscode)'"
 
     # Actually run the command and show real results
-    ls -la . | grep -E '(pyproject|venv|lock|gitignore|vscode)' | while read -r line; do
+    ls -alh . | grep -E '(pyproject|venv|lock|gitignore|vscode)' | while read -r line; do
         echo "   $line"
     done
 
@@ -1195,9 +1197,9 @@ main() {
     echo -e "\nYour project is now:"
     echo "  ✅ Using modern pyproject.toml"
     echo "  ✅ Fully reproducible with uv.lock & .venv"
-    echo "  ✅ All 25+ dependencies found & installed"
+    echo "  ✅ All 23+ dependencies found & installed"
     echo "  ✅ If you import new packages,"
-    echo "     just run pyuvstarter again!"
+    echo "     just re-run pyuvstarter!"
     echo "  ✅ Ready for development!"
 
     sleep 2
@@ -1213,7 +1215,7 @@ main() {
 
     # Call to action with star request
     echo -e "\n${C_BOLD}${C_CYAN}🌟 Love what you saw?${C_RESET}"
-    echo "  ⭐ Star us on GitHub: ${C_BOLD}github.com/ahundt/pyuvstarter${C_RESET}"
+    echo -e "  ⭐ Star us on GitHub: ${C_BOLD}github.com/ahundt/pyuvstarter${C_RESET}"
     echo "  🔄 Share with fellow Python researchers and developers"
     echo "  💬 Join our community & contribute features"
 
