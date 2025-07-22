@@ -1061,7 +1061,7 @@ main() {
     clear
 
     # Title card
-    echo -e "${C_BOLD}${C_CYAN}🚀 pyuvstarter Demo - Transform Legacy Python Projects${C_RESET}\n"
+    echo -e "${C_BOLD}🚀 pyuvstarter Demo - Transform Legacy & Current Python Projects${C_RESET}\n"
     sleep 1.5
 
     # Act 1: The Problem (10 seconds)
@@ -1077,6 +1077,7 @@ main() {
     sleep 5
 
     echo -e "\n${C_YELLOW}Let's check the requirements:${C_RESET}"
+    sleep 0.5
     type_command "cat requirements.txt"
     cat requirements.txt
     echo -e "\n${C_RED}   ⚠️  Missing 24 critical dependencies!${C_RESET}"
@@ -1328,7 +1329,9 @@ record_demo() {
     # Run t-rec with -m flag to create both GIF and MP4
     # The demo script now handles all path resolution internally
     t-rec -m \
+        --end-pause 7s \
         --output "$OUTPUT_BASENAME" \
+        --natural \
         -- "$DEMO_DIR/.demo_script.sh"
 
     # Check results
