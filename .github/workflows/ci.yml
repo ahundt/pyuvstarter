@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         exclude:
           # macOS runners are expensive, so only test on latest Python
           - os: macos-latest
@@ -159,6 +159,27 @@ jobs:
         source .venv/bin/activate
 
         chmod +x create_demo.sh create_demo2.sh
+
+        echo ""
+        echo "🧪 Running Python unit tests..."
+        echo "==================================="
+        TESTS_PASSED=true
+        for test_file in tests/test_*.py; do
+          echo "Running: $test_file"
+          if python "$test_file"; then
+            echo "✅ $test_file PASSED"
+          else
+            echo "❌ $test_file FAILED"
+            TESTS_PASSED=false
+          fi
+          echo ""
+        done
+
+        if [ "$TESTS_PASSED" = false ]; then
+          echo "❌ Python unit tests failed"
+          exit 1
+        fi
+        echo "✅ All Python unit tests passed"
 
         echo ""
         echo "Running create_demo2.sh unit tests..."
