@@ -15,7 +15,7 @@
 # limitations under the License.
 
 """
-pyuvstarter.py (v7.0 - Enhanced Robustness & User Experience)
+pyuvstarter.py (v7.1 - Enhanced Robustness & User Experience)
 
 Purpose:
     Automates Python project and environment setup using `uv`, focusing on modern, reproducible, and user-friendly workflows.
@@ -247,6 +247,83 @@ import shutil
 import subprocess
 import datetime
 import platform
+
+# --- Python Version Check ---
+# Check Python version early to provide helpful error messages for incompatible versions
+def check_python_version():
+    """
+    Check Python version and provide helpful error messages for incompatible versions.
+
+    Returns:
+        bool: True if Python version is compatible, False otherwise
+    """
+    # Check for Python 2.x - critical error
+    if sys.version_info[0] < 3:
+        print("=" * 70)
+        print("ERROR: pyuvstarter requires Python 3.11 or higher")
+        print("=" * 70)
+        print()
+        print("You are using Python {}.{} which is incompatible.".format(
+            sys.version_info[0], sys.version_info[1]))
+        print()
+        print("SOLUTIONS:")
+        print("1. Use UV package manager for proper Python management (RECOMMENDED):")
+        print("   # Check if UV is already installed:")
+        print("   uv --version")
+        print("   # If UV is not installed, install it:")
+        print("   curl -LsSf https://astral.sh/uv/install.sh | sh")
+        print("   # Create virtual environment and install dependencies:")
+        print("   uv venv")
+        print("   source .venv/bin/activate")
+        print("   uv sync")
+        print("   # Run pyuvstarter:")
+        print("   python3 pyuvstarter.py")
+        print()
+        print("2. Use python3 explicitly:")
+        print("   python3 pyuvstarter.py")
+        print()
+        print("3. Activate your UV virtual environment:")
+        print("   source .venv/bin/activate")
+        print("   python3 pyuvstarter.py")
+        print()
+        print("4. Update your system default (if you have admin rights):")
+        print("   ln -sf /usr/bin/python3 /usr/local/bin/python")
+        print()
+        print("=" * 70)
+        return False
+
+    # Check for Python 3.0-3.10 - warning but allow usage
+    if sys.version_info < (3, 11):
+        print("=" * 70)
+        print("WARNING: Python 3.11+ recommended")
+        print("=" * 70)
+        print()
+        print("You are using Python {}.{}.{}.".format(
+            sys.version_info[0], sys.version_info[1], sys.version_info[2]))
+        print("pyuvstarter requires Python 3.11+ for full compatibility.")
+        print()
+        print("RECOMMENDED SOLUTIONS:")
+        print("1. Use UV with Python 3.11+ (RECOMMENDED):")
+        print("   uv venv --python 3.11")
+        print("   source .venv/bin/activate")
+        print("   uv sync")
+        print("   python3 pyuvstarter.py")
+        print()
+        print("2. Install Python 3.11+ and activate virtual environment:")
+        print("   python3.11 -m venv .venv")
+        print("   source .venv/bin/activate")
+        print("   python3 pyuvstarter.py")
+        print()
+        print("=" * 70)
+
+    return True
+
+
+# Check Python version before proceeding
+if not check_python_version():
+    sys.exit(1)
+
+
 import re
 import ast
 import tempfile
@@ -256,6 +333,10 @@ import functools
 
 from pathlib import Path
 from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
+
+# --- Version Information ---
+# Single source of truth for version information
+PYUVSTARTER_VERSION = "0.2.1"
 
 # --- Windows Unicode Encoding Setup ---
 # Handle Windows Unicode encoding issues at module import time
@@ -338,7 +419,7 @@ try:
     import typer
     from typing_extensions import Annotated, override
 except ImportError as e:
-    print(f"ERROR: Failed to import required dependency 'typer': {e}")
+    print("ERROR: Failed to import required dependency 'typer': {}".format(e))
     print("")
     print("This usually means typer is not installed. Please install it using:")
     print("  pip install typer")
@@ -351,7 +432,7 @@ try:
     from pydantic import Field, ValidationError
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ImportError as e:
-    print(f"ERROR: Failed to import required dependency 'pydantic': {e}")
+    print("ERROR: Failed to import required dependency 'pydantic': {}".format(e))
     print("")
     print("This usually means pydantic is not installed. Please install it using:")
     print("  pip install pydantic pydantic-settings")
@@ -1356,6 +1437,7 @@ class ProgressTracker:
 
         self._initialized = True
 
+
     def update_progress_with_auto_intelligence(self, action_name: str):
         """Update progress with temporal flow and intelligence."""
         # Only update if this is a new step we haven't seen before
@@ -2031,6 +2113,10 @@ def _extract_package_name_from_specifier(specifier: str) -> str:
     """
     from packaging.requirements import Requirement
 
+    # Handle None gracefully
+    if specifier is None:
+        return ""
+
     try:
         req = Requirement(specifier)
         return req.name.lower()
@@ -2159,6 +2245,46 @@ def _canonicalize_pkg_name(name: str) -> str:
     # If this assumption is wrong, the user will see a clear error from uv/pip
     # and we can add it to our mapping for future users
     return name_lower
+
+
+def _extract_package_name_from_dependency_tuple(dependency_tuple) -> str:
+    """
+    Extract package name from a dependency tuple (e.g., from uv's dependency format).
+
+    This handles cases where uv returns dependency information as tuples
+    rather than simple specifier strings.
+
+    Examples:
+        ('numpy', 'numpy>=1.19.0') -> 'numpy'
+        ('requests', 'requests[security]>=2.25.0') -> 'requests'
+        ('name-only', 'name-only') -> 'name-only'
+        (None, None) -> ''  # Handle None gracefully
+    """
+    if dependency_tuple is None:
+        return ""
+
+    try:
+        # If it's a string, delegate to the string function
+        if isinstance(dependency_tuple, str):
+            return _extract_package_name_from_specifier(dependency_tuple)
+
+        # If it's a tuple or list, extract the name (usually first element)
+        if isinstance(dependency_tuple, (tuple, list)):
+            if len(dependency_tuple) >= 1:
+                name = dependency_tuple[0]
+                if name and str(name).strip():  # Non-empty string after stripping
+                    return str(name).lower()
+                elif len(dependency_tuple) >= 2:
+                    # If first element is empty, try the second (specifier)
+                    return _extract_package_name_from_specifier(str(dependency_tuple[1]))
+            return ""
+
+        # If it's any other type, convert to string and parse
+        return _extract_package_name_from_specifier(str(dependency_tuple))
+
+    except Exception:
+        # Fallback: return empty string for any parsing errors
+        return ""
 
 
 def _find_all_notebooks(scan_path: Path, ignore_manager: Optional[GitIgnore]) -> List[Path]:
@@ -3278,7 +3404,7 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
         "description": "Runs the currently open Python file using the uv-managed virtual environment."
     }
     default_file_content = {
-        "version": "0.2.0",
+        "version": PYUVSTARTER_VERSION,
         "configurations": [default_config_entry]
     }
 
@@ -3313,7 +3439,7 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
                         json.dump(data, f, indent=4)
                     _log_action(action_name, "SUCCESS", "Added launch config for current file to existing launch.json.")
                 else:
-                    _log_action(action_name, "INFO", "Launch config for current file and uv venv already present in launch.json.")
+                    _log_action(action_name, "SUCCESS", "Launch config for current file and uv venv already present in launch.json.")
             except json.JSONDecodeError:
                 backup_path = launch_path.with_suffix(f".bak_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
                 shutil.copy2(launch_path, backup_path)
@@ -4303,7 +4429,7 @@ class CLICommand(BaseSettings):
 #    as the primary entry point for the command's logic.
 @app.callback(invoke_without_command=True)
 def main(
-    ctx: typer.Context,
+    ctx: typer.Context = None,
     config_file: Annotated[Optional[Path], typer.Option("--config-file", "-c", help="Path to a JSON config file.")] = None,
     version: Annotated[Optional[bool], typer.Option("--version", help="Show version and exit.", is_eager=True)] = None,
     project_dir: Annotated[Path, typer.Argument(help="Project directory to operate on (default: current directory).")] = Path.cwd(),
@@ -4322,18 +4448,34 @@ def main(
     This function handles CLI parsing via Typer and then instantiates
     the CLICommand Pydantic model for validation and execution.
     """
-    if ctx.resilient_parsing:
-        # Typer's internal flag for handling shell completion.
-        return
-
     # Handle the --version flag early
-    if ctx.params.get("version"):
-        typer.echo(f"pyuvstarter version: {_get_project_version()}")
+    if version:
+        typer.echo("pyuvstarter version: {}".format(PYUVSTARTER_VERSION))
         raise typer.Exit()
+
+    # Handle Typer shell completion
+    if ctx and ctx.resilient_parsing:
+        return
 
     # Use ctx.params which has all parsed values as a dictionary
     # Filter out None values to allow defaults and env vars to work
-    cli_kwargs = {k: v for k, v in ctx.params.items() if v is not None and k != "version"}
+    if ctx is not None:
+        cli_kwargs = {k: v for k, v in ctx.params.items() if v is not None and k != "version"}
+    else:
+        # When ctx is None, construct from the function parameters
+        cli_kwargs = {
+            'config_file': config_file,
+            'project_dir': project_dir,
+            'venv_name': venv_name,
+            'gitignore_name': gitignore_name,
+            'log_file_name': log_file_name,
+            'dependency_migration': dependency_migration,
+            'dry_run': dry_run,
+            'full_gitignore_overwrite': full_gitignore_overwrite,
+            'no_gitignore': no_gitignore,
+            'ignore_patterns': ignore_patterns or [],
+            'verbose': verbose,
+        }
 
     # Create CLICommand instance - this will trigger model_post_init
     try:
@@ -4342,7 +4484,7 @@ def main(
         safe_typer_secho("\u274c Configuration validation error:", fg=typer.colors.RED, bold=True)  # ❌
         for error in e.errors():
             field = " -> ".join(str(loc) for loc in error['loc'])
-            safe_typer_secho(f"  • {field}: {error['msg']}", fg=typer.colors.RED)
+            safe_typer_secho("  • {}: {}".format(field, error['msg']), fg=typer.colors.RED)
         raise typer.Exit(code=1)
     except Exception as e:
         safe_typer_secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True)
@@ -4356,7 +4498,8 @@ if __name__ == "__main__":
     # Wrap `app()` in a try-except to catch very early errors (e.g., invalid
     # CLI arguments that prevent Pydantic model instantiation).
     try:
-        app()
+        # Call the Typer app to handle CLI parsing and invoke main callback
+        sys.exit(app())
     except Exception as e:
         # This is a last-resort error handler for issues *before* the model_post_init
         # can log them (e.g., Typer internal errors or Pydantic ValidationError
