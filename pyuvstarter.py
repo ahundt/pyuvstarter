@@ -4097,11 +4097,10 @@ class CLICommand(BaseSettings):
                               "Final attempt - removing ALL version constraints...")
 
                     # Extract bare package names - strip ALL version info
-                    packages_no_versions = set()
-                    for dep in discovery_unpinned.all_unique_dependencies:
-                        pkg_name = _extract_package_name_from_specifier(dep)
-                        if pkg_name:
-                            packages_no_versions.add(pkg_name)
+                    # discovery_unpinned.all_unique_dependencies is a set of (canonical_name, full_spec) tuples
+                    # We only need the canonical names without versions
+                    # Filter out empty strings (built-in modules that _canonicalize_pkg_name returns as "")
+                    packages_no_versions = {canonical_name for canonical_name, _ in discovery_unpinned.all_unique_dependencies if canonical_name}
 
                     # Log exactly what we're attempting (Philosophy: "Transparent Operations")
                     _log_action("packages_being_installed", "INFO",
@@ -4112,6 +4111,8 @@ class CLICommand(BaseSettings):
                               })
 
                     # Final attempt with bare package names
+                    # Convert string set to tuple set format expected by _manage_project_dependencies
+                    packages_as_tuples = {(pkg, pkg) for pkg in packages_no_versions}
                     result_phase3 = _manage_project_dependencies(
                         project_root=self.project_dir,
                         venv_python_executable=venv_python_executable,
@@ -4119,7 +4120,7 @@ class CLICommand(BaseSettings):
                         migration_mode=self.dependency_migration,
                         dry_run=self.dry_run,
                         declared_deps_before_management=declared_deps,
-                        project_imported_packages=packages_no_versions
+                        project_imported_packages=packages_as_tuples
                     )
 
                     if not isinstance(result_phase3, dict) or result_phase3.get("status") != "NEEDS_UNPINNED_RETRY":
