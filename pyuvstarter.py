@@ -4263,9 +4263,56 @@ class CLICommand(BaseSettings):
 
             # Step 10: Perform final uv sync to ensure environment matches pyproject.toml.
             _log_action("uv_final_sync", "INFO", "Performing final sync of environment with 'pyproject.toml' and 'uv.lock'.")
-            _run_command(["uv", "sync", "--python", str(venv_python_executable)], "uv_sync_dependencies_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
-            _log_action("uv_final_sync", "SUCCESS", "Environment synced successfully.")
-            major_action_results.append(("uv_final_sync", "SUCCESS"))
+            try:
+                _run_command(["uv", "sync", "--python", str(venv_python_executable)], "uv_sync_dependencies_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
+                _log_action("uv_final_sync", "SUCCESS", "Environment synced successfully.")
+                major_action_results.append(("uv_final_sync", "SUCCESS"))
+            except subprocess.CalledProcessError as e:
+                # Sync failed - log the error but don't crash the entire script
+                # This allows users to see what was accomplished and get actionable guidance
+                _log_action("uv_final_sync", "WARN",
+                           f"⚠️  Environment sync failed. Some packages may be incompatible with your Python version.\n"
+                           f"   The script will continue to show what was accomplished.\n"
+                           f"   See error details above for specific package conflicts.")
+                major_action_results.append(("uv_final_sync", "FAILED"))
+
+                # Read requires-python from pyproject.toml for guidance
+                requires_python_str = "not specified"
+                try:
+                    if sys.version_info >= (3, 11):
+                        import tomllib
+                        with open(pyproject_file_path, "rb") as f:
+                            pyproject_data = tomllib.load(f)
+                    else:
+                        with open(pyproject_file_path, "rb") as f:
+                            pyproject_data = toml.load(f)
+                    requires_python_str = pyproject_data.get('project', {}).get('requires-python', 'not specified')
+                except Exception:
+                    pass  # If we can't read it, just use default
+
+                # Provide actionable next steps based on the error
+                sync_guidance = (
+                    f"\n📋 NEXT STEPS TO RESOLVE SYNC FAILURE:\n"
+                    f"\n1. Check Python version compatibility:"
+                    f"\n   Your venv uses: {venv_python_executable}"
+                    f"\n   Project requires: {requires_python_str}"
+                    f"\n   Some packages may not support your Python version yet."
+                    f"\n\n2. Review package conflicts in the error output above"
+                    f"\n   Look for messages like 'no wheels with matching Python version'"
+                    f"\n   or 'incompatible' to identify problematic packages."
+                    f"\n\n3. Options to fix:"
+                    f"\n   a) Use an older Python version that packages support:"
+                    f"\n      uv venv --python 3.13  # Then re-run pyuvstarter"
+                    f"\n   b) Remove incompatible packages from pyproject.toml"
+                    f"\n   c) Wait for package maintainers to release newer compatible wheels"
+                    f"\n   d) Try syncing without dev dependencies:"
+                    f"\n      uv sync --no-dev --python {venv_python_executable}"
+                    f"\n\n4. Manual sync command for debugging:"
+                    f"\n   uv sync --python {venv_python_executable} --verbose"
+                )
+                _log_action("uv_sync_guidance", "INFO", sync_guidance)
+                # Print guidance to console so users see it immediately
+                print(sync_guidance)
 
             # Step 11: Configure VS Code workspace settings and launch configurations.
             _configure_vscode_settings(self.project_dir, venv_python_executable, self.dry_run)
