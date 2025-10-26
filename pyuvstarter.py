@@ -2126,6 +2126,36 @@ def _extract_package_name_from_specifier(specifier: str) -> str:
         return base_name.lower() if base_name else ""
 
 
+def _categorize_uv_add_error(stderr: str) -> str:
+    """Categorize uv add error messages into actionable failure reasons.
+
+    Args:
+        stderr: Error output from uv add command (should be lowercased before passing)
+
+    Returns:
+        Human-readable failure reason string
+
+    Examples:
+        'no solution found...python' -> 'incompatible with current Python version'
+        'no solution found' -> 'version conflict with existing dependencies'
+        'failed to build' -> 'build failed (missing system dependencies)'
+    """
+    stderr_lower = stderr.lower() if stderr else ""
+
+    if "no solution found" in stderr_lower and "python" in stderr_lower:
+        return "incompatible with current Python version"
+    elif "no solution found" in stderr_lower:
+        return "version conflict with existing dependencies"
+    elif "can't be installed" in stderr_lower and "wheel" in stderr_lower:
+        return "no compatible wheel available for your platform/Python version"
+    elif "failed to build" in stderr_lower:
+        return "build failed (missing system dependencies)"
+    elif "could not find" in stderr_lower or "does not exist" in stderr_lower:
+        return "package not found on PyPI"
+    else:
+        return "unknown error"
+
+
 def _canonicalize_pkg_name(name: str) -> str:
     """
     Canonicalize package import names to their PyPI package names for consistency.
@@ -3237,12 +3267,62 @@ def _manage_project_dependencies(
                     # Return status indicating retry needed
                     return {"status": "NEEDS_UNPINNED_RETRY", "conflicts": conflict_details}
 
-                elif "no solution found" in stderr:
-                    _log_action("uv_add_conflict", "ERROR",
-                              "DEPENDENCY CONFLICT: Could not find compatible package versions.\n"
-                              "ACTION: Check the error above and either:\n"
-                              "  • Adjust package versions in requirements.txt\n"
-                              "  • Update requires-python in pyproject.toml")
+                elif "no solution found" in stderr or "can't be installed" in stderr:
+                    # Bulk add failed - try adding packages one by one to salvage what we can
+                    # This handles both dependency conflicts and platform/Python version wheel availability issues
+                    _log_action("uv_add_conflict", "WARN",
+                              "⚡ Bulk package add failed due to conflicts. Trying packages one-by-one to install what's compatible...")
+
+                    successful_packages = []
+                    failed_packages = []
+
+                    for pkg in final_packages_to_add:
+                        # Use existing helper function (DRY principle)
+                        pkg_name = _extract_package_name_from_specifier(pkg)
+
+                        # Edge case: Skip if package name extraction failed (empty string)
+                        # This can happen for built-in modules that shouldn't be installed
+                        if not pkg_name:
+                            _log_action("uv_add_skip_empty", "DEBUG",
+                                      f"Skipping package with empty canonical name: '{pkg}'")
+                            continue
+
+                        try:
+                            _run_command(["uv", "add", pkg], f"uv_add_individual_{pkg_name}",
+                                       work_dir=project_root, suppress_console_output_on_success=True)
+                            successful_packages.append(pkg)
+                        except subprocess.CalledProcessError as pkg_error:
+                            # Use helper function to categorize error (DRY principle)
+                            pkg_stderr = pkg_error.stderr if pkg_error.stderr else ""
+                            failure_reason = _categorize_uv_add_error(pkg_stderr)
+                            failed_packages.append((pkg, failure_reason))
+
+                    # Report results with progressive disclosure
+                    if successful_packages:
+                        _log_action("uv_add_partial_success", "SUCCESS",
+                                  f"✅ Successfully installed {len(successful_packages)}/{len(final_packages_to_add)} packages:\n" +
+                                  "\n".join(f"  • {pkg}" for pkg in successful_packages[:10]) +
+                                  (f"\n  ... and {len(successful_packages) - 10} more" if len(successful_packages) > 10 else ""))
+
+                    if failed_packages:
+                        failure_summary = (
+                            f"⚠️  Failed to install {len(failed_packages)}/{len(final_packages_to_add)} packages:\n" +
+                            "\n".join(f"  • {pkg}: {reason}" for pkg, reason in failed_packages[:10]) +
+                            (f"\n  ... and {len(failed_packages) - 10} more (see log)" if len(failed_packages) > 10 else "") +
+                            f"\n\n💡 TIP: These packages were skipped to allow the rest of your project to work.\n" +
+                            f"    You can manually adjust versions in pyproject.toml or remove incompatible packages."
+                        )
+                        _log_action("uv_add_partial_failure", "WARN", failure_summary,
+                                  details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages]})
+
+                    # If we got at least some packages, consider it a partial success
+                    # Don't return error status - let the process continue
+                    if not successful_packages:
+                        # Total failure - all packages failed
+                        _log_action("uv_add_total_failure", "ERROR",
+                                  "❌ Could not install any packages. All packages have conflicts or compatibility issues.\n"
+                                  "ACTION: Check Python version compatibility and package versions in pyproject.toml")
+
                 elif "failed to build" in stderr:
                     # Extract which package failed to build
                     build_fail_match = re.search(r"error: Failed to build: ([^\s]+)", stderr_full)
