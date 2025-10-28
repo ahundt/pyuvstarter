@@ -26,26 +26,55 @@ if ! command -v pyuvstarter >/dev/null 2>&1; then
     exit 1
 fi
 
-# Run all tests
-TESTS=(
+# Run shell-based integration tests
+INTEGRATION_TESTS=(
     "test_new_project.sh"
     "test_legacy_migration.sh"
 )
 
+# Run Python unit tests
+PYTHON_TESTS=(
+    "test_extraction_fix.py"
+)
+
 FAILED_TESTS=()
 
-for test in "${TESTS[@]}"; do
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "🧪 Running Python Unit Tests"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Run Python unit tests first (don't need temp directory)
+cd "$ORIGINAL_DIR"
+for test in "${PYTHON_TESTS[@]}"; do
     echo "Running: $test"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
+    if source "$ORIGINAL_DIR/.venv/bin/activate" && python "tests/$test"; then
+        echo "✅ $test PASSED"
+    else
+        echo "❌ $test FAILED"
+        FAILED_TESTS+=("$test")
+    fi
+
+    echo ""
+done
+
+echo "🚀 Running Integration Tests"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Run shell-based integration tests
+cd "$TEST_DIR"
+for test in "${INTEGRATION_TESTS[@]}"; do
+    echo "Running: $test"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
     if bash "$ORIGINAL_DIR/tests/$test"; then
         echo "✅ $test PASSED"
     else
         echo "❌ $test FAILED"
         FAILED_TESTS+=("$test")
     fi
-    
+
     echo ""
     # Clean up between tests
     cd "$TEST_DIR"
@@ -56,7 +85,10 @@ done
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Test Summary"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Total tests: ${#TESTS[@]}"
+TOTAL_TESTS=$((${#PYTHON_TESTS[@]} + ${#INTEGRATION_TESTS[@]}))
+echo "Total tests: $TOTAL_TESTS"
+echo "  - Python unit tests: ${#PYTHON_TESTS[@]}"
+echo "  - Integration tests: ${#INTEGRATION_TESTS[@]}"
 echo "Failed tests: ${#FAILED_TESTS[@]}"
 
 if [ ${#FAILED_TESTS[@]} -eq 0 ]; then
