@@ -164,7 +164,14 @@ jobs:
         echo "🧪 Running Python unit tests..."
         echo "==================================="
         TESTS_PASSED=true
+        TEST_COUNT=0
         for test_file in tests/test_*.py; do
+          # Check if glob matched any files (if not, test_file will be literal "tests/test_*.py")
+          if [ ! -f "$test_file" ]; then
+            echo "No Python test files found matching tests/test_*.py"
+            break
+          fi
+          TEST_COUNT=$((TEST_COUNT + 1))
           echo "Running: $test_file"
           if python "$test_file"; then
             echo "✅ $test_file PASSED"
@@ -175,11 +182,14 @@ jobs:
           echo ""
         done
 
-        if [ "$TESTS_PASSED" = false ]; then
+        if [ $TEST_COUNT -eq 0 ]; then
+          echo "⚠️  No Python unit tests found - skipping"
+        elif [ "$TESTS_PASSED" = false ]; then
           echo "❌ Python unit tests failed"
           exit 1
+        else
+          echo "✅ All Python unit tests passed ($TEST_COUNT tests)"
         fi
-        echo "✅ All Python unit tests passed"
 
         echo ""
         echo "Running create_demo2.sh unit tests..."
