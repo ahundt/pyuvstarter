@@ -3428,7 +3428,10 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path,
             settings_data = {} # Start with empty settings if error reading
 
 
-    interpreter_path = str(venv_python_executable)
+    # Use ${workspaceFolder} (VSCode substitutes this automatically) with relative path
+    # VSCode uses forward slashes even on Windows, so use as_posix()
+    relative_venv_path = venv_python_executable.relative_to(project_root)
+    interpreter_path = "${workspaceFolder}/" + relative_venv_path.as_posix()
     settings_data["python.defaultInterpreterPath"] = interpreter_path
 
     # Construct the final content: comment + JSON string
@@ -3468,6 +3471,12 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
     vscode_dir = project_root / VSCODE_DIR_NAME
     launch_path = vscode_dir / LAUNCH_FILE_NAME
     vscode_dir.mkdir(exist_ok=True)
+
+    # Use ${workspaceFolder} (VSCode substitutes this automatically) with relative path
+    # VSCode uses forward slashes even on Windows, so use as_posix()
+    relative_venv_path = venv_python_executable.relative_to(project_root)
+    vscode_python_path = "${workspaceFolder}/" + relative_venv_path.as_posix()
+
     # Use ${file} so the user can run any Python file they have open in the editor
     default_config_entry = {
         "name": "Python: Run Current File (uv venv)",
@@ -3475,7 +3484,7 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
         "request": "launch",
         "program": "${file}",
         "console": "integratedTerminal",
-        "python": str(venv_python_executable),
+        "python": vscode_python_path,
         "justMyCode": True,
         "internalConsoleOptions": "neverOpen",
         # "env": {},  # Removed to let VS Code inherit the environment, including venv activation
