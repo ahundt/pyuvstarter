@@ -3084,57 +3084,89 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
         project_info = _detect_project_structure(project_root)
         is_package = project_info.get('is_package', False)
 
-        # Handle relative imports for package projects
-        if relative_imports and is_package:
+        # Detect F401 violations that involve relative imports (these should be fixed too)
+        relative_import_f401_violations = []
+        for file_path, line_no, message in unused:
+            # Check if the unused import message mentions relative imports
+            # Messages like '`.utils` imported but unused' indicate relative imports
+            if "relative import" in message.lower() or "`. " in message or message.strip().startswith("`"):
+                relative_import_f401_violations.append((file_path, line_no, message))
+
+        # Handle relative imports and F401 relative import violations for package projects
+        should_fix_imports = (relative_imports and is_package) or (relative_import_f401_violations and is_package)
+
+        if should_fix_imports:
+            total_issues = len(relative_imports) + len(relative_import_f401_violations)
             _log_action(
                 action_name,
                 "INFO",
-                f"Found {len(relative_imports)} relative import issue(s) in package project. Auto-fixing...",
-                details={"relative_imports_count": len(relative_imports), "relative_imports_details": relative_imports}
+                f"Found {total_issues} import issue(s) in package project that need fixing. Auto-fixing...",
+                details={
+                    "relative_imports_count": len(relative_imports),
+                    "relative_imports_details": relative_imports,
+                    "relative_import_f401_count": len(relative_import_f401_violations),
+                    "relative_import_f401_details": relative_import_f401_violations
+                }
             )
 
             if not dry_run:
                 try:
-                    # Use Ruff to automatically fix relative imports and unused imports
-                    fix_cmd = [
-                        "uvx",
-                        "ruff",
-                        "check",
-                        "--fix",  # Automatically fix detected issues
-                        "--select=TID252,F401",  # Relative imports + unused imports
-                        str(project_root)
-                    ]
+                    # Create temporary Ruff configuration to ban all relative imports
+                    temp_config_path = project_root / ".ruff_temp.toml"
+                    temp_config_content = """[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+"""
+                    with open(temp_config_path, 'w') as f:
+                        f.write(temp_config_content)
 
-                    _run_command(
-                        fix_cmd,
-                        f"{action_name}_fix_exec",
-                        work_dir=project_root,
-                        dry_run=False
-                    )
+                    try:
+                        # Use Ruff to automatically fix relative imports and unused imports
+                        fix_cmd = [
+                            "uvx",
+                            "ruff",
+                            "check",
+                            "--fix",  # Automatically fix detected issues
+                            "--unsafe-fixes",  # Enable unsafe fixes to convert relative imports to absolute
+                            "--select=TID252,F401",  # Relative imports + unused imports
+                            "--config", str(temp_config_path),  # Use our temporary config
+                            str(project_root)
+                        ]
+
+                        _run_command(
+                            fix_cmd,
+                            f"{action_name}_fix_exec",
+                            work_dir=project_root,
+                            dry_run=False
+                        )
+                    finally:
+                        # Clean up temporary config file
+                        if temp_config_path.exists():
+                            temp_config_path.unlink()
 
                     _log_action(action_name, "SUCCESS",
-                              f"✅ Automatically fixed {len(relative_imports)} relative import issue(s) and {len(unused)} unused import(s).")
+                              f"✅ Automatically fixed {len(relative_imports)} relative import issue(s) and {len(relative_import_f401_violations)} relative import F401 issue(s).")
 
                     # Enhanced logging: Show examples of fixed imports
-                    if relative_imports:
-                        examples = relative_imports[:3]  # Show first 3 examples
+                    all_relative_issues = relative_imports + relative_import_f401_violations
+                    if all_relative_issues:
+                        examples = all_relative_issues[:3]  # Show first 3 examples
                         example_text = "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in examples])
-                        if len(relative_imports) > 3:
-                            example_text += f"\n  ... and {len(relative_imports) - 3} more"
+                        if len(all_relative_issues) > 3:
+                            example_text += f"\n  ... and {len(all_relative_issues) - 3} more"
 
                         _log_action(action_name, "INFO",
-                                  "Relative import examples that were converted to absolute imports:",
+                                  "Import examples that were converted to absolute imports:",
                                   details={
                                       "fixed_examples": example_text,
                                       "total_relative_fixed": len(relative_imports),
-                                      "total_unused_fixed": len(unused)
+                                      "total_f401_fixed": len(relative_import_f401_violations)
                                   })
 
                     _log_action(action_name, "INFO",
                               "Relative imports converted to absolute imports. Python files now work both as scripts and modules.",
                               details={
                                   "relative_imports_fixed": len(relative_imports),
-                                  "unused_imports_fixed": len(unused),
+                                  "f401_relative_imports_fixed": len(relative_import_f401_violations),
                                   "benefit": "VSCode debugger now works without special configuration"
                               })
 
@@ -3142,7 +3174,7 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
                     _log_action(action_name, "WARN",
                               f"Failed to auto-fix import issues with Ruff: {e}",
                               details={
-                                  "suggestion": "You can manually run: uvx ruff check . --fix --select=TID252,F401"
+                                  "suggestion": "You can manually run: uvx ruff check . --fix --unsafe-fixes --select=TID252,F401"
                               })
 
         # Report remaining unused imports (if any weren't fixed)

@@ -52,10 +52,16 @@ class ImportFixingTestSuite:
         cmd = [
             "uv", "run",
             "pyuvstarter",
-            "--dry-run" if dry_run else "--no-dry-run",
+        ]
+
+        # Add dry-run flag only if specified
+        if dry_run:
+            cmd.append("--dry-run")
+
+        cmd.extend([
             "--verbose",
             str(project_path.resolve())
-        ]
+        ])
 
         try:
             result = subprocess.run(
@@ -111,44 +117,105 @@ class ImportFixingTestSuite:
 
         return absolute_imports
 
-    def test_src_layout_package_with_relative_imports(self):
-        """Test src-layout package with relative imports should be fixed."""
-        print("\n🧪 Testing: src_layout_pkg_with_relative_imports")
+    def test_script_execution_before_and_after_fix(self):
+        """Test that relative imports fail as scripts, then work after pyuvstarter fixes them."""
+        print("\n🧪 Testing: Script execution before and after import fixing")
         print("=" * 60)
 
         test_project = self.test_dir / "src_layout_pkg_with_relative_imports"
         temp_project = self.setup_test_environment(test_project)
 
         try:
-            # Check initial state - should have relative imports
+            # Step 1: Verify initial state has relative imports
             initial_relative = self.find_relative_imports(temp_project)
             print(f"🔍 Initial relative imports found: {len(initial_relative)}")
             for file_path, line_num, line in initial_relative:
                 print(f"  - {file_path}:{line_num}: {line}")
 
-            # Run pyuvstarter (dry run first)
-            returncode, stdout, stderr = self.run_pyuvstarter(temp_project, dry_run=True)
-            print(f"🚀 Dry run result: {returncode}")
+            if len(initial_relative) == 0:
+                print("❌ No relative imports found in test project - test setup error")
+                return False
+
+            # Step 2: Test script execution FAILS before fixing (this is EXPECTED SUCCESS)
+            main_script = temp_project / "src" / "myproject" / "main.py"
+            print(f"🧪 Testing script execution BEFORE fix: {main_script.relative_to(temp_project)}")
+
+            # Use uv run to properly test script execution - it should FAIL with ImportError
+            try:
+                result = subprocess.run(
+                    ["uv", "run", "--quiet", "python3", str(main_script)],
+                    capture_output=True,
+                    text=True,
+                    cwd=temp_project,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    print(f"❌ UNEXPECTED: Script execution should have failed with ImportError but succeeded")
+                    print(f"   This indicates the test project setup is incorrect")
+                    return False
+                else:
+                    print(f"✅ EXPECTED: Script execution failed with ImportError (this is correct before pyuvstarter fixes)")
+                    # Verify it's the expected ImportError
+                    if "attempted relative import" in result.stderr or "relative import" in result.stderr:
+                        print(f"✅ Correct error type detected: relative import ImportError")
+                    else:
+                        print(f"⚠️  Different error than expected, but still failed: {result.stderr.strip()}")
+                        # Still consider this success since the goal is that it fails before fixing
+            except Exception as e:
+                print(f"❌ Script execution test failed with exception: {e}")
+                return False
+
+            # Step 3: Run pyuvstarter to ACTUALLY FIX the imports (not dry run)
+            print("🔧 Running pyuvstarter to fix imports...")
+            returncode, stdout, stderr = self.run_pyuvstarter(temp_project, dry_run=False)
+            print(f"🚀 PyUVStarter result: {returncode}")
 
             if returncode != 0:
-                print(f"❌ Dry run failed: {stderr}")
+                print(f"❌ PyUVStarter failed: {stderr}")
                 return False
 
-            # Check for import analysis in output
-            if "ruff_import_analysis" in stdout and "relative import" in stdout.lower():
-                print("✅ Import analysis detected in output")
+            # Step 4: Verify relative imports were converted to absolute imports
+            remaining_relative = self.find_relative_imports(temp_project)
+            print(f"🔍 Relative imports after fixing: {len(remaining_relative)}")
+
+            if len(remaining_relative) > 0:
+                print(f"❌ Some relative imports were not fixed:")
+                for file_path, line_num, line in remaining_relative:
+                    print(f"  - {file_path}:{line_num}: {line}")
+                return False
+
+            # Step 5: Test script execution SUCCEEDS after fixing (the solution)
+            print(f"🧪 Testing script execution AFTER fix: {main_script.relative_to(temp_project)}")
+
+            try:
+                # Use uv run to ensure proper Python environment and dependency resolution
+                result = subprocess.run(
+                    ["uv", "run", "--quiet", "python3", str(main_script)],
+                    capture_output=True,
+                    text=True,
+                    cwd=temp_project,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    print(f"✅ SUCCESS: Script execution works after pyuvstarter fixed imports!")
+                    print(f"   Output: {result.stdout.strip()}")
+                else:
+                    print(f"❌ FAILURE: Script execution still fails after pyuvstarter fix")
+                    print(f"   Error: {result.stderr}")
+                    return False
+            except Exception as e:
+                print(f"❌ Script execution test failed with exception: {e}")
+                return False
+
+            # Step 6: Verify import fixing was reported in output
+            if "Automatically fixed" in stdout and "relative import" in stdout.lower():
+                print("✅ Import fixing was reported in pyuvstarter output")
             else:
-                print("❌ Import analysis not found in output")
+                print("❌ Import fixing not properly reported in output")
+                print(f"STDOUT snippet: {stdout[:500]}...")
                 return False
 
-            # Check for package detection
-            if "is_package" in stdout or "package" in stdout.lower():
-                print("✅ Package detection working")
-            else:
-                print("❌ Package detection not found")
-                return False
-
-            print("✅ Test passed")
+            print("✅ COMPLETE: Relative imports failed as scripts, then worked after pyuvstarter fixing")
             return True
 
         finally:
@@ -340,7 +407,7 @@ class ImportFixingTestSuite:
         print("=" * 60)
 
         tests = [
-            ("Src Layout Package", self.test_src_layout_package_with_relative_imports),
+            ("Script Execution Before/After Fix", self.test_script_execution_before_and_after_fix),
             ("Flat Layout Package", self.test_flat_layout_package_with_relative_imports),
             ("Script Project", self.test_script_project_no_pyproject),
             ("Package No PyProject", self.test_package_without_pyproject),

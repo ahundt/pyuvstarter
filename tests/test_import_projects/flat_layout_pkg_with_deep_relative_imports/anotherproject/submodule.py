@@ -1,7 +1,16 @@
 """
 Submodule with deep relative imports.
 
-This module tests complex relative import patterns.
+⚠️  IMPORTANT TEST NOTICE: This file MUST have deep relative imports that cause
+ImportError when run as a script. This is INTENTIONAL - pyuvstarter should
+convert these to absolute imports to fix script execution.
+
+DO NOT FIX these relative imports manually! They are test cases for pyuvstarter's
+automatic import fixing functionality. The file should fail when run with:
+  python3 anotherproject/submodule.py  ❌ Should fail with ImportError
+
+After pyuvstarter runs, it should work when run with:
+  python3 anotherproject/submodule.py  ✅ Should succeed
 """
 
 from .subfolder import deep_function
