@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "myproject"
+version = "0.1.0"
+description = "A test package for relative import fixing"
+
+[tool.uv]
+package = true
+dev-dependencies = [
+    "ruff>=0.1.0",
+]

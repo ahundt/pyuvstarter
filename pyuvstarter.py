@@ -2991,15 +2991,12 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
 
 def _run_ruff_unused_import_check(project_root: Path, major_action_results: list, dry_run: bool):
     """
-    Runs ruff via uvx to detect unused imports (F401) and logs warnings if found.
+    Runs ruff via uvx to detect unused imports (F401) and relative import issues (TID252),
+    then automatically fixes them for package projects.
 
-    This function uses the correct argument order and format for `uvx ruff check`:
-    - The `=` syntax (e.g., --select=F401) is used to create unambiguous option-value pairs.
-    - All ruff options are placed after a `--` separator to pass them to ruff.
-    - The target directory (project_root) is placed last.
-
-    Example of the correct CLI invocation:
-        uvx ruff check -- --select=F401 --exit-zero --format=json /path/to/project
+    This function follows pyuvstarter's "Solve Problems FOR Users" philosophy by
+    automatically fixing import issues that would cause problems with VSCode debugger
+    or script execution.
 
     Args:
         project_root (Path): The root directory of the project to check.
@@ -3009,23 +3006,19 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
     Returns:
         None. Logs results and warnings as appropriate.
     """
-    action_name = "ruff_unused_import_check"
-    _log_action(action_name, "INFO", "Running ruff to check for unused imports (F401).")
+    action_name = "ruff_import_analysis"
+    _log_action(action_name, "INFO", "Running ruff to analyze imports (unused imports + relative imports).")
 
     try:
-        # CORRECTED Ruff CLI arguments using the robust '=' syntax.
+        # ENHANCED Ruff CLI arguments to check both unused imports and relative imports
         ruff_args = [
             "uvx",
             "ruff",
-            # 1. Use the global '--config' option to set the output format.
-            #    The value must be a valid TOML key-value pair string.
-            # 2. The subcommand comes next.
             "check",
             "--output-format=json",  # Use --output-format instead of --format for clarity
-            # 3. Options for the subcommand follow.
-            "--select=F401",
+            # Check for both unused imports (F401) and relative import issues (TID252)
+            "--select=F401,TID252",
             "--exit-zero",
-            # 4. The positional path argument is last.
             str(project_root),
         ]
         result_stdout, _ = _run_command(
@@ -3039,29 +3032,35 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
             _log_action(action_name, "DEBUG", f"Ruff output:\n{result_stdout.strip()}")
 
         if dry_run:
-            _log_action(action_name, "INFO", "DRY RUN: Assuming `ruff` would check for unused imports. No actual check performed.")
+            _log_action(action_name, "INFO", "DRY RUN: Assuming `ruff` would analyze imports. No actual check performed.")
             return
 
         unused = []
+        relative_imports = []
         if result_stdout:
             try:
-                # CORRECTED LOGIC: --output-format=json returns a single JSON array for all issues.
-                # We parse the entire stdout string at once.
+                # Parse JSON output from Ruff
                 issues = json.loads(result_stdout)
 
                 for issue in issues:
-                    # Now, 'issue' will be a dictionary as expected
-                    if issue.get("code") == "F401":
-                        filename = issue.get("filename")
-                        line_no = issue.get("location", {}).get("row")
-                        message = issue.get("message")
-                        # Try to get path relative to project_root, fallback to full path
-                        display_path = filename
-                        try:
-                            display_path = Path(filename).relative_to(project_root).as_posix()
-                        except ValueError:
-                            pass
+                    code = issue.get("code")
+                    filename = issue.get("filename")
+                    line_no = issue.get("location", {}).get("row")
+                    message = issue.get("message")
+
+                    # Try to get path relative to project_root, fallback to full path
+                    display_path = filename
+                    try:
+                        display_path = Path(filename).relative_to(project_root).as_posix()
+                    except ValueError:
+                        pass
+
+                    if code == "F401":
+                        # Unused import
                         unused.append((display_path, line_no, message))
+                    elif code == "TID252":
+                        # Relative import issue
+                        relative_imports.append((display_path, line_no, message))
             except json.JSONDecodeError as e:
                 _log_action(
                     action_name,
@@ -3081,22 +3080,90 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
                 major_action_results.append((action_name, "FAILED_PROCESS_OUTPUT"))
                 return
 
-        if unused:
+        # Detect if this is a package project for relative import fixing
+        project_info = _detect_project_structure(project_root)
+        is_package = project_info.get('is_package', False)
+
+        # Handle relative imports for package projects
+        if relative_imports and is_package:
+            _log_action(
+                action_name,
+                "INFO",
+                f"Found {len(relative_imports)} relative import issue(s) in package project. Auto-fixing...",
+                details={"relative_imports_count": len(relative_imports), "relative_imports_details": relative_imports}
+            )
+
+            if not dry_run:
+                try:
+                    # Use Ruff to automatically fix relative imports and unused imports
+                    fix_cmd = [
+                        "uvx",
+                        "ruff",
+                        "check",
+                        "--fix",  # Automatically fix detected issues
+                        "--select=TID252,F401",  # Relative imports + unused imports
+                        str(project_root)
+                    ]
+
+                    _run_command(
+                        fix_cmd,
+                        f"{action_name}_fix_exec",
+                        work_dir=project_root,
+                        dry_run=False
+                    )
+
+                    _log_action(action_name, "SUCCESS",
+                              f"✅ Automatically fixed {len(relative_imports)} relative import issue(s) and {len(unused)} unused import(s).")
+
+                    # Enhanced logging: Show examples of fixed imports
+                    if relative_imports:
+                        examples = relative_imports[:3]  # Show first 3 examples
+                        example_text = "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in examples])
+                        if len(relative_imports) > 3:
+                            example_text += f"\n  ... and {len(relative_imports) - 3} more"
+
+                        _log_action(action_name, "INFO",
+                                  "Relative import examples that were converted to absolute imports:",
+                                  details={
+                                      "fixed_examples": example_text,
+                                      "total_relative_fixed": len(relative_imports),
+                                      "total_unused_fixed": len(unused)
+                                  })
+
+                    _log_action(action_name, "INFO",
+                              "Relative imports converted to absolute imports. Python files now work both as scripts and modules.",
+                              details={
+                                  "relative_imports_fixed": len(relative_imports),
+                                  "unused_imports_fixed": len(unused),
+                                  "benefit": "VSCode debugger now works without special configuration"
+                              })
+
+                except subprocess.CalledProcessError as e:
+                    _log_action(action_name, "WARN",
+                              f"Failed to auto-fix import issues with Ruff: {e}",
+                              details={
+                                  "suggestion": "You can manually run: uvx ruff check . --fix --select=TID252,F401"
+                              })
+
+        # Report remaining unused imports (if any weren't fixed)
+        remaining_unused = unused
+        if remaining_unused:
             msg = (
-                "Ruff detected unused imports (F401). These may lead to unnecessary dependencies or code cruft:\n" +
-                "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in unused]) +
-                "\nConsider removing these unused imports for a cleaner project and more accurate dependency analysis. "
-                "You can typically auto-fix them by running `uvx ruff check . --fix`."
+                f"Found {len(remaining_unused)} unused import(s) (F401):\n" +
+                "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in remaining_unused]) +
+                "\nThese can be auto-fixed by running: uvx ruff check . --fix"
             )
             _log_action(
                 action_name,
                 "WARN",
                 msg,
-                details={"unused_imports_count": len(unused), "unused_imports_details": unused}
+                details={"unused_imports_count": len(remaining_unused), "unused_imports_details": remaining_unused}
             )
             major_action_results.append((action_name, "COMPLETED_WITH_WARNINGS"))
+        elif not relative_imports:
+            _log_action(action_name, "SUCCESS", "✅ No import issues found. Great job!")
+            major_action_results.append((action_name, "SUCCESS"))
         else:
-            _log_action(action_name, "SUCCESS", "No unused imports (F401) detected by ruff. Great job!")
             major_action_results.append((action_name, "SUCCESS"))
 
     except subprocess.CalledProcessError as e:
@@ -3665,6 +3732,242 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_manager: Optio
         return True
 
 
+def _detect_project_structure(project_root: Path) -> dict:
+    """
+    Detect project structure for determining if this is a package project.
+
+    This function analyzes pyproject.toml and directory structure to determine
+    if the project uses Python packages and what layout it follows.
+
+    Args:
+        project_root: The project root directory
+
+    Returns:
+        Dictionary with project structure information including:
+        - has_pyproject: bool - Whether pyproject.toml exists
+        - is_package: bool - Whether this is a package project
+        - package_name: str or None - Package name from pyproject.toml
+        - layout: str - 'src', 'flat', 'mixed', or 'scripts_only'
+        - entry_points: list - List of entry point names from [project.scripts]
+    """
+    action_name = "project_detection"
+
+    pyproject_path = project_root / "pyproject.toml"
+
+    result = {
+        'has_pyproject': pyproject_path.exists(),
+        'is_package': False,
+        'package_name': None,
+        'layout': None,  # 'src', 'flat', 'mixed', 'scripts_only'
+        'entry_points': []
+    }
+
+    if not pyproject_path.exists():
+        _log_action(action_name, "INFO", "No pyproject.toml found - assuming script-only project")
+        return result
+
+    # Parse pyproject.toml using existing tomllib implementation
+    try:
+        if tomllib is not None:
+            with open(pyproject_path, "rb") as f:
+                config = tomllib.load(f)
+        else:
+            import toml
+            with open(pyproject_path, "r", encoding="utf-8") as f:
+                config = toml.load(f)
+    except Exception as e:
+        _log_action(action_name, "WARN", f"Could not parse pyproject.toml: {e}")
+        return result
+
+    project_config = config.get("project", {})
+    package_name = project_config.get("name")
+
+    if not package_name:
+        _log_action(action_name, "INFO", "No package name found in pyproject.toml - assuming script-only project")
+        return result
+
+    result['package_name'] = package_name
+    result['entry_points'] = list(project_config.get("scripts", {}).keys())
+
+    # Detect layout type
+    src_path = project_root / "src" / package_name
+    flat_path = project_root / package_name
+
+    src_exists = src_path.exists() and (src_path / "__init__.py").exists()
+    flat_exists = flat_path.exists() and (flat_path / "__init__.py").exists()
+
+    if src_exists and flat_exists:
+        result['layout'] = 'mixed'
+        result['is_package'] = True
+        _log_action(action_name, "INFO", f"Detected mixed layout project (src/ and {package_name}/ both exist)")
+    elif src_exists:
+        result['layout'] = 'src'
+        result['is_package'] = True
+        _log_action(action_name, "INFO", f"Detected src-layout project: src/{package_name}/")
+    elif flat_exists:
+        result['layout'] = 'flat'
+        result['is_package'] = True
+        _log_action(action_name, "INFO", f"Detected flat-layout project: {package_name}/")
+    else:
+        # Check if there are Python files that might be a package without __init__.py
+        python_files = list(project_root.glob("*.py"))
+        if python_files:
+            result['layout'] = 'scripts_only_potential_package'
+            _log_action(action_name, "INFO", f"Detected script-only project with Python files")
+        else:
+            result['layout'] = 'scripts_only'
+            _log_action(action_name, "INFO", f"Detected scripts-only project")
+
+    return result
+
+
+def _detect_relative_import_issues(project_root: Path, project_info: dict) -> list:
+    """
+    Use Ruff to scan for relative import issues that would cause module execution problems.
+
+    This function detects TID252 violations (relative imports above top level) and other
+    relative import issues that would prevent Python files from working when executed
+    as scripts rather than modules.
+
+    Args:
+        project_root: The project root directory to scan
+        project_info: Project structure information from _detect_project_structure()
+
+    Returns:
+        List of Ruff issue dictionaries with file paths and violation details
+    """
+    action_name = "detect_relative_imports"
+
+    # Only scan for relative imports if this is a package project
+    if not project_info.get('is_package', False):
+        _log_action(action_name, "INFO", "Not scanning for relative imports: not a package project")
+        return []
+
+    try:
+        # Use Ruff to detect relative import violations
+        # TID252: Relative imports are used above the top-level package
+        # F401: Unused imports (often exposed when fixing relative imports)
+        cmd = [
+            "uvx",
+            "ruff",
+            "check",
+            "--select=TID252",  # Relative imports above top level
+            "--output-format=json",
+            str(project_root)
+        ]
+
+        stdout, _ = _run_command(
+            cmd,
+            f"{action_name}_exec",
+            work_dir=project_root,
+            dry_run=False,
+            capture_output=True,
+            suppress_console_output_on_success=True
+        )
+
+        if not stdout.strip():
+            _log_action(action_name, "SUCCESS", "No relative import issues found.")
+            return []
+
+        # Parse Ruff JSON output
+        try:
+            issues = json.loads(stdout)
+            _log_action(action_name, "INFO", f"Found {len(issues)} relative import issue(s) in project.")
+            return issues
+        except json.JSONDecodeError as e:
+            _log_action(action_name, "WARN", f"Could not parse Ruff output: {e}")
+            return []
+
+    except subprocess.CalledProcessError as e:
+        _log_action(action_name, "WARN", f"Failed to scan for relative imports with Ruff: {e}")
+        return []
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Unexpected error during relative import detection: {e}")
+        return []
+
+
+def _fix_relative_imports(project_root: Path, project_info: dict, dry_run: bool):
+    """
+    Automatically fix relative imports to absolute imports using Ruff.
+
+    This follows pyuvstarter's philosophy of "Solve Problems FOR Users" by
+    automatically converting problematic relative imports to absolute imports,
+    making Python files work correctly regardless of execution method.
+
+    Args:
+        project_root: The project root directory
+        project_info: Project structure information
+        dry_run: If True, only report what would be fixed without making changes
+    """
+    action_name = "fix_relative_imports"
+
+    # First detect issues to see if fixing is needed
+    issues = _detect_relative_import_issues(project_root, project_info)
+
+    if not issues:
+        _log_action(action_name, "SUCCESS", "No relative import issues to fix.")
+        return
+
+    # Report what will be fixed
+    files_affected = set()
+    for issue in issues:
+        if 'filename' in issue:
+            try:
+                rel_path = Path(issue['filename']).relative_to(project_root)
+                files_affected.add(str(rel_path))
+            except ValueError:
+                files_affected.add(issue['filename'])
+
+    files_list = sorted(list(files_affected))
+
+    if dry_run:
+        _log_action(action_name, "INFO", f"DRY RUN: Would fix relative imports in {len(files_list)} file(s): {', '.join(files_list[:3])}{'...' if len(files_list) > 3 else ''}")
+        return
+
+    _log_action(action_name, "INFO", f"Fixing relative imports in {len(files_list)} file(s): {', '.join(files_list[:3])}{'...' if len(files_list) > 3 else ''}")
+
+    try:
+        # Use Ruff to automatically fix relative imports and related issues
+        cmd = [
+            "uvx",
+            "ruff",
+            "check",
+            "--fix",  # Automatically fix detected issues
+            "--select=TID252,F401",  # Relative imports + unused imports
+            str(project_root)
+        ]
+
+        _run_command(
+            cmd,
+            f"{action_name}_exec",
+            work_dir=project_root,
+            dry_run=dry_run
+        )
+
+        _log_action(action_name, "SUCCESS",
+                  f"Automatically fixed {len(issues)} relative import issue(s) in {len(files_list)} file(s).")
+
+        # Provide specific guidance about what was fixed
+        _log_action(action_name, "INFO",
+                  "Relative imports converted to absolute imports. Python files now work both as scripts and modules.",
+                  details={
+                      "files_fixed": files_list,
+                      "issues_count": len(issues),
+                      "benefit": "VSCode debugger now works without special configuration"
+                  })
+
+    except subprocess.CalledProcessError as e:
+        _log_action(action_name, "ERROR",
+                  f"Failed to fix relative imports with Ruff: {e}",
+                  details={
+                      "command": "uvx ruff check --fix --select=TID252,F401",
+                      "suggestion": "Try running the command manually to see specific errors"
+                  })
+    except Exception as e:
+        _log_action(action_name, "ERROR",
+                  f"Unexpected error during import fixing: {e}")
+
+
 def _get_explicit_summary_text(project_root: Path, venv_name: str, pyproject_file_path: Path, log_file_path: Path):
     """
     Returns a legacy-style explicit summary of all key files and paths for user clarity.
@@ -4113,7 +4416,7 @@ class CLICommand(BaseSettings):
             _ensure_tool_available("pipreqs", major_action_results, self.dry_run, website="https://github.com/bndr/pipreqs")
             _ensure_tool_available("ruff", major_action_results, self.dry_run, website="https://docs.astral.sh/ruff/")
 
-            # Step 6: Run unused import checks, e.g., Ruff unused import detection.
+            # Step 6: Run import analysis and auto-fix (unused imports + relative imports).
             _run_ruff_unused_import_check(self.project_dir, major_action_results, self.dry_run)
 
             # Step 7: Discover dependencies from all code sources.
@@ -4427,7 +4730,7 @@ class CLICommand(BaseSettings):
                 "venv_ready": "Virtual Environment",
                 "pipreqs_cli_tool": "Dependency Scanner",
                 "ruff_cli_tool": "Code Quality Tool",
-                "ruff_unused_import_check": "Unused Import Check",
+                "ruff_import_analysis": "Import Analysis & Auto-Fix",
                 "code_dep_discovery": "Dependency Discovery",
                 "dependency_management": "Package Installation",
                 "notebook_exec_support": "Notebook Support",

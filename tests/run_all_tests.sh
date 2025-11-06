@@ -35,6 +35,7 @@ INTEGRATION_TESTS=(
 # Run Python unit tests
 PYTHON_TESTS=(
     "test_extraction_fix.py"
+    "test_import_fixing.py"
 )
 
 FAILED_TESTS=()
