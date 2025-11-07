@@ -431,7 +431,7 @@ class TestNotebookExecutionSupport:
                 "experiments/ml_experiment.ipynb": json.dumps(mock_factory.create_mock_notebook_json([
                     {
                         "cell_type": "code",
-                        "source": ["import scikit-learn"],
+                        "source": ["import sklearn"],
                         "metadata": {},
                         "outputs": []
                     }
@@ -597,7 +597,7 @@ class TestNotebookEdgeCases:
                             "import matplotlib.pyplot as plt  # Plotting 📈\n",
                             "\n",
                             "# Package with dashes\n",
-                            "import scikit-learn as sklearn  # ML 🤖\n",
+                            "import sklearn as sklearn  # ML 🤖\n",
                             "import beautifulsoup4 as bs4  # HTML parsing 🌐\n",
                             "\n",
                             "# Comments with unicode\n",
