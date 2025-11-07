@@ -162,7 +162,7 @@ class PyuvstarterCommandExecutor:
         timeout: int = 120,
         capture_output: bool = True,
         env: Dict[str, str] = None,
-        dry_run: bool = True,
+        dry_run: bool = False,
         verbose: bool = True
     ) -> subprocess.CompletedProcess:
         """Run pyuvstarter command with standardized parameters.
@@ -212,7 +212,7 @@ class PyuvstarterCommandExecutor:
     def run_pyuvstarter_legacy_compatible(
         self,
         project_path: Path,
-        dry_run: bool = True
+        dry_run: bool = False
     ) -> Tuple[int, str, str]:
         """Legacy-compatible method matching existing ImportFixingTestSuite signature.
 
@@ -277,51 +277,144 @@ class OutputValidator:
     def _map_import_to_package_names(import_name: str) -> List[str]:
         """Map import names to possible package names.
 
-        This handles common cases where the import name differs from the package name.
+        Uses the same comprehensive mapping as pyuvstarter for consistency.
+        This mapping is extracted from pyuvstarter's _canonicalize_pkg_name function.
         """
-        import_mappings = {
-            'sklearn': ['scikit-learn'],
-            'sklearn.ensemble': ['scikit-learn'],
-            'sklearn.model_selection': ['scikit-learn'],
-            'sklearn.svm': ['scikit-learn'],
-            'bs4': ['beautifulsoup4'],
-            'cv2': ['opencv-python'],
-            'PIL': ['pillow'],
-            'tf': ['tensorflow'],
-            'torch': ['torch', 'pytorch'],
-            'ipywidgets': ['ipywidgets'],
-            'ipykernel': ['ipykernel'],
-            'notebook': ['notebook'],
-            'jupyter': ['jupyter'],
-            'matplotlib.pyplot': ['matplotlib'],
-            'seaborn': ['seaborn'],
-            'plotly': ['plotly'],
-            'dash': ['dash'],
-            'requests': ['requests'],
-            'flask': ['flask'],
-            'numpy': ['numpy'],
-            'pandas': ['pandas'],
-            'scipy': ['scipy'],
-            'tensorflow': ['tensorflow'],
-            'transformers': ['transformers'],
-            'torchvision': ['torchvision'],
-            'accelerate': ['accelerate'],
-            'datasets': ['datasets'],
-            'typing_extensions': ['typing-extensions'],
+        # Comprehensive mapping from pyuvstarter
+        mapping = {
+            # Machine Learning & Data Science
+            "sklearn": "scikit-learn",
+            "cv2": "opencv-python",
+            "cv": "opencv-python",
+            "skimage": "scikit-image",
+
+            # Image Processing
+            "pil": "pillow",
+            "PIL": "pillow",
+
+            # Configuration & Serialization
+            "yaml": "pyyaml",
+            "toml": "toml",
+
+            # Web & APIs
+            "requests_oauthlib": "requests-oauthlib",
+            "google.cloud": "google-cloud",
+            "bs4": "beautifulsoup4",
+            "flask_cors": "flask-cors",
+            "flask_sqlalchemy": "flask-sqlalchemy",
+            "flask_migrate": "flask-migrate",
+            "flask_login": "flask-login",
+            "flask_wtf": "flask-wtforms",
+            "rest_framework": "djangorestframework",
+
+            # Database & ORM
+            "psycopg2": "psycopg2-binary",
+            "MySQLdb": "mysqlclient",
+            "mysqldb": "mysqlclient",
+            "_mysql": "mysqlclient",
+
+            # Development Tools
+            "dotenv": "python-dotenv",
+            "dateutil": "python-dateutil",
+            "jose": "python-jose",
+            "magic": "python-magic",
+            "dns": "dnspython",
+
+            # GUI & Graphics
+            "tkinter": "",  # Built-in
+            "PyQt5": "pyqt5",
+            "PyQt6": "pyqt6",
+            "wx": "wxpython",
+
+            # System & OS
+            "win32api": "pywin32",
+            "win32com": "pywin32",
+            "pywintypes": "pywin32",
+            "pythoncom": "pywin32",
+
+            # Testing & Mocking
+            "mock": "mock",
+            "_pytest": "pytest",
+
+            # Async & Concurrency
+            "asyncio": "",  # Built-in
+
+            # Typing
+            "typing_extensions": "typing-extensions",
+
+            # Additional common mismatches
+            "Crypto": "pycryptodome",
+            "Cryptodome": "pycryptodomex",
+            "jwt": "pyjwt",
+            "git": "gitpython",
+            "serial": "pyserial",
+            "usb": "pyusb",
+            "docx": "python-docx",
+            "pptx": "python-pptx",
+            "fitz": "pymupdf",
+            "PyPDF2": "pypdf2",
+            "websocket": "websocket-client",
+            "Levenshtein": "python-levenshtein",
+            "slugify": "python-slugify",
+            "multipart": "python-multipart",
+            "memcache": "python-memcached",
+            "ldap": "python-ldap",
+            "nacl": "pynacl",
+            "etree": "lxml",
+            "_cffi_backend": "cffi",
+            "googleapiclient": "google-api-python-client",
+            "apiclient": "google-api-python-client",
         }
 
-        # Clean the import name to get the base import
+        # Additional common package mappings for testing
+        additional_mappings = {
+            'sklearn.ensemble': 'scikit-learn',
+            'sklearn.model_selection': 'scikit-learn',
+            'sklearn.svm': 'scikit-learn',
+            'matplotlib.pyplot': 'matplotlib',
+            'ipywidgets': 'ipywidgets',
+            'ipykernel': 'ipykernel',
+            'notebook': 'notebook',
+            'jupyter': 'jupyter',
+            'torch': 'torch',
+            'transformers': 'transformers',
+            'torchvision': 'torchvision',
+            'accelerate': 'accelerate',
+            'datasets': 'datasets',
+            'tensorflow': 'tensorflow',
+            'scipy': 'scipy',
+            'seaborn': 'seaborn',
+            'plotly': 'plotly',
+            'dash': 'dash',
+            'requests': 'requests',
+            'flask': 'flask',
+            'numpy': 'numpy',
+            'pandas': 'pandas',
+        }
+
+        # Combine mappings
+        mapping.update(additional_mappings)
+
+        name_lower = import_name.lower()
+
+        # Check for exact mappings
+        if name_lower in mapping:
+            canonical = mapping[name_lower]
+            if canonical:  # Skip empty strings (built-ins)
+                return [canonical]
+            else:
+                return []  # Built-in module
+
+        # Check base import name
         base_import = import_name.split('.')[0].lower()
+        if base_import in mapping:
+            canonical = mapping[base_import]
+            if canonical:
+                return [canonical]
+            else:
+                return []
 
-        # Check for exact mappings first
-        if import_name.lower() in import_mappings:
-            return import_mappings[import_name.lower()]
-
-        # Check for base import mappings
-        if base_import in import_mappings:
-            return import_mappings[base_import]
-
-        # If no mapping found, return the import name as possible package name
+        # Default: return original import name
         return [import_name.lower()]
 
     @staticmethod
@@ -554,7 +647,7 @@ def setup_test_environment_compatible(test_project_path: Path, temp_dir: Path = 
 
     return temp_project_path
 
-def run_pyuvstarter_compatible(project_path: Path, dry_run: bool = True, pyuvstarter_path: Path = None) -> Tuple[int, str, str]:
+def run_pyuvstarter_compatible(project_path: Path, dry_run: bool = False, pyuvstarter_path: Path = None) -> Tuple[int, str, str]:
     """Backward compatible run_pyuvstarter function.
 
     Provides exact compatibility with existing test signatures.

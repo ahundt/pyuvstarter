@@ -209,7 +209,7 @@ import os
             directories=[],
             expected_packages=[
                 "pandas", "numpy", "matplotlib", "seaborn", "plotly",
-                "scikit-learn", "scipy", "beautifulsoup4",
+                "sklearn", "scipy", "bs4",
                 "tensorflow", "torch", "typing_extensions"
             ]
         )
@@ -252,7 +252,7 @@ import os
                             "cell_type": "code",
                             # Missing required fields
                             "source": "import matplotlib.pyplot as plt"
-                            # No metadata field
+                            # No metadata field, no execution_count
                         }
                     ]
                     # Missing nbformat fields
@@ -470,6 +470,7 @@ class TestNotebookFallbackMethods:
                     "cells": [
                         {
                             "cell_type": "code",
+                            "execution_count": None,
                             "source": [
                                 "# Multiple import statements\n",
                                 "import pandas as pd\n",
