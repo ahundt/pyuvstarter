@@ -2921,7 +2921,7 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
     action_name = f"pipreqs_discover_{scan_path.name}"
 
     # Build command as list of strings for subprocess execution
-    pipreqs_args: List[str] = ["uvx", "pipreqs", "--print"]
+    pipreqs_args: List[str] = ["uvx", "pipreqs", "--print", "--scan-notebooks"]
 
     # Add mode if specified (for fallback strategy)
     if mode:
@@ -4326,8 +4326,11 @@ class CLICommand(BaseSettings):
                 try:
                     # Load the JSON config file.
                     file_settings = json.loads(p.read_text(encoding='utf-8'))
+                    # Create a callable source for Pydantic v2
+                    def config_source():
+                        return file_settings
                     # Add file settings with lower precedence than env vars and CLI.
-                    sources.append(file_settings)
+                    sources.append(config_source)
                     _log_action("config_load", "INFO", f"Loaded settings from config file: '{p}'")
                 except json.JSONDecodeError as e:
                     safe_typer_secho(f"ERROR: Could not parse config file '{p}': {e}", fg=typer.colors.RED, err=True)

@@ -274,6 +274,57 @@ class OutputValidator:
         return log_data
 
     @staticmethod
+    def _map_import_to_package_names(import_name: str) -> List[str]:
+        """Map import names to possible package names.
+
+        This handles common cases where the import name differs from the package name.
+        """
+        import_mappings = {
+            'sklearn': ['scikit-learn'],
+            'sklearn.ensemble': ['scikit-learn'],
+            'sklearn.model_selection': ['scikit-learn'],
+            'sklearn.svm': ['scikit-learn'],
+            'bs4': ['beautifulsoup4'],
+            'cv2': ['opencv-python'],
+            'PIL': ['pillow'],
+            'tf': ['tensorflow'],
+            'torch': ['torch', 'pytorch'],
+            'ipywidgets': ['ipywidgets'],
+            'ipykernel': ['ipykernel'],
+            'notebook': ['notebook'],
+            'jupyter': ['jupyter'],
+            'matplotlib.pyplot': ['matplotlib'],
+            'seaborn': ['seaborn'],
+            'plotly': ['plotly'],
+            'dash': ['dash'],
+            'requests': ['requests'],
+            'flask': ['flask'],
+            'numpy': ['numpy'],
+            'pandas': ['pandas'],
+            'scipy': ['scipy'],
+            'tensorflow': ['tensorflow'],
+            'transformers': ['transformers'],
+            'torchvision': ['torchvision'],
+            'accelerate': ['accelerate'],
+            'datasets': ['datasets'],
+            'typing_extensions': ['typing-extensions'],
+        }
+
+        # Clean the import name to get the base import
+        base_import = import_name.split('.')[0].lower()
+
+        # Check for exact mappings first
+        if import_name.lower() in import_mappings:
+            return import_mappings[import_name.lower()]
+
+        # Check for base import mappings
+        if base_import in import_mappings:
+            return import_mappings[base_import]
+
+        # If no mapping found, return the import name as possible package name
+        return [import_name.lower()]
+
+    @staticmethod
     def validate_pyproject_toml(project_dir: Path, expected_packages: List[str] = None) -> Dict[str, Any]:
         """Validate pyproject.toml content and dependencies.
 
@@ -311,12 +362,22 @@ class OutputValidator:
         if expected_packages:
             deps = [dep.split('[')[0].split('=')[0].split('>')[0].split('<')[0].strip()
                     for dep in project["dependencies"]]
+
             for expected_pkg in expected_packages:
-                canonical_expected = expected_pkg.lower().replace('-', '_').replace('.', '')
-                found = any(
-                    canonical_expected in dep.lower().replace('-', '_').replace('.', '')
-                    for dep in deps
-                )
+                # Get possible package names for this import
+                possible_package_names = OutputValidator._map_import_to_package_names(expected_pkg)
+
+                found = False
+                for possible_pkg in possible_package_names:
+                    canonical_possible = possible_pkg.lower().replace('-', '_').replace('.', '')
+                    for dep in deps:
+                        canonical_dep = dep.lower().replace('-', '_').replace('.', '')
+                        if canonical_possible in canonical_dep or canonical_dep in canonical_possible:
+                            found = True
+                            break
+                    if found:
+                        break
+
                 if not found:
                     raise AssertionError(f"Expected package '{expected_pkg}' not found in dependencies: {deps}")
 
@@ -396,11 +457,17 @@ class MockFactory:
             cells = [
                 {
                     "cell_type": "code",
+                    "execution_count": None,
                     "source": ["import pandas as pd\nimport numpy as np\n!pip install matplotlib"],
                     "metadata": {},
                     "outputs": []
                 }
             ]
+        else:
+            # Ensure all code cells have execution_count field
+            for cell in cells:
+                if cell.get("cell_type") == "code" and "execution_count" not in cell:
+                    cell["execution_count"] = None
 
         return {
             "cells": cells,

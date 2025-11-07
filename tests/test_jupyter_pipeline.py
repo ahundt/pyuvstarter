@@ -79,7 +79,7 @@ import os
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0, f"PyUVStarter failed: {result.stderr}"
 
@@ -145,7 +145,8 @@ import os
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(
                 project_dir,
-                args=["--dependency-migration=auto"]
+                args=["--dependency-migration=auto"],
+                dry_run=False
             )
 
             assert result.returncode == 0
@@ -214,7 +215,7 @@ import os
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 
@@ -275,7 +276,7 @@ import sys
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             # Should handle malformed notebooks gracefully
             # May succeed with warnings or skip invalid notebooks
@@ -331,7 +332,7 @@ print("Main script")
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 
@@ -382,7 +383,7 @@ class TestNotebookExecutionSupport:
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 
@@ -441,7 +442,7 @@ class TestNotebookExecutionSupport:
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 
@@ -514,7 +515,7 @@ class TestNotebookFallbackMethods:
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             # Should still succeed using manual parsing (nbconvert may or may not be available)
             assert result.returncode == 0
@@ -564,7 +565,7 @@ class TestNotebookFallbackMethods:
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 
@@ -611,7 +612,7 @@ class TestNotebookEdgeCases:
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 
@@ -667,7 +668,7 @@ class TestNotebookEdgeCases:
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 
@@ -754,7 +755,7 @@ class TestNotebookEdgeCases:
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
-            result = executor.run_pyuvstarter(project_dir)
+            result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             assert result.returncode == 0
 

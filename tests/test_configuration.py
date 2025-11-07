@@ -28,10 +28,9 @@ def test_config_file_parameter():
     # Create a configuration file
     config_content = {
         "venv_name": "custom-env",
-        "python_version": "3.11",
-        "gitignore_template": "python",
-        "vscode_setup": True,
-        "notebook_support": True
+        "dependency_migration": "auto",
+        "verbose": True,
+        "dry_run": True
     }
 
     fixture = ProjectFixture(
@@ -214,12 +213,9 @@ def test_json_config_with_special_characters():
         files={
             "unicode_config.json": json.dumps({
                 "venv_name": "tëst-ënv-ñamé",
-                "project_description": "Tëst projëct with ünicodé chäracters 🚀",
-                "author": "Tëst Äuthor",
-                "custom_settings": {
-                    "emoji_support": True,
-                    "special_chars": "café naïve résumé"
-                }
+                "dependency_migration": "auto",
+                "verbose": True,
+                "dry_run": True
             }, ensure_ascii=False),
             "main.py": """
 # Test with Unicode comments and strings
