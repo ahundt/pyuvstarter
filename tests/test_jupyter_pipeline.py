@@ -681,6 +681,7 @@ class TestNotebookEdgeCases:
         fixture = ProjectFixture(
             name="conditional_notebook",
             files={
+                "pyproject.toml": "[project]\nname = 'conditional-notebook'\nversion = '0.1.0'\n",
                 "conditional_notebook.ipynb": json.dumps(mock_factory.create_mock_notebook_json([
                     {
                         "cell_type": "code",
@@ -738,6 +739,7 @@ class TestNotebookEdgeCases:
         fixture = ProjectFixture(
             name="metadata_notebook",
             files={
+                "pyproject.toml": "[project]\nname = 'metadata-notebook'\nversion = '0.1.0'\n",
                 "metadata_notebook.ipynb": json.dumps({
                     "cells": [
                         {

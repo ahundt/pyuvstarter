@@ -204,7 +204,7 @@ class PyuvstarterCommandExecutor:
             cmd,
             capture_output=capture_output,
             text=True,
-            cwd=self.pyuvstarter_path.parent,  # Run from project root (preserve existing behavior)
+            cwd=project_dir.resolve(),  # Run from test project directory to avoid contamination
             timeout=timeout,
             env=process_env
         )

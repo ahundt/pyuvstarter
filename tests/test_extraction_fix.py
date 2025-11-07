@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import pyuvstarter module directly
 import pyuvstarter
 
-def test_function(function_name, test_cases):
+def _test_function(function_name, test_cases):
     """Test a function with various test cases."""
     print("\n=== Testing {} ===".format(function_name))
 
@@ -69,7 +69,7 @@ def main():
         ("Pillow>=10.0.0", "pillow", True),  # Case normalization
     ]
 
-    string_function_passed = test_function(pyuvstarter._extract_package_name_from_specifier, string_test_cases)
+    string_function_passed = _test_function(pyuvstarter._extract_package_name_from_specifier, string_test_cases)
 
     # Test cases for tuple function
     tuple_test_cases = [
@@ -83,7 +83,7 @@ def main():
         (("name", "specifier", "extras"), "name", True),
     ]
 
-    tuple_function_passed = test_function(pyuvstarter._extract_package_name_from_dependency_tuple, tuple_test_cases)
+    tuple_function_passed = _test_function(pyuvstarter._extract_package_name_from_dependency_tuple, tuple_test_cases)
 
     print("\n" + "="*80)
     print("String function tests passed: {}".format("PASS" if string_function_passed else "FAIL"))

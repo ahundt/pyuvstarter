@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_utils import (
-    ProjectFixture, temp_manager, executor, validator, mock_factory
+    ProjectFixture, temp_manager, executor, validator, mock_factory, OutputValidator
 )
 
 # Optional pytest import for when pytest is available
@@ -488,7 +488,7 @@ def helper_function():
             {
                 "name": "src_layout",
                 "structure": {
-                    "pyproject.toml": "[project]\nname = 'src_layout_test'\n",
+                    "pyproject.toml": "[project]\nname = 'src_layout_test'\nversion = '0.1.0'\n",
                     "src/package/main.py": "import pandas\nimport numpy\n",
                     "src/package/utils.py": "import requests\n"
                 }
@@ -496,7 +496,7 @@ def helper_function():
             {
                 "name": "flat_layout",
                 "structure": {
-                    "pyproject.toml": "[project]\nname = 'flat_layout_test'\n",
+                    "pyproject.toml": "[project]\nname = 'flat_layout_test'\nversion = '0.1.0'\n",
                     "package/main.py": "import pandas\nimport numpy\n",
                     "package/utils.py": "import requests\n"
                 }
@@ -525,11 +525,29 @@ def helper_function():
 
                 # All layouts should discover dependencies consistently
                 pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
-                dependencies = pyproject_data["project"]["dependencies"]
 
+                # Validate that project structure was properly detected and pyproject.toml created/enhanced
+                assert "project" in pyproject_data, "Project section not created"
+                assert "dependencies" in pyproject_data["project"], "Dependencies section not created"
+
+                # Validate that expected dependencies were discovered
+                dependencies = pyproject_data["project"]["dependencies"]
                 for expected_pkg in fixture.expected_packages:
-                    found = any(expected_pkg.lower() in dep.lower() for dep in dependencies)
-                    assert found, f"Package {expected_pkg} not discovered in {layout['name']} layout"
+                    # Get possible package names for this import
+                    possible_package_names = OutputValidator._map_import_to_package_names(expected_pkg)
+
+                    found = False
+                    for possible_pkg in possible_package_names:
+                        canonical_possible = possible_pkg.lower().replace('-', '_').replace('.', '')
+                        for dep in dependencies:
+                            canonical_dep = dep.lower().replace('-', '_').replace('.', '')
+                            if canonical_possible in canonical_dep or canonical_dep in canonical_possible:
+                                found = True
+                                break
+                        if found:
+                            break
+
+                    assert found, f"Expected package '{expected_pkg}' not found in dependencies: {dependencies}"
 
     def test_project_structure_vscode_configuration(self):
         """Test VS Code configuration generation for different project structures."""
