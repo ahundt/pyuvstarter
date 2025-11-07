@@ -470,7 +470,7 @@ class TestNotebookFallbackMethods:
                     "cells": [
                         {
                             "cell_type": "code",
-                            "execution_count": None,
+                            "execution_count": 1,
                             "source": [
                                 "# Multiple import statements\n",
                                 "import pandas as pd\n",

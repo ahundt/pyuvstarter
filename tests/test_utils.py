@@ -550,17 +550,23 @@ class MockFactory:
             cells = [
                 {
                     "cell_type": "code",
-                    "execution_count": None,
+                    "execution_count": 1,
                     "source": ["import pandas as pd\nimport numpy as np\n!pip install matplotlib"],
                     "metadata": {},
                     "outputs": []
                 }
             ]
         else:
-            # Ensure all code cells have execution_count field
+            # Ensure all code cells have execution_count field (required by nbformat)
+            execution_counter = 1
             for cell in cells:
-                if cell.get("cell_type") == "code" and "execution_count" not in cell:
-                    cell["execution_count"] = None
+                if cell.get("cell_type") == "code":
+                    if "execution_count" not in cell:
+                        cell["execution_count"] = execution_counter
+                        execution_counter += 1
+                    elif cell["execution_count"] is None:
+                        cell["execution_count"] = execution_counter
+                        execution_counter += 1
 
         return {
             "cells": cells,
