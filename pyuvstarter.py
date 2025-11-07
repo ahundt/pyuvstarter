@@ -3534,25 +3534,11 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path,
     interpreter_path = "${workspaceFolder}/" + relative_venv_path.as_posix()
     settings_data["python.defaultInterpreterPath"] = interpreter_path
 
-    # Construct the final content: comment + JSON string
-    comment_line = "// This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
+    # Construct the final content: JSON with comment field
+    settings_data["_comment"] = "This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
     json_content_str = json.dumps(settings_data, indent=4)
 
     final_file_content = json_content_str
-    # Check if the comment is already the first line, to avoid duplicating it
-    current_first_line_exists = False
-    if settings_file_path.exists():
-        try:
-            with open(settings_file_path, 'r', encoding='utf-8') as f:
-                first_line = f.readline().strip()
-                if first_line.startswith("// This interpreter path is managed by pyuvstarter"):
-                    current_first_line_exists = True
-        except Exception:
-            # If reading fails, assume no relevant first line exists or is readable
-            pass
-
-    if not current_first_line_exists:
-        final_file_content = comment_line + "\n" + json_content_str
 
     with open(settings_file_path, 'w', encoding='utf-8') as f:
         f.write(final_file_content)
@@ -4465,10 +4451,7 @@ class CLICommand(BaseSettings):
             _ensure_tool_available("pipreqs", major_action_results, self.dry_run, website="https://github.com/bndr/pipreqs")
             _ensure_tool_available("ruff", major_action_results, self.dry_run, website="https://docs.astral.sh/ruff/")
 
-            # Step 6: Run import analysis and auto-fix (unused imports + relative imports).
-            _run_ruff_unused_import_check(self.project_dir, major_action_results, self.dry_run)
-
-            # Step 7: Discover dependencies from all code sources.
+            # Step 6: Discover dependencies from all code sources BEFORE ruff auto-fixes imports.
             declared_deps = _get_declared_dependencies(pyproject_file_path)
             discovery_result = discover_dependencies_in_scope(
                 scan_path=self.project_dir,
@@ -4478,6 +4461,9 @@ class CLICommand(BaseSettings):
             )
             # Discovery result is logged by discover_dependencies_in_scope() function
             major_action_results.append(("code_dep_discovery", "SUCCESS"))
+
+            # Step 7: Run import analysis and auto-fix (unused imports + relative imports) AFTER dependency discovery.
+            _run_ruff_unused_import_check(self.project_dir, major_action_results, self.dry_run)
 
             # Step 8: Manage project dependencies (add/remove from pyproject.toml, sync with venv).
             _log_action("manage_project_dependencies", "INFO", "Managing project dependencies via 'pyproject.toml'.")
