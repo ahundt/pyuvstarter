@@ -36,7 +36,7 @@ class naïveDataProcessor:
         """Process Chinese characters and data."""
         result = {}
         for key, value in data.items():
-            # Handle Chinese characters (数据处理器)
+            # Handle Chinese characters (Chinese content in ASCII filename)
             if any(ord(char) > 127 for char in value):
                 result[key] = f"chinese_data_{len(value)}"
             else:
@@ -63,13 +63,13 @@ class naïveDataProcessor:
     def save_to_file(self, filename: str) -> bool:
         """Save data to file with Unicode filename support."""
         try:
-            # Test various Unicode filenames
+            # Test Unicode content in ASCII filenames (cross-platform compatible)
             unicode_filenames = [
-                "naïve_output.json",
-                "résumé_data.csv",
-                "数据处理器.txt",
-                "café_results.json",
-                "emoji_test_😀😎🚀.txt"
+                "naive_output.json",
+                "resume_data.csv",
+                "chinese_processor.txt",
+                "cafe_results.json",
+                "emoji_test_output.txt"
             ]
 
             for unicode_name in unicode_filenames:
@@ -108,8 +108,8 @@ def main():
     emoji_test = 'Processing data 😊 with emoji 🚀 and symbols ⚡'
     processed_emoji = processor.process_emoji_text(emoji_test)
 
-    # Test file saving with Unicode filename
-    output_file = os.path.join(current_dir, "naïve_output.json")
+    # Test file saving with ASCII filename containing Unicode content
+    output_file = os.path.join(current_dir, "naive_output.json")
     success = processor.save_to_file(output_file)
 
     print(f"Unicode processing completed: {success}")

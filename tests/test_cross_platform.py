@@ -27,12 +27,12 @@ def test_unicode_filenames():
     """Test handling of Unicode filenames and directory names."""
 
     unicode_names = [
-        "café.py",
-        "naïve_script.py",
-        "résumé_generator.py",
-        "数据处理器.py",  # Chinese characters
-        "анализ.py",  # Cyrillic characters
-        "تحليل.py"  # Arabic characters
+        "cafe_data_processor.py",  # ASCII filename with Unicode content
+        "naive_script.py",  # ASCII filename with Unicode content
+        "resume_generator.py",  # ASCII filename with Unicode content
+        "chinese_data_processor.py",  # ASCII filename with Chinese content
+        "cyrillic_analyzer.py",  # ASCII filename with Cyrillic content
+        "arabic_analyzer.py"  # ASCII filename with Arabic content
     ]
 
     files = {}

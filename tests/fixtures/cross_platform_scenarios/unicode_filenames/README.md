@@ -4,14 +4,15 @@ This fixture tests pyuvstarter's handling of Unicode filenames and content acros
 
 ## Files with Unicode Characters
 
-### naïve_data_processor.py
-- Tests French accented characters (é, è, ê, à, ç)
+### naive_data_processor.py
+- Tests French accented characters (é, è, ê, à, ç) in content
 - Tests class names with Unicode (naïveDataProcessor)
 - Tests Unicode strings in content and comments
 - Tests emoji handling (😀, 😎, 🚀, 💡, ⚡)
+- Uses ASCII filename for cross-platform compatibility
 
-### 数据处理器.py
-- Tests Chinese characters in filename
+### chinese_data_processor.py
+- Tests Chinese characters in Python code content (but ASCII filename)
 - Tests Chinese class and function names
 - Tests Chinese variable names and strings
 - Tests non-ASCII character encoding

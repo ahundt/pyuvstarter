@@ -187,10 +187,22 @@ def main():
     )
 
     with temp_manager.create_temp_project(fixture) as project_dir:
-        # Create a read-only file to simulate permission issues
+        # Create a read-only file to simulate permission issues (cross-platform)
         readonly_file = project_dir / "readonly.txt"
         readonly_file.write_text("This file is read-only")
-        readonly_file.chmod(0o444)  # Read-only
+
+        # Set read-only permissions (cross-platform compatible)
+        try:
+            if os.name == 'nt':  # Windows
+                # Windows: use os.chmod with read-only permissions
+                # Note: Windows chmod is limited but should work for basic read-only
+                readonly_file.chmod(0o444)
+            else:  # Unix-like systems (Linux, macOS)
+                readonly_file.chmod(0o444)  # Read-only
+        except OSError:
+            # If chmod fails (e.g., on Windows with limited chmod support),
+            # the test should still continue - pyuvstarter should handle it gracefully
+            pass
 
         result = executor.run_pyuvstarter(
             project_dir,

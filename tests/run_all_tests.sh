@@ -9,10 +9,15 @@ echo ""
 
 # Save current directory
 ORIGINAL_DIR=$(pwd)
-TEST_DIR="$ORIGINAL_DIR/test_runs_$(date +%s)"
 
-# Create a test directory outside the pyuvstarter workspace
-TEST_DIR="/tmp/pyuvstarter_test_$$"
+# Create a test directory outside the pyuvstarter workspace (cross-platform)
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+    # Windows
+    TEST_DIR="$ORIGINAL_DIR/test_runs_$(date +%s)_$$"
+else
+    # Unix-like systems (Linux, macOS)
+    TEST_DIR="/tmp/pyuvstarter_test_$$"
+fi
 mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
 
