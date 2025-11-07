@@ -3021,19 +3021,20 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
             "--exit-zero",
             str(project_root),
         ]
+        # Ruff analysis should run even in dry run mode to detect import issues
+        # Only the actual fixing operations should be prevented in dry run mode
         result_stdout, _ = _run_command(
             ruff_args,
             f"{action_name}_exec",
             suppress_console_output_on_success=True,
-            dry_run=dry_run
+            dry_run=False  # Always run ruff analysis to detect issues
         )
         # print the stdout for debugging purposes
         if result_stdout:
             _log_action(action_name, "DEBUG", f"Ruff output:\n{result_stdout.strip()}")
 
-        if dry_run:
-            _log_action(action_name, "INFO", "DRY RUN: Assuming `ruff` would analyze imports. No actual check performed.")
-            return
+        # Note: We allow ruff analysis to run even in dry run mode to detect import issues
+        # Only the actual fixing operations should be skipped in dry run mode
 
         unused = []
         relative_imports = []
@@ -3841,14 +3842,27 @@ def _detect_project_structure(project_root: Path) -> dict:
         result['is_package'] = True
         _log_action(action_name, "INFO", f"Detected flat-layout project: {package_name}/")
     else:
+        # Enhanced package detection: look for any subdirectory with __init__.py
+        package_dirs = []
+        for subdir in project_root.iterdir():
+            if subdir.is_dir() and not subdir.name.startswith('.') and subdir.name not in ['src', '.venv', '__pycache__', 'node_modules']:
+                if (subdir / "__init__.py").exists():
+                    package_dirs.append(subdir.name)
+
+        if package_dirs:
+            result['layout'] = 'flat_custom'
+            result['is_package'] = True
+            result['package_dirs'] = package_dirs
+            _log_action(action_name, "INFO", f"Detected package project with custom directory structure: {', '.join(package_dirs)}")
         # Check if there are Python files that might be a package without __init__.py
-        python_files = list(project_root.glob("*.py"))
-        if python_files:
-            result['layout'] = 'scripts_only_potential_package'
-            _log_action(action_name, "INFO", f"Detected script-only project with Python files")
         else:
-            result['layout'] = 'scripts_only'
-            _log_action(action_name, "INFO", f"Detected scripts-only project")
+            python_files = list(project_root.glob("*.py"))
+            if python_files:
+                result['layout'] = 'scripts_only_potential_package'
+                _log_action(action_name, "INFO", f"Detected script-only project with Python files")
+            else:
+                result['layout'] = 'scripts_only'
+                _log_action(action_name, "INFO", f"Detected scripts-only project")
 
     return result
 
