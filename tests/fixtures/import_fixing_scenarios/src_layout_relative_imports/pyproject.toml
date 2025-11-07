@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relative-import-test"
+version = "1.0.0"
+description = "Test project for relative import fixing"
+authors = [{name = "Test Author", email = "test@example.com"}]
+requires-python = ">=3.8"
+
+[project.scripts]
+test-app = "myapp.main:main_function"
+
+[tool.ruff]
+# Configure ruff to detect TID252 (relative import violations)
+select = ["TID252"]
+
+[tool.ruff.lint.isort]
+# Configure isort settings for import fixing
+profile = "black"

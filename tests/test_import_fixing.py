@@ -31,9 +31,9 @@ class ImportFixingTestSuite:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="pyuvstarter_test_"))
         self.pyuvstarter_path = Path(__file__).parent.parent
 
-    def setup_test_environment(self, test_project_path: Path) -> Path:
+    def setup_test_environment(self, test_project_path: Path, suffix: str = "") -> Path:
         """Copy test project to temporary directory for isolation."""
-        project_name = test_project_path.name
+        project_name = test_project_path.name + suffix
         temp_project_path = self.temp_dir / project_name
 
         # Copy the entire test project
@@ -401,6 +401,205 @@ class ImportFixingTestSuite:
         finally:
             pass
 
+    def test_logging_validation(self):
+        """Test that import fixing is properly logged in JSON log file."""
+        print("\n🧪 Testing: logging validation")
+        print("=" * 60)
+
+        test_project = self.test_dir / "src_layout_pkg_with_relative_imports"
+        temp_project = self.setup_test_environment(test_project, suffix="_logging_test")
+
+        try:
+            # Run pyuvstarter with actual fixing (not dry run) to generate log
+            returncode, stdout, stderr = self.run_pyuvstarter(temp_project, dry_run=False)
+            print(f"🚀 PyUVStarter result: {returncode}")
+
+            # Check for JSON log file creation
+            log_file = temp_project / "pyuvstarter_setup_log.json"
+            if log_file.exists():
+                print("✅ JSON log file created")
+
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        log_data = json.load(f)
+
+                    # Validate log structure
+                    if "actions" in log_data:
+                        print("✅ Actions logged in JSON")
+
+                        # Check for import fixing actions
+                        import_fix_actions = [
+                            action for action in log_data["actions"]
+                            if "import" in action.get("action", "").lower()
+                        ]
+
+                        if import_fix_actions:
+                            print(f"✅ Found {len(import_fix_actions)} import-related actions in log")
+                            for action in import_fix_actions:
+                                print(f"  - {action.get('action', 'Unknown action')}")
+                        else:
+                            print("⚠️  No import-specific actions found in log")
+
+                    if "project_dir" in log_data:
+                        print("✅ Project directory logged")
+
+                    if "start_time" in log_data:
+                        print("✅ Start time logged")
+
+                    if "end_time" in log_data:
+                        print("✅ End time logged")
+
+                except json.JSONDecodeError as e:
+                    print(f"❌ Failed to parse JSON log: {e}")
+                    return False
+            else:
+                print("❌ JSON log file not found")
+                return False
+
+            print("✅ Test passed")
+            return True
+
+        finally:
+            pass
+
+    def test_complex_relative_import_scenarios(self):
+        """Test complex relative import scenarios."""
+        print("\n🧪 Testing: complex_relative_import_scenarios")
+        print("=" * 60)
+
+        test_project = self.test_dir / "src_layout_pkg_with_relative_imports"
+        temp_project = self.setup_test_environment(test_project, suffix="_complex_test")
+
+        try:
+            # Check initial state
+            initial_relative = self.find_relative_imports(temp_project)
+            print(f"🔍 Initial relative imports found: {len(initial_relative)}")
+
+            # Also check for complex import patterns
+            complex_imports = self.find_complex_import_patterns(temp_project)
+            if complex_imports:
+                print(f"🔍 Complex import patterns found: {len(complex_imports)}")
+                for file_path, line_num, line in complex_imports:
+                    print(f"  - {file_path}:{line_num}: {line}")
+
+            # Run pyuvstarter
+            returncode, stdout, stderr = self.run_pyuvstarter(temp_project, dry_run=True)
+            print(f"🚀 Dry run result: {returncode}")
+
+            # Should detect imports for fixing
+            if "relative import" in stdout.lower() or "import fixing" in stdout.lower():
+                print("✅ Complex import scenarios detected")
+            else:
+                print("❌ Complex import scenarios not detected")
+                return False
+
+            print("✅ Test passed")
+            return True
+
+        finally:
+            pass
+
+    def test_multiline_relative_imports(self):
+        """Test multiline relative import handling."""
+        print("\n🧪 Testing: multiline_relative_imports")
+        print("=" * 60)
+
+        test_project = self.test_dir / "src_layout_pkg_with_relative_imports"
+        temp_project = self.setup_test_environment(test_project, suffix="_multiline_test")
+
+        try:
+            # Look for multiline import patterns
+            multiline_imports = self.find_multiline_imports(temp_project)
+            if multiline_imports:
+                print(f"🔍 Multiline relative imports found: {len(multiline_imports)}")
+                for file_path, line_num, lines in multiline_imports:
+                    print(f"  - {file_path}:{line_num}:")
+                    for line in lines:
+                        print(f"    {line}")
+
+            # Run pyuvstarter
+            returncode, stdout, stderr = self.run_pyuvstarter(temp_project, dry_run=True)
+            print(f"🚀 Dry run result: {returncode}")
+
+            # Should handle multiline imports
+            if returncode == 0:
+                print("✅ Multiline imports handled successfully")
+            else:
+                print("❌ Multiline imports caused failure")
+                return False
+
+            print("✅ Test passed")
+            return True
+
+        finally:
+            pass
+
+    def find_complex_import_patterns(self, project_path: Path) -> List[Tuple[str, int, str]]:
+        """Find complex import patterns (multiline, conditional, etc.)."""
+        complex_imports = []
+
+        for py_file in project_path.rglob("*.py"):
+            if py_file.name == "__init__.py":
+                continue
+
+            try:
+                with open(py_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+
+                for i, line in enumerate(lines, 1):
+                    line = line.strip()
+                    # Look for complex patterns
+                    if (line.startswith(('from .', 'from ..', 'from ...')) and
+                        ('(' in line or ')' in line or '\\' in line)):
+                        complex_imports.append((str(py_file.relative_to(project_path)), i, line))
+
+            except Exception as e:
+                print(f"Error reading {py_file}: {e}")
+
+        return complex_imports
+
+    def find_multiline_imports(self, project_path: Path) -> List[Tuple[str, int, List[str]]]:
+        """Find multiline import statements."""
+        multiline_imports = []
+
+        for py_file in project_path.rglob("*.py"):
+            if py_file.name == "__init__.py":
+                continue
+
+            try:
+                with open(py_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+
+                i = 0
+                while i < len(lines):
+                    line = lines[i].strip()
+
+                    # Check if this line starts a multiline import
+                    if (line.startswith(('from .', 'from ..', 'from ...', 'import ')) and
+                        ('(' in line and ')' not in line)):
+
+                        # Collect the multiline import
+                        import_lines = [line]
+                        i += 1
+
+                        # Continue until we find the closing parenthesis
+                        while i < len(lines) and ')' not in lines[i]:
+                            import_lines.append(lines[i].strip())
+                            i += 1
+
+                        # Add the closing line if it contains ')'
+                        if i < len(lines) and ')' in lines[i]:
+                            import_lines.append(lines[i].strip())
+
+                        multiline_imports.append((str(py_file.relative_to(project_path)), i - len(import_lines) + 1, import_lines))
+
+                    i += 1
+
+            except Exception as e:
+                print(f"Error reading {py_file}: {e}")
+
+        return multiline_imports
+
     def run_all_tests(self, keep_artifacts: bool = False) -> bool:
         """Run all import fixing tests."""
         print("🚀 Starting PyUVStarter Import Fixing Test Suite")
@@ -413,6 +612,9 @@ class ImportFixingTestSuite:
             ("Package No PyProject", self.test_package_without_pyproject),
             ("Legacy Requirements", self.test_legacy_requirements_with_relative_imports),
             ("Absolute Imports Control", self.test_absolute_imports_control),
+            ("Logging Validation", self.test_logging_validation),
+            ("Complex Relative Import Scenarios", self.test_complex_relative_import_scenarios),
+            ("Multiline Relative Imports", self.test_multiline_relative_imports),
         ]
 
         results = []

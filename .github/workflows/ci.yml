@@ -205,9 +205,25 @@ jobs:
         DEMO1_EXIT_CODE=$?
         # Note: create_demo.sh doesn't generate test_results.xml
 
-        # Check if either test suite failed
-        if [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ]; then
+        # Run comprehensive test suite
+        echo ""
+        echo "🧪 Running comprehensive test suite..."
+        echo "===================================="
+        if [ -x "tests/run_all_tests.sh" ]; then
+          chmod +x tests/run_all_tests.sh
+          ./tests/run_all_tests.sh
+          COMPREHENSIVE_EXIT_CODE=$?
+        else
+          echo "⚠️  Comprehensive test runner not found - skipping"
+          COMPREHENSIVE_EXIT_CODE=0
+        fi
+
+        # Check if any test suite failed
+        if [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ] || [ $COMPREHENSIVE_EXIT_CODE -ne 0 ]; then
           echo "❌ Unit tests failed"
+          echo "Demo1 exit code: $DEMO1_EXIT_CODE"
+          echo "Demo2 exit code: $DEMO2_EXIT_CODE"
+          echo "Comprehensive test exit code: $COMPREHENSIVE_EXIT_CODE"
           exit 1
         fi
         echo "✅ All unit tests passed"

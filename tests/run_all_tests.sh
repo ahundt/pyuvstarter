@@ -36,6 +36,9 @@ INTEGRATION_TESTS=(
 PYTHON_TESTS=(
     "test_extraction_fix.py"
     "test_import_fixing.py"
+    "test_dependency_migration.py"
+    "test_jupyter_pipeline_simple.py"
+    "test_project_structure_simple.py"
 )
 
 FAILED_TESTS=()
@@ -50,7 +53,7 @@ for test in "${PYTHON_TESTS[@]}"; do
     echo "Running: $test"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    if source "$ORIGINAL_DIR/.venv/bin/activate" && python "tests/$test"; then
+    if source "$ORIGINAL_DIR/.venv/bin/activate" && python3 "tests/$test"; then
         echo "✅ $test PASSED"
     else
         echo "❌ $test FAILED"
