@@ -161,49 +161,30 @@ jobs:
         chmod +x create_demo.sh create_demo2.sh
 
         echo ""
-        echo "🧪 Running Python unit tests..."
-        echo "==================================="
-        TESTS_PASSED=true
-        TEST_COUNT=0
-        for test_file in tests/test_*.py; do
-          # Check if glob matched any files (if not, test_file will be literal "tests/test_*.py")
-          if [ ! -f "$test_file" ]; then
-            echo "No Python test files found matching tests/test_*.py"
-            break
-          fi
-          TEST_COUNT=$((TEST_COUNT + 1))
-          echo "Running: $test_file"
-          if python "$test_file"; then
-            echo "✅ $test_file PASSED"
-          else
-            echo "❌ $test_file FAILED"
-            TESTS_PASSED=false
-          fi
-          echo ""
-        done
-
-        if [ $TEST_COUNT -eq 0 ]; then
-          echo "⚠️  No Python unit tests found - skipping"
-        elif [ "$TESTS_PASSED" = false ]; then
-          echo "❌ Python unit tests failed"
-          exit 1
+        echo "🧪 Running Python unit tests with pytest..."
+        echo "=========================================="
+        # Run the full test suite using pytest
+        if uv run pytest tests/ --tb=short --color=yes; then
+          echo "✅ All pytest tests passed"
+          PYTEST_EXIT_CODE=0
         else
-          echo "✅ All Python unit tests passed ($TEST_COUNT tests)"
+          echo "❌ pytest tests failed"
+          PYTEST_EXIT_CODE=1
         fi
 
+        # Run the demo script tests
         echo ""
         echo "Running create_demo2.sh unit tests..."
         echo "DEBUG: UNIT_TEST_MODE and file generation check:"
         ./create_demo2.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo2"
         DEMO2_EXIT_CODE=$?
-        
+
         echo "DEBUG: Checking for test_results.xml..."
         ls -la test_results* || echo "No test_results* files found"
 
         echo "Running create_demo.sh unit tests..."
         ./create_demo.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo1"
         DEMO1_EXIT_CODE=$?
-        # Note: create_demo.sh doesn't generate test_results.xml
 
         # Run comprehensive test suite
         echo ""
@@ -219,8 +200,9 @@ jobs:
         fi
 
         # Check if any test suite failed
-        if [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ] || [ $COMPREHENSIVE_EXIT_CODE -ne 0 ]; then
+        if [ $PYTEST_EXIT_CODE -ne 0 ] || [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ] || [ $COMPREHENSIVE_EXIT_CODE -ne 0 ]; then
           echo "❌ Unit tests failed"
+          echo "pytest exit code: $PYTEST_EXIT_CODE"
           echo "Demo1 exit code: $DEMO1_EXIT_CODE"
           echo "Demo2 exit code: $DEMO2_EXIT_CODE"
           echo "Comprehensive test exit code: $COMPREHENSIVE_EXIT_CODE"
