@@ -139,7 +139,7 @@ import os
                 "requirements.txt": "pandas==1.5.0\nnumpy>=1.20.0"
             },
             directories=[],
-            expected_packages=["pandas", "numpy", "transformers", "torch", "torchvision", "accelerate", "datasets"]
+            expected_packages=["pandas", "numpy", "transformers", "torch", "datasets"]
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
@@ -154,11 +154,11 @@ import os
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
 
-            # Check for pip-installed packages
-            pip_packages = ["transformers", "torch", "torchvision", "accelerate", "datasets"]
-            for pkg in pip_packages:
+            # Check for packages discovered from notebook imports
+            notebook_packages = ["transformers", "torch", "datasets"]
+            for pkg in notebook_packages:
                 found = any(pkg.lower() in dep.lower() for dep in dependencies)
-                assert found, f"Pip-installed package {pkg} not found in dependencies"
+                assert found, f"Notebook package {pkg} not found in dependencies"
 
     def test_complex_notebook_with_various_imports(self):
         """Test notebook with complex import patterns and edge cases."""
