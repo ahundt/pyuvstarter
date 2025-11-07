@@ -128,7 +128,7 @@ def test_main():
 [project]
 name = "flatproject"
 version = "0.1.0"
-description = "A flat-layout package
+description = "A flat-layout package"
 """,
                 "myproject/__init__.py": """
 \"\"\"FlatProject main package.\"\"\"
@@ -240,9 +240,7 @@ if __name__ == "__main__":
 [project]
 name = "multipackage"
 version = "0.1.0"
-description = "A multi-package project
-
-This project contains multiple packages in different directories.
+description = "A multi-package project with multiple packages in different directories."
 """,
                 "packages/api/__init__.py": """
 \"\"\"API package.\"\"\"
@@ -319,9 +317,7 @@ if __name__ == "__main__":
 [project]
 name = "hybridproject"
 version = "0.1.0"
-description = "A hybrid project with mixed layouts
-
-This project has both src-layout and flat-layout packages.
+description = "A hybrid project with both src-layout and flat-layout packages."
 """,
                 # src-layout package
                 "src/hybrid/__init__.py": """
