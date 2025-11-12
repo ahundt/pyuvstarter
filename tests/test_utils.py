@@ -408,7 +408,8 @@ class PyuvstarterCommandExecutor:
 
             error_parts = [
                 f"\n{'='*70}",
-                f"TIMEOUT after {timeout}s",
+                f"⏱️  TEST TIMEOUT: Process exceeded {timeout}s limit",
+                f"{'='*70}",
             ]
 
             # Add detected timeout indicators first (most actionable info)
@@ -416,22 +417,39 @@ class PyuvstarterCommandExecutor:
                 error_parts.append("\n🔍 DETECTED TIMEOUT CAUSES:")
                 for indicator in timeout_indicators:
                     error_parts.append(f"   {indicator}")
-                error_parts.append("")  # Blank line for readability
+                error_parts.append("\n💡 SUGGESTED ACTIONS:")
+                if any("WHEEL" in ind or "SOURCE" in ind or "RUST" in ind for ind in timeout_indicators):
+                    error_parts.append("   • Use packages with pre-built wheels for your Python version")
+                    error_parts.append("   • Check package availability: https://pypi.org/<package>/")
+                    error_parts.append("   • For CI: Install build dependencies or use different Python version")
+                if any("NETWORK" in ind for ind in timeout_indicators):
+                    error_parts.append("   • Check internet connection and PyPI status")
+                    error_parts.append("   • Try again with better network or use package mirror")
+                if any("DOWNLOAD" in ind for ind in timeout_indicators):
+                    error_parts.append("   • Large ML packages can take 5-20min on slow connections")
+                    error_parts.append("   • Consider increasing timeout or using smaller test packages")
+                error_parts.append("")
 
             error_parts.extend([
-                f"Command (as string): {cmd_str}",
-                f"Command (exact list): {cmd}",
-                f"Working directory: {project_dir.resolve()}",
-                f"Environment variables:",
+                f"\n📋 REPRODUCTION DETAILS:",
+                f"   Working directory: {project_dir.resolve()}",
+                f"\n   Command (copy-paste):",
+                f"   {cmd_str}",
+                f"\n   Command (exact args for debugging):",
+                f"   {cmd}",
+                f"\n   Environment:",
             ])
             for k, v in env_vars.items():
-                error_parts.append(f"  {k}={v}")
+                error_parts.append(f"      {k}={v}")
             error_parts.extend([
-                f"\n--- Stdout (last 1000 chars) ---",
+                f"\n📤 OUTPUT (last 1000 chars of stdout):",
+                f"{'-'*70}",
                 stdout_display,
-                f"\n--- Stderr (last 1000 chars) ---",
+                f"{'-'*70}",
+                f"\n📤 ERRORS (last 1000 chars of stderr):",
+                f"{'-'*70}",
                 stderr_display,
-                f"{'='*70}",
+                f"{'-'*70}",
             ])
             # Add recent log actions to identify what was executing when timeout occurred
             _add_log_actions(error_parts, project_dir, max_actions=5)
