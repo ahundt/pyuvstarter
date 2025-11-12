@@ -29,14 +29,29 @@ from dataclasses import dataclass
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def _read_log_data(project_dir: Path) -> Optional[Dict[str, Any]]:
-    """Read pyuvstarter JSON log safely, returning None on any error."""
+    """Read pyuvstarter JSON log safely, returning None on any error.
+
+    Returns:
+        Dict with log data if successful, None if file doesn't exist or can't be read.
+        On error, prints diagnostic message to help debug log reading issues.
+    """
     log_file = project_dir / "pyuvstarter_setup_log.json"
     if not log_file.exists():
+        # Not an error - log may not exist for some test scenarios
         return None
     try:
         with open(log_file, 'r') as f:
-            return json.load(f)
-    except Exception:
+            data = json.load(f)
+            # Validate basic structure
+            if not isinstance(data, dict):
+                print(f"WARNING: Log file exists but is not a dict: {log_file}")
+                return None
+            return data
+    except json.JSONDecodeError as e:
+        print(f"WARNING: Log file has invalid JSON: {log_file}: {e}")
+        return None
+    except Exception as e:
+        print(f"WARNING: Could not read log file: {log_file}: {e}")
         return None
 
 def _add_project_file_listing(error_parts: List[str], project_dir: Path) -> None:
@@ -51,26 +66,63 @@ def _add_project_file_listing(error_parts: List[str], project_dir: Path) -> None
         pass
 
 def _add_log_actions(error_parts: List[str], project_dir: Path, action_filter: str = None, max_actions: int = 5) -> None:
-    """Add JSON log action diagnostics to error_parts list (in-place)."""
+    """Add JSON log action diagnostics to error_parts list (in-place).
+
+    Never fails silently - always provides diagnostic information about what's available.
+    If specific action not found, shows what actions ARE available for debugging.
+    """
     log_data = _read_log_data(project_dir)
     if not log_data:
+        error_parts.append("LOG DIAGNOSTIC: pyuvstarter_setup_log.json not found or unreadable")
         return
 
-    actions = log_data.get("actions", [])
+    actions = log_data.get("actions")
     if not actions:
+        error_parts.append(f"LOG DIAGNOSTIC: JSON log has no 'actions' key. Available keys: {list(log_data.keys())}")
+        return
+
+    if not isinstance(actions, list):
+        error_parts.append(f"LOG DIAGNOSTIC: 'actions' is not a list, it's a {type(actions).__name__}")
+        return
+
+    if len(actions) == 0:
+        error_parts.append("LOG DIAGNOSTIC: 'actions' list is empty")
         return
 
     if action_filter:
         # Find specific action type (e.g., "pipreqs_discover")
-        filtered = [a for a in actions if action_filter in a.get("action_name", "")]
-        if filtered:
-            last_action = filtered[-1]
-            error_parts.append(f"{action_filter} action: {last_action.get('action_name', 'unknown')}")
-            error_parts.append(f"Status: {last_action.get('level', 'unknown')}")
-            if last_action.get("message"):
-                error_parts.append(f"Message: {last_action['message']}")
-            if "details" in last_action:
-                error_parts.append(f"Details: {json.dumps(last_action['details'], indent=2)}")
+        # Prioritize __exec actions (subprocess calls) which have command details
+        filtered = [a for a in actions if isinstance(a, dict) and action_filter in a.get("action", "")]
+
+        if not filtered:
+            # Filter found nothing - provide diagnostic information
+            available_actions = [a.get("action", "NO_ACTION_KEY") for a in actions if isinstance(a, dict)]
+            unique_actions = sorted(set(available_actions))
+            error_parts.append(f"LOG DIAGNOSTIC: No actions matching filter '{action_filter}'")
+            error_parts.append(f"Available action types ({len(unique_actions)}): {unique_actions[:20]}")
+            # Fallback: show last few actions for context
+            error_parts.append(f"Last {min(3, len(actions))} actions for context:")
+            for action in actions[-3:]:
+                if isinstance(action, dict):
+                    error_parts.append(f"  - {action.get('action', 'unknown')}: {action.get('status', 'unknown')}")
+            return
+
+        # Prefer actions with non-empty details (usually __exec subprocess actions)
+        actions_with_details = [a for a in filtered if a.get("details") and len(a.get("details", {})) > 0]
+        last_action = actions_with_details[-1] if actions_with_details else filtered[-1]
+
+        # Always show what we found
+        if actions_with_details:
+            error_parts.append(f"Found {len(filtered)} matching actions, {len(actions_with_details)} with details")
+
+        error_parts.append(f"{action_filter} action: {last_action.get('action', 'unknown')}")
+        error_parts.append(f"Status: {last_action.get('status', 'unknown')}")
+        if last_action.get("message"):
+            error_parts.append(f"Message: {last_action['message']}")
+        if "details" in last_action and last_action["details"]:
+            error_parts.append(f"Details: {json.dumps(last_action['details'], indent=2)}")
+        else:
+            error_parts.append("Details: (none available for this action)")
     else:
         # Get last N actions for general context
         last_actions = actions[-max_actions:] if len(actions) > max_actions else actions

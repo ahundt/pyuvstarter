@@ -2010,7 +2010,8 @@ def _run_command(command_list: list[str], action_log_name: str, work_dir: Path =
     _log_action(action_log_name, "INFO", f"EXEC: \"{cmd_str}\" in \"{work_dir}\" (Logged as action: {action_log_name})")
 
     log_details = {
-        "command": cmd_str,
+        "command": cmd_str,  # Human-readable space-joined string
+        "command_list": command_list if isinstance(command_list, list) else [command_list],  # Exact list for reproduction
         "working_directory": str(work_dir),
         "shell_used": shell,
         "capture_output_setting": capture_output,
@@ -3141,7 +3142,8 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
 
                 # Include diagnostic details in JSON log for test error reporting
                 warning_details = {
-                    "command": ' '.join(pipreqs_args),
+                    "command": ' '.join(pipreqs_args),  # Human-readable space-joined string
+                    "command_list": pipreqs_args,  # Exact list for reproduction
                     "working_directory": str(scan_path.resolve()),
                     "environment": _get_env_diagnostics(uvx_env),
                     "py_files_count": len(py_files),
