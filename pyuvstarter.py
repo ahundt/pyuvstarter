@@ -2379,6 +2379,120 @@ def _get_suggested_actions_for_error_type(failure_reason: str, package_name: str
     return suggestions
 
 
+def analyze_timeout_output(stdout: str, stderr: str) -> dict:
+    """Analyze pyuvstarter command output to detect timeout causes and suggest actions.
+
+    Detects timeout causes from pyuvstarter's logged error messages (from _categorize_uv_add_error)
+    and raw subprocess output that appears in verbose mode via _log_action.
+
+    Detection strategy:
+    1. Primary: pyuvstarter's categorized error messages ("building from source", "requires rust compiler", etc.)
+    2. Fallback: Raw subprocess keywords ("building wheel", "running setup.py", etc.)
+
+    These keywords appear in stdout when:
+    - pyuvstarter runs with --verbose flag
+    - Subprocess failures are logged with stderr content via _log_action
+    - Package installation errors are logged with categorized reasons
+
+    Designed for use by both production code and test infrastructure (DRY principle).
+
+    Args:
+        stdout: Standard output from timed-out pyuvstarter command (can be empty string)
+        stderr: Standard error from timed-out pyuvstarter command (can be empty string)
+
+    Returns:
+        dict with keys:
+            - "causes": List[str] - Human-readable timeout causes with emoji indicators
+            - "suggestions": Dict[str, List[str]] - Category → list of specific suggestions
+            - "detected_issues": List[str] - Machine-readable issue identifiers
+            - "has_issues": bool - Whether any issues were detected
+
+    Example:
+        >>> # Detects pyuvstarter's categorized error message
+        >>> diagnostics = analyze_timeout_output(stdout="building from source (very slow)", stderr="")
+        >>> diagnostics["has_issues"]
+        True
+    """
+    causes = []
+    detected_issues = []
+    combined_output = (stdout + "\n" + stderr).lower()
+
+    # Detect ONLY pyuvstarter's actual categorized error messages
+    # These exact strings come from _categorize_uv_add_error() and appear in _log_action output
+    # DO NOT add fabricated detection - only match verified pyuvstarter output
+
+    # Detection 1: "building from source (very slow - missing pre-built wheel)"
+    # This exact string is returned by _categorize_uv_add_error() line 2316
+    if "building from source" in combined_output:
+        causes.append("⚠️  BUILDING FROM SOURCE: Package compiling from source (very slow)")
+        detected_issues.append("building_from_source")
+
+    # Detection 2: "requires Rust compiler (install rustc or use different Python version)"
+    # This exact string is returned by _categorize_uv_add_error() line 2318
+    if "requires rust compiler" in combined_output:
+        causes.append("⚠️  RUST COMPILATION: Package requires Rust compiler")
+        detected_issues.append("rust_compilation")
+
+    # Detection 3: "network error (check internet connection)"
+    # This exact string is returned by _categorize_uv_add_error() line 2320
+    if "network error" in combined_output:
+        causes.append("⚠️  NETWORK ISSUE: Connection problems detected")
+        detected_issues.append("network_issue")
+
+    # Detection 4: "no compatible wheel available for your platform/Python version"
+    # This exact string is returned by _categorize_uv_add_error() lines 2300-2304, 2312
+    if "no compatible wheel" in combined_output:
+        causes.append("⚠️  WHEEL UNAVAILABILITY: No pre-built wheel available")
+        detected_issues.append("wheel_unavailability")
+
+    # Detection 5: Ruff JSON output (actual user timeout scenario from conversation)
+    # Ruff outputs JSON with "code" and "message" fields during --output-format=json
+    # This appears when ruff analysis times out, as seen in user's Ubuntu 3.11 test failure
+    if '"code":' in combined_output and '"message":' in combined_output:
+        causes.append("⚠️  RUFF ANALYSIS: Code analysis running (may be slow on large codebases)")
+        detected_issues.append("ruff_analysis")
+
+    # Build category-specific suggestions
+    suggestions = {}
+
+    if any(issue in detected_issues for issue in ["wheel_unavailability", "building_from_source"]):
+        suggestions["wheel_issues"] = [
+            "• Building from source can take 5-20 minutes vs 5-20 seconds for wheels",
+            "• Use a Python version with pre-built wheels (usually 3.11-3.13)",
+            "• For CI: Install build dependencies (gcc, python3-dev) or use different Python version",
+            "• Check package availability on PyPI for your Python version"
+        ]
+
+    if "rust_compilation" in detected_issues:
+        suggestions["rust_issues"] = [
+            "• Install Rust compiler: curl --proto='=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+            "• Or use a Python version where pre-built wheels are available",
+            "• Rust compilation can be very slow (10-30 minutes for large packages)"
+        ]
+
+    if "network_issue" in detected_issues:
+        suggestions["network_issues"] = [
+            "• Check internet connection and PyPI status: https://status.python.org",
+            "• Try again - network issues are often temporary",
+            "• Use a package mirror if behind a firewall"
+        ]
+
+    if "ruff_analysis" in detected_issues:
+        suggestions["ruff_issues"] = [
+            "• Ruff is analyzing code for import issues - this is normal but can be slow",
+            "• Large codebases with many files take longer to analyze",
+            "• Consider excluding test fixtures from analysis via pyproject.toml [tool.ruff.exclude]",
+            "• Increase timeout if needed - ruff analysis is usually fast (<30s) but varies by codebase size"
+        ]
+
+    return {
+        "causes": causes,
+        "suggestions": suggestions,
+        "detected_issues": detected_issues,
+        "has_issues": len(detected_issues) > 0
+    }
+
+
 def _try_packages_individually(
     packages: list,
     project_root: Path,

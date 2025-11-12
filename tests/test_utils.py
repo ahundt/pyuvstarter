@@ -25,8 +25,12 @@ from contextlib import contextmanager
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 
-# Add parent directory to path for pyuvstarter imports
+# Add parent directory to path FIRST so pyuvstarter can be imported
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import error analysis from production code (DRY principle)
+# This function is safe to import - no side effects, pure function
+from pyuvstarter import analyze_timeout_output
 
 def _read_log_data(project_dir: Path) -> Optional[Dict[str, Any]]:
     """Read pyuvstarter JSON log safely, returning None on any error.
@@ -387,20 +391,9 @@ class PyuvstarterCommandExecutor:
             stdout_str = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode('utf-8', errors='replace') if e.stdout else "")
             stderr_str = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode('utf-8', errors='replace') if e.stderr else "")
 
-            # Detect common timeout causes from output
-            timeout_indicators = []
-            combined_output = (stdout_str + "\n" + stderr_str).lower()
-
-            if "no compatible wheel" in combined_output or "no matching distribution" in combined_output:
-                timeout_indicators.append("⚠️  WHEEL UNAVAILABILITY: Package may be building from source (very slow)")
-            if "building wheel" in combined_output or "running setup.py" in combined_output:
-                timeout_indicators.append("⚠️  BUILDING FROM SOURCE: Compiling package instead of using pre-built wheel")
-            if "network" in combined_output or "connection" in combined_output or "timeout" in combined_output:
-                timeout_indicators.append("⚠️  NETWORK ISSUE: Connection problems detected")
-            if "error:" in combined_output and ("rust" in combined_output or "cargo" in combined_output):
-                timeout_indicators.append("⚠️  RUST COMPILATION: Package requires Rust compiler (can be very slow)")
-            if "downloading" in combined_output or "resolving" in combined_output:
-                timeout_indicators.append("⚠️  PACKAGE DOWNLOAD: May be downloading large ML packages (~GB)")
+            # Analyze timeout using production code (DRY principle)
+            # This calls pyuvstarter.analyze_timeout_output() which is the single source of truth
+            diagnostics = analyze_timeout_output(stdout_str, stderr_str)
 
             # Show more context (last 1000 chars) and format for readability
             stdout_display = stdout_str[-1000:] if stdout_str else "No stdout"
@@ -413,21 +406,18 @@ class PyuvstarterCommandExecutor:
             ]
 
             # Add detected timeout indicators first (most actionable info)
-            if timeout_indicators:
+            # Uses diagnostics from pyuvstarter.analyze_timeout_output() (DRY principle)
+            if diagnostics["has_issues"]:
                 error_parts.append("\n🔍 DETECTED TIMEOUT CAUSES:")
-                for indicator in timeout_indicators:
-                    error_parts.append(f"   {indicator}")
-                error_parts.append("\n💡 SUGGESTED ACTIONS:")
-                if any("WHEEL" in ind or "SOURCE" in ind or "RUST" in ind for ind in timeout_indicators):
-                    error_parts.append("   • Use packages with pre-built wheels for your Python version")
-                    error_parts.append("   • Check package availability: https://pypi.org/<package>/")
-                    error_parts.append("   • For CI: Install build dependencies or use different Python version")
-                if any("NETWORK" in ind for ind in timeout_indicators):
-                    error_parts.append("   • Check internet connection and PyPI status")
-                    error_parts.append("   • Try again with better network or use package mirror")
-                if any("DOWNLOAD" in ind for ind in timeout_indicators):
-                    error_parts.append("   • Large ML packages can take 5-20min on slow connections")
-                    error_parts.append("   • Consider increasing timeout or using smaller test packages")
+                for cause in diagnostics["causes"]:
+                    error_parts.append(f"   {cause}")
+
+                # Add all suggestions from all detected issue categories
+                if diagnostics["suggestions"]:
+                    error_parts.append("\n💡 SUGGESTED ACTIONS:")
+                    for category, suggestions in diagnostics["suggestions"].items():
+                        for suggestion in suggestions:
+                            error_parts.append(f"   {suggestion}")
                 error_parts.append("")
 
             error_parts.extend([
