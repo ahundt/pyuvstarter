@@ -17,6 +17,29 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Platform-specific package availability
+# Some packages don't have wheels for Python 3.14+ yet (as of 2025-11)
+# Update this when new wheels become available
+PYTHON_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}"
+PACKAGES_WITHOUT_PY314_WHEELS = ["tensorflow"]  # torch has 3.14 wheels, tensorflow doesn't yet
+
+def is_package_available_on_current_python(package_name: str) -> bool:
+    """Check if a package has wheels available for the current Python version.
+
+    Args:
+        package_name: Name of the package to check
+
+    Returns:
+        True if the package should be available, False if known to lack wheels
+
+    Note:
+        This is based on known wheel availability as of 2025-11.
+        As packages release new wheels for Python 3.14+, update PACKAGES_WITHOUT_PY314_WHEELS.
+    """
+    if PYTHON_VERSION >= "3.14" and package_name in PACKAGES_WITHOUT_PY314_WHEELS:
+        return False
+    return True
+
 from tests.test_utils import (
     ProjectFixture, temp_manager, executor, validator, mock_factory, format_pyuvstarter_error, format_dependency_mismatch
 )
@@ -218,11 +241,22 @@ import os
 
             assert result.returncode == 0, format_pyuvstarter_error("test_complex_notebook_with_various_imports", result, project_dir)
 
-            pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
+            # Filter expected packages to only include those available on current Python version
+            filtered_expected_packages = [
+                pkg for pkg in fixture.expected_packages
+                if is_package_available_on_current_python(pkg)
+            ]
+
+            pyproject_data = validator.validate_pyproject_toml(project_dir, filtered_expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
 
             # Validate various import patterns were discovered
+            # Core packages that should work on all Python versions
             complex_packages = ["pandas", "numpy", "matplotlib", "seaborn", "plotly", "sklearn", "scipy", "beautifulsoup4"]
+
+            # Platform-limited packages (may not have wheels for Python 3.14+)
+            platform_limited_packages = ["tensorflow", "torch", "typing_extensions"]
+
             for pkg in complex_packages:
                 found = False
                 for dep in dependencies:
@@ -240,6 +274,31 @@ import os
                         found = True
                         break
                 assert found, format_dependency_mismatch("test_complex_notebook_with_various_imports", pkg, dependencies, project_dir)
+
+            # Platform-limited packages: only assert if available on current Python version
+            for pkg in platform_limited_packages:
+                if is_package_available_on_current_python(pkg):
+                    found = False
+                    for dep in dependencies:
+                        dep_clean = dep.lower().replace('-', '')
+                        if pkg.lower() in dep_clean or pkg.replace('_', '').lower() in dep_clean:
+                            found = True
+                            break
+                    assert found, format_dependency_mismatch("test_complex_notebook_with_various_imports", pkg, dependencies, project_dir)
+                else:
+                    # Package not available on this Python version - verify it's NOT in dependencies
+                    # (our graceful degradation should have skipped it)
+                    found_incorrectly = False
+                    for dep in dependencies:
+                        dep_clean = dep.lower().replace('-', '')
+                        if pkg.lower() in dep_clean:
+                            found_incorrectly = True
+                            break
+                    assert not found_incorrectly, (
+                        f"Package '{pkg}' should not be in dependencies on Python {PYTHON_VERSION} "
+                        f"(lacks wheels for this version), but found: {dep}. "
+                        f"Dependencies: {dependencies}"
+                    )
 
     def test_malformed_notebook_handling(self):
         """Test handling of malformed or corrupted notebook files."""
@@ -367,11 +426,35 @@ print("Main script")
 
             assert result.returncode == 0, format_pyuvstarter_error("test_notebook_in_subdirectories", result, project_dir)
 
-            pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
+            # Filter expected packages to only include those available on current Python version
+            filtered_expected_packages = [
+                pkg for pkg in fixture.expected_packages
+                if is_package_available_on_current_python(pkg)
+            ]
+
+            pyproject_data = validator.validate_pyproject_toml(project_dir, filtered_expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
 
             # Should discover packages from all nested notebooks
+            # Platform-aware validation: skip assertions for packages lacking wheels on this Python version
             for expected_pkg in fixture.expected_packages:
+                # Skip assertion if package isn't available on current Python version
+                if not is_package_available_on_current_python(expected_pkg):
+                    # Verify it's correctly NOT in dependencies (graceful degradation)
+                    found_incorrectly = False
+                    for dep in dependencies:
+                        dep_clean = dep.lower().replace('-', '')
+                        if expected_pkg.lower() in dep_clean:
+                            found_incorrectly = True
+                            break
+                    assert not found_incorrectly, (
+                        f"Package '{expected_pkg}' should not be in dependencies on Python {PYTHON_VERSION} "
+                        f"(lacks wheels for this version), but found in dependencies. "
+                        f"Dependencies: {dependencies}"
+                    )
+                    continue
+
+                # Package should be available - assert it's present
                 found = False
                 for dep in dependencies:
                     dep_clean = dep.lower().replace('-', '')

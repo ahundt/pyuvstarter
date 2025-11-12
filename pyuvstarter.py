@@ -2264,19 +2264,46 @@ def _extract_package_name_from_specifier(specifier: str) -> str:
 def _categorize_uv_add_error(stderr: str) -> str:
     """Categorize uv add error messages into actionable failure reasons.
 
+    Extracts specific package names and failure details when possible to provide
+    concrete, actionable error messages following the "Specific and Actionable Feedback"
+    philosophy.
+
     Args:
-        stderr: Error output from uv add command (should be lowercased before passing)
+        stderr: Error output from uv add command (full stderr, not lowercased)
 
     Returns:
-        Human-readable failure reason string
+        Human-readable failure reason string with specific package details when available
 
     Examples:
-        'no solution found...python' -> 'incompatible with current Python version'
-        'no solution found' -> 'version conflict with existing dependencies'
-        'failed to build' -> 'build failed (missing system dependencies)'
+        'Because all versions of tensorflow have no wheels...'
+            -> 'tensorflow: no Python 3.14 wheel (available: cp39-cp313)'
+        'numpy==2.3.1 depends on Python>=3.11'
+            -> 'incompatible with current Python version'
+        'no solution found'
+            -> 'version conflict with existing dependencies'
     """
     stderr_lower = stderr.lower() if stderr else ""
 
+    # Check for wheel unavailability - most specific error type
+    # Pattern: "Because all versions of PACKAGE have no wheels with a matching Python version tag"
+    if "no wheels with a matching python version tag" in stderr_lower:
+        # Extract package name
+        pkg_match = re.search(r"all versions of (\S+) have no wheels", stderr, re.IGNORECASE)
+        if pkg_match:
+            pkg_name = pkg_match.group(1)
+
+            # Extract available Python versions
+            # Pattern: "Python ABI tags: `cp39`, `cp310`, `cp311`, `cp312`, `cp313`"
+            abi_match = re.search(r"Python ABI tags: `([^`]+)`", stderr)
+            if abi_match:
+                available_versions = abi_match.group(1)
+                return f"{pkg_name}: no Python 3.14 wheel (available: {available_versions})"
+            else:
+                return f"{pkg_name}: no compatible wheel for Python 3.14"
+        else:
+            return "no compatible wheel available for your platform/Python version"
+
+    # Check for general Python version incompatibility (version constraints)
     if "no solution found" in stderr_lower and "python" in stderr_lower:
         return "incompatible with current Python version"
     elif "no solution found" in stderr_lower:
@@ -2289,6 +2316,60 @@ def _categorize_uv_add_error(stderr: str) -> str:
         return "package not found on PyPI"
     else:
         return "unknown error"
+
+
+def _try_packages_individually(
+    packages: list,
+    project_root: Path,
+    action_prefix: str = "uv_add_individual"
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Try installing packages one-by-one to salvage partial success.
+
+    This function implements the "Graceful Recovery" philosophy by attempting
+    to install each package individually, collecting successes and failures.
+
+    Args:
+        packages: List of package specifiers to install (can include versions)
+        project_root: Project directory for uv add command
+        action_prefix: Prefix for action names in logging
+
+    Returns:
+        Tuple of (successful_packages, failed_packages_with_reasons)
+        where failed_packages_with_reasons is list of (package, reason) tuples
+
+    Philosophy:
+        - "Solve Problems FOR Users": Installs what works, reports what doesn't
+        - "Specific and Actionable Feedback": Each failure has a specific reason
+        - "Graceful Recovery": Partial success is acceptable
+    """
+    successful_packages = []
+    failed_packages_with_reasons = []
+
+    for pkg in packages:
+        # Extract package name for logging
+        pkg_name = _extract_package_name_from_specifier(pkg) if isinstance(pkg, str) and any(op in pkg for op in ['==', '>=', '<=', '>', '<', '~=']) else pkg
+
+        # Skip empty package names (built-in modules)
+        if not pkg_name:
+            _log_action(f"{action_prefix}_skip_empty", "DEBUG",
+                      f"Skipping package with empty canonical name: '{pkg}'")
+            continue
+
+        try:
+            _run_command(
+                ["uv", "add", str(pkg)],
+                f"{action_prefix}_{pkg_name}",
+                work_dir=project_root,
+                suppress_console_output_on_success=True
+            )
+            successful_packages.append(pkg)
+        except subprocess.CalledProcessError as pkg_error:
+            pkg_stderr = pkg_error.stderr if pkg_error.stderr else ""
+            # Use enhanced error categorization that extracts package names and details
+            failure_reason = _categorize_uv_add_error(pkg_stderr)
+            failed_packages_with_reasons.append((pkg, failure_reason))
+
+    return successful_packages, failed_packages_with_reasons
 
 
 def _canonicalize_pkg_name(name: str) -> str:
@@ -3517,8 +3598,57 @@ def _manage_project_dependencies(
                 stderr = e.stderr.lower() if e.stderr else ""
                 stderr_full = e.stderr if e.stderr else ""
 
-                if "no solution found" in stderr and "python" in stderr:
-                    # Python version conflict - parse the error to be specific
+                # Check for wheel unavailability FIRST - this is a different category than version conflicts
+                # Pattern: "Because all versions of PACKAGE have no wheels with a matching Python version tag"
+                # These errors mention "python" but retrying with different versions won't help
+                if "no wheels with a matching python version tag" in stderr:
+                    # Wheel unavailability detected - skip retries and go straight to one-by-one
+                    # This follows "Fail Fast with Recovery Path" philosophy
+                    _log_action("uv_add_wheel_unavailable", "WARN",
+                              "⚠️  Some packages have no wheels for your Python version.\n"
+                              "    Trying packages individually to install compatible ones and identify incompatible packages...",
+                              details={"error_snippet": stderr_full[:1000]})
+
+                    # Use DRY helper function for one-by-one installation
+                    successful_packages, failed_packages = _try_packages_individually(
+                        final_packages_to_add,
+                        project_root,
+                        action_prefix="uv_add_wheel_fallback"
+                    )
+
+                    # Report results following "Specific and Actionable Feedback" philosophy
+                    if successful_packages:
+                        _log_action("uv_add_partial_success", "SUCCESS",
+                                  f"✅ Successfully installed {len(successful_packages)}/{len(final_packages_to_add)} packages:\n" +
+                                  "\n".join(f"  • {pkg}" for pkg in successful_packages[:10]) +
+                                  (f"\n  ... and {len(successful_packages) - 10} more" if len(successful_packages) > 10 else ""))
+
+                    if failed_packages:
+                        failure_summary = (
+                            f"⚠️  Failed to install {len(failed_packages)}/{len(final_packages_to_add)} packages:\n" +
+                            "\n".join(f"  • {pkg}: {reason}" for pkg, reason in failed_packages[:10]) +
+                            (f"\n  ... and {len(failed_packages) - 10} more (see log)" if len(failed_packages) > 10 else "") +
+                            "\n\n💡 TIP: These packages were skipped to allow the rest of your project to work.\n" +
+                            "    For packages missing Python 3.14 wheels, either:\n" +
+                            "      - Use Python 3.13: UV_PYTHON=3.13 uv venv\n" +
+                            "      - Remove incompatible packages from your code\n" +
+                            "      - Wait for package maintainers to release Python 3.14 wheels"
+                        )
+                        _log_action("uv_add_partial_failure", "WARN", failure_summary,
+                                  details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages]})
+
+                    # Don't return error status if we got some packages - partial success is acceptable
+                    # This follows "Graceful Recovery" philosophy
+                    if not successful_packages and failed_packages:
+                        _log_action("uv_add_total_failure", "ERROR",
+                                  "❌ Could not install any packages. All packages have wheel availability or compatibility issues.")
+                        return {"status": "TOTAL_FAILURE", "failed_packages": failed_packages}
+
+                    # Partial or full success - continue with setup
+                    return None
+
+                elif "no solution found" in stderr and "python" in stderr:
+                    # Python version conflict (NOT wheel unavailability) - parse the error to be specific
                     # Extract specific conflict information
                     conflict_details = []
 
@@ -3553,29 +3683,12 @@ def _manage_project_dependencies(
                     _log_action("uv_add_conflict", "WARN",
                               "⚡ Bulk package add failed due to conflicts. Trying packages one-by-one to install what's compatible...")
 
-                    successful_packages = []
-                    failed_packages = []
-
-                    for pkg in final_packages_to_add:
-                        # Use existing helper function (DRY principle)
-                        pkg_name = _extract_package_name_from_specifier(pkg)
-
-                        # Edge case: Skip if package name extraction failed (empty string)
-                        # This can happen for built-in modules that shouldn't be installed
-                        if not pkg_name:
-                            _log_action("uv_add_skip_empty", "DEBUG",
-                                      f"Skipping package with empty canonical name: '{pkg}'")
-                            continue
-
-                        try:
-                            _run_command(["uv", "add", pkg], f"uv_add_individual_{pkg_name}",
-                                       work_dir=project_root, suppress_console_output_on_success=True)
-                            successful_packages.append(pkg)
-                        except subprocess.CalledProcessError as pkg_error:
-                            # Use helper function to categorize error (DRY principle)
-                            pkg_stderr = pkg_error.stderr if pkg_error.stderr else ""
-                            failure_reason = _categorize_uv_add_error(pkg_stderr)
-                            failed_packages.append((pkg, failure_reason))
+                    # Use DRY helper function for one-by-one installation
+                    successful_packages, failed_packages = _try_packages_individually(
+                        final_packages_to_add,
+                        project_root,
+                        action_prefix="uv_add_conflict_fallback"
+                    )
 
                     # Report results with progressive disclosure
                     if successful_packages:
@@ -4805,32 +4918,79 @@ class CLICommand(BaseSettings):
                         # All three attempts failed
                         phase3_conflicts = result_phase3.get("conflicts", [])
 
-                        _log_action("dependency_resolution_failed", "ERROR",
-                                  "Unable to automatically resolve package dependencies",
+                        # All three bulk attempts failed - try one-by-one as absolute last resort
+                        # This follows "Graceful Recovery" and "Solve Problems FOR Users" philosophy
+                        _log_action("dependency_resolution_fallback_individual", "WARN",
+                                  "⚠️  All bulk installation attempts failed.\n"
+                                  "    Final attempt: Trying packages individually to salvage what's compatible...",
                                   details={
-                                      "what_we_tried": {
-                                          "attempt_1": "Exact version numbers - conflicted with Python version",
-                                          "attempt_2": "Flexible version ranges - still had conflicts",
-                                          "attempt_3": "No version numbers - could not find compatible set"
-                                      },
-                                      "action": "Manual intervention needed - see instructions below",
-                                      "common_causes": [
-                                          "Package name typo (e.g., 'numpy' vs 'nunpy')",
-                                          "Package doesn't exist on PyPI (https://pypi.org)",
-                                          "Package requires system libraries not installed",
-                                          "Could not reach PyPI servers to download packages"
-                                      ]
+                                      "strategy": "Last resort - install any compatible packages, report specific failures",
+                                      "what_we_tried_before": {
+                                          "attempt_1": "Bulk install with exact version numbers - had conflicts",
+                                          "attempt_2": "Bulk install with flexible version ranges - had conflicts",
+                                          "attempt_3": "Bulk install without version constraints - could not resolve dependencies"
+                                      }
                                   })
 
-                        # Update conflicts for manual guidance section
-                        # Prefer phase 2 conflicts as they're usually more informative
-                        if conflicts_from_phase2:
-                            conflicts = conflicts_from_phase2
-                        else:
-                            conflicts = phase3_conflicts or []
+                        # Use DRY helper function for one-by-one installation
+                        successful_packages, failed_packages_with_reasons = _try_packages_individually(
+                            sorted(packages_no_versions),
+                            self.project_dir,
+                            action_prefix="uv_add_retry_exhausted"
+                        )
 
-                        # Pass through the error for manual guidance
-                        result = result_phase3
+                        # Report results with specific, actionable feedback
+                        if successful_packages:
+                            _log_action("individual_install_partial_success", "SUCCESS",
+                                      f"✅ Successfully installed {len(successful_packages)}/{len(packages_no_versions)} packages:\n" +
+                                      "\n".join(f"  • {pkg}" for pkg in successful_packages[:15]) +
+                                      (f"\n  ... and {len(successful_packages) - 15} more" if len(successful_packages) > 15 else ""))
+                            major_action_results.append(("dependency_management", "PARTIAL_SUCCESS"))
+
+                        if failed_packages_with_reasons:
+                            failure_summary = (
+                                f"⚠️  Failed to install {len(failed_packages_with_reasons)}/{len(packages_no_versions)} packages:\n" +
+                                "\n".join(f"  • {pkg}: {reason}" for pkg, reason in failed_packages_with_reasons[:15]) +
+                                (f"\n  ... and {len(failed_packages_with_reasons) - 15} more (see log)" if len(failed_packages_with_reasons) > 15 else "") +
+                                "\n\n💡 NEXT STEPS:\n" +
+                                "    1. Your project can use the successfully installed packages\n" +
+                                "    2. For packages missing Python 3.14 wheels:\n" +
+                                "       - Use Python 3.13: UV_PYTHON=3.13 uv venv\n" +
+                                "       - Or remove these imports from your code\n" +
+                                "    3. For packages with version conflicts:\n" +
+                                "       - Check pyproject.toml for incompatible version requirements\n" +
+                                "    4. Check the detailed error messages above for specific guidance"
+                            )
+                            _log_action("individual_install_partial_failure", "WARN", failure_summary,
+                                      details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages_with_reasons]})
+
+                        # If we got at least some packages, consider it acceptable and continue
+                        if successful_packages:
+                            # Partial success - clear the error and continue with project setup
+                            result = None
+                        else:
+                            # Total failure - all packages failed even individually
+                            _log_action("dependency_resolution_failed", "ERROR",
+                                      "❌ Could not install any packages even when trying individually.",
+                                      details={
+                                          "what_we_tried": {
+                                              "attempt_1": "Bulk install with exact version numbers - had conflicts",
+                                              "attempt_2": "Bulk install with flexible version ranges - had conflicts",
+                                              "attempt_3": "Bulk install without version constraints - could not resolve dependencies",
+                                              "attempt_4": "Individual package installation - see specific failures below"
+                                          },
+                                          "failed_packages": failed_packages_with_reasons[:20],
+                                          "action": "Check the specific failure reasons above for each package"
+                                      })
+
+                            # Update conflicts for manual guidance section
+                            if conflicts_from_phase2:
+                                conflicts = conflicts_from_phase2
+                            else:
+                                conflicts = phase3_conflicts or []
+
+                            # Pass through the error for manual guidance
+                            result = result_phase3
 
                 # Only show manual fix guidance if all attempts failed
                 if isinstance(result, dict) and result.get("status") == "NEEDS_UNPINNED_RETRY":

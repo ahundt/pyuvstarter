@@ -89,6 +89,15 @@ def _add_log_actions(error_parts: List[str], project_dir: Path, action_filter: s
         error_parts.append("LOG DIAGNOSTIC: 'actions' list is empty")
         return
 
+    # ALWAYS show action sequence for debugging test failures
+    error_parts.append(f"\n═══ ACTION SEQUENCE ({len(actions)} total) ═══")
+    for i, action in enumerate(actions[-40:], start=max(1, len(actions) - 39)):  # Show last 40 actions
+        if isinstance(action, dict):
+            action_name = action.get("action", "UNKNOWN")
+            status = action.get("status", "UNKNOWN")
+            error_parts.append(f"  {i:3}. {action_name:55} [{status}]")
+    error_parts.append("═" * 70)
+
     if action_filter:
         # Find specific action type (e.g., "pipreqs_discover")
         # Prioritize __exec actions (subprocess calls) which have command details
