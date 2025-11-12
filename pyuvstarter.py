@@ -253,6 +253,7 @@ import tempfile
 import shlex
 import traceback
 import functools
+import atexit
 
 from pathlib import Path
 from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
@@ -1699,24 +1700,99 @@ def set_output_mode(config):
 
 
 
-def _init_log(project_root: Path):
-    """Initializes the global log data structure."""
+def _init_log(project_root: Path, config=None, original_cwd: Path = None):
+    """Initializes the global log data structure with comprehensive tracing information.
+
+    Args:
+        project_root: The project directory being processed
+        config: Optional CLICommand config object with all CLI parameters
+        original_cwd: Optional original working directory before chdir
+    """
     global _log_data_global
     pyproject_path = project_root / PYPROJECT_TOML_NAME
     project_version = _get_project_version(pyproject_path)
+
+    # Capture environment variables relevant for debugging (only non-None values)
+    env_vars = {}
+    for key in ["UV_PYTHON", "PYUVSTARTER_CURRENT_ITERATION", "VIRTUAL_ENV", "PYTHONPATH"]:
+        value = os.environ.get(key)
+        if value is not None:
+            env_vars[key] = value
+
+    # Build invocation context for debugging (only include non-empty values)
+    invocation_context = {}
+
+    # Always include command line
+    if sys.argv:
+        invocation_context["command_line"] = " ".join(sys.argv)
+
+    # Include original working directory if available
+    if original_cwd:
+        invocation_context["original_working_directory"] = str(original_cwd)
+
+    # Include environment variables if any captured
+    if env_vars:
+        invocation_context["environment_variables"] = env_vars
+
+    # Add CLI parameters if config provided (uses Pydantic model_dump for clean serialization)
+    if config:
+        try:
+            # Use mode="json" for JSON-safe serialization (Pydantic 2.x best practice)
+            # This converts Path objects to strings, datetimes to ISO format, etc.
+            invocation_context["cli_parameters"] = config.model_dump(mode="json")
+        except Exception as e:
+            # If model_dump fails, log what we can
+            invocation_context["cli_parameters_error"] = str(e)
+
     _log_data_global = {
         "script_name": Path(__file__).name,
         "pyuvstarter_version": _get_project_version(Path(__file__).parent / "pyproject.toml", "pyuvstarter"),
         "project_version": project_version,
         "start_time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "end_time_utc": None, "overall_status": "IN_PROGRESS",
-        "platform_info": {"system": platform.system(), "release": platform.release(),
-                          "version": platform.version(), "machine": platform.machine(),
-                          "python_version_script_host": sys.version},
-        "project_root": str(project_root), "actions": [],
-        "final_summary": "", "errors_encountered_summary": []
+        "end_time_utc": None,
+        "overall_status": "IN_PROGRESS",
+        "invocation_context": invocation_context,  # Enhanced tracing information
+        "platform_info": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "python_version_script_host": sys.version
+        },
+        "project_root": str(project_root),
+        "actions": [],
+        "final_summary": "",
+        "errors_encountered_summary": []
     }
     _log_action("script_bootstrap", "INFO", f"Script execution initiated for project at {project_root}.")
+
+
+# Log save mode constants for clarity at call sites
+CHECKPOINT_SAVE = True   # Quick save on errors (no status updates)
+FINAL_SAVE = False       # Complete save with status updates (default)
+
+
+def _write_log_to_disk(log_file_path: Path, log_data: dict) -> bool:
+    """Write log data to disk with proper flushing for crash safety.
+
+    Args:
+        log_file_path: Path to write log file
+        log_data: Dictionary to serialize as JSON
+
+    Returns:
+        True if successful, False otherwise
+
+    Uses explicit flush() and fsync() to ensure data reaches disk even if
+    process crashes immediately after. This is critical for debugging.
+    """
+    try:
+        with open(log_file_path, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, indent=2)
+            f.flush()  # Flush Python buffer
+            os.fsync(f.fileno())  # Force OS to write to disk
+        return True
+    except Exception:
+        return False
 
 
 def _log_action(action_name: str, status: str, message: str = "", details: dict = None):
@@ -1823,40 +1899,55 @@ def _get_next_steps_text(config: 'CLICommand') -> str:
     return "Next Steps:\n" + "\n".join(steps)
 
 
-def _save_log(config: 'CLICommand'):
-    """Saves the accumulated log data to a JSON file."""
+def _save_log(config: 'CLICommand', checkpoint: bool = False):
+    """Saves the accumulated log data to a JSON file.
+
+    Args:
+        config: CLICommand configuration object
+        checkpoint: If True, saves current state immediately without status updates (for error debugging).
+                   If False, updates status fields and saves final state (normal completion).
+
+    Design:
+        - Checkpoint mode: Fast write on errors for crash debugging (no status updates)
+        - Normal mode: Full save with status updates and next steps (efficient, once at end)
+    """
     global _log_data_global
+    if not _log_data_global:
+        return
+
     log_file_path = config.project_dir / config.log_file_name
 
-    _log_data_global["end_time_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    current_overall_status = _log_data_global.get("overall_status", "IN_PROGRESS")
+    # Only update status fields in normal mode (not checkpoints)
+    if not checkpoint:
+        _log_data_global["end_time_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        current_overall_status = _log_data_global.get("overall_status", "IN_PROGRESS")
 
-    if current_overall_status == "IN_PROGRESS":
-        if _log_data_global.get("errors_encountered_summary"):
-            _log_data_global["overall_status"] = "COMPLETED_WITH_ERRORS"
-            _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed, but some errors/warnings occurred. Check 'errors_encountered_summary' and 'actions' list in this log."
-        else:
-            _log_data_global["overall_status"] = "SUCCESS"
-            _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed successfully."
-    elif not _log_data_global.get("final_summary"):
-        _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
+        if current_overall_status == "IN_PROGRESS":
+            if _log_data_global.get("errors_encountered_summary"):
+                _log_data_global["overall_status"] = "COMPLETED_WITH_ERRORS"
+                _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed, but some errors/warnings occurred. Check 'errors_encountered_summary' and 'actions' list in this log."
+            else:
+                _log_data_global["overall_status"] = "SUCCESS"
+                _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed successfully."
+        elif not _log_data_global.get("final_summary"):
+            _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
 
-    # Always add next steps if the script made progress
-    if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS", "HALTED_BY_SCRIPT_LOGIC"]:
-        next_steps_text = _get_next_steps_text(config)
-        # Ensure there's a newline before appending next steps if there's already a summary
-        if _log_data_global.get("final_summary"):
-            _log_data_global["final_summary"] += "\n\n" + next_steps_text
-        else:
-            _log_data_global["final_summary"] = next_steps_text
+        # Always add next steps if the script made progress
+        if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS", "HALTED_BY_SCRIPT_LOGIC"]:
+            next_steps_text = _get_next_steps_text(config)
+            # Ensure there's a newline before appending next steps if there's already a summary
+            if _log_data_global.get("final_summary"):
+                _log_data_global["final_summary"] += "\n\n" + next_steps_text
+            else:
+                _log_data_global["final_summary"] = next_steps_text
 
-
-    try:
-        with open(log_file_path, "w", encoding="utf-8") as f:
-            json.dump(_log_data_global, f, indent=2)
-        _log_action("save_log", "SUCCESS", f"Detailed execution log saved to '{log_file_path.name}'")
-    except Exception as e:
-        _log_action("save_log", "ERROR", f"Failed to save JSON log to '{log_file_path.name}': {e}")
+    # Use common write function for DRY compliance
+    if _write_log_to_disk(log_file_path, _log_data_global):
+        if not checkpoint:  # Only log success message in normal mode
+            _log_action("save_log", "SUCCESS", f"Detailed execution log saved to '{log_file_path.name}'")
+    else:
+        if not checkpoint:  # Only log error message in normal mode
+            _log_action("save_log", "ERROR", f"Failed to save JSON log to '{log_file_path.name}'")
 
 # --- Core Helper Functions ---
 def _run_command(command_list: list[str], action_log_name: str, work_dir: Path = None, shell: bool = False, capture_output: bool = True, suppress_console_output_on_success: bool = False, dry_run: bool = False):
@@ -4120,6 +4211,9 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
         _log_action(action_name, "SUCCESS", f"'{config.gitignore_name}' setup complete.")
     except IOError as e:
         _log_action(action_name, "ERROR", f"Gitignore setup failed: {e}\nCheck file permissions and ensure you can write to the project directory.", details={"exception": str(e)})
+        _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+        _log_data_global["final_summary"] = f"Gitignore setup failed: {e}"
+        _save_log(config, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
         raise typer.Exit(code=1)
 
 # ==============================================================================
@@ -4128,13 +4222,16 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
 # to achieve a true Single Source of Truth for CLI options and configuration.
 # ==============================================================================
 
-# Configure Typer application instance.
+# Configure Typer application instance with 2025 best practices
 app = typer.Typer(
     name="pyuvstarter",
-    add_completion=False, # Disable default completion, often handled by shell scripts.
-    rich_markup_mode="markdown", # Allow rich text formatting in help messages.
-    help="🚀 **A Modern Python Project Setup Tool**", # Overall help message.
-    invoke_without_command=True, # Allow running without subcommands
+    add_completion=False,  # Disable default completion, often handled by shell scripts
+    rich_markup_mode="markdown",  # Allow rich text formatting in help messages
+    help="🚀 **A Modern Python Project Setup Tool**",  # Overall help message
+    invoke_without_command=True,  # Allow running without subcommands
+    # Exception handling configuration (Typer 0.20+) - explicit for code clarity
+    pretty_exceptions_enable=True,  # Rich tracebacks for better debugging
+    pretty_exceptions_show_locals=True,  # Show local variables for detailed error diagnosis
 )
 
 # CLICOMMAND: new functionality to repair and keep
@@ -4378,8 +4475,14 @@ class CLICommand(BaseSettings):
         # Initialize intelligent output system with config
         set_output_mode(self)
 
-        # Initialize the global logging mechanism.
-        _init_log(self.project_dir)
+        # Initialize the global logging mechanism with full invocation context
+        _init_log(self.project_dir, config=self, original_cwd=original_cwd)
+
+        # Register atexit fallback for crash safety (catches SIGTERM, unexpected exits)
+        # This ensures logs are saved if process terminates without reaching finally block
+        # Will be unregistered in finally block to prevent double-write
+        atexit_callback = lambda: _save_log(self, checkpoint=CHECKPOINT_SAVE) if _log_data_global else None
+        atexit.register(atexit_callback)
 
         # Define common paths used throughout the orchestration.
         log_file_path = self.project_dir / self.log_file_name
@@ -4431,6 +4534,9 @@ class CLICommand(BaseSettings):
             if not _ensure_uv_installed(self.dry_run):
                 error_msg = "`uv` could not be installed or verified."
                 _log_action("uv_install_critical_failure", "ERROR", error_msg)
+                _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+                _log_data_global["final_summary"] = error_msg
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
                 safe_typer_secho(f"\n💥 CRITICAL: {error_msg}", fg=typer.colors.RED, bold=True, err=True)
                 raise SystemExit(error_msg)
             _log_action("ensure_uv_installed", "SUCCESS", "uv installation verified successfully.")
@@ -4440,6 +4546,9 @@ class CLICommand(BaseSettings):
             if not _ensure_project_initialized(self.project_dir, self.dry_run):
                 error_msg = "Project could not be initialized with 'pyproject.toml'."
                 _log_action("project_init_critical_failure", "ERROR", error_msg)
+                _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+                _log_data_global["final_summary"] = error_msg
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
                 safe_typer_secho(f"\n💥 CRITICAL: {error_msg}", fg=typer.colors.RED, bold=True, err=True)
                 raise SystemExit(error_msg)
             _log_action("ensure_project_initialized_with_pyproject", "SUCCESS", "Project structure and pyproject.toml initialized successfully.")
@@ -4479,6 +4588,9 @@ class CLICommand(BaseSettings):
             if not self.dry_run and not venv_python_executable.exists():
                 error_msg = f"CRITICAL ERROR: Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command."
                 _log_action("venv_python_missing", "ERROR", error_msg, details={"expected_path": str(venv_python_executable)})
+                _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+                _log_data_global["final_summary"] = error_msg
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
                 safe_typer_secho(f"\n💥 {error_msg}", fg=typer.colors.RED, bold=True, err=True)
                 raise SystemExit(error_msg)
             elif self.dry_run:
@@ -4851,6 +4963,7 @@ class CLICommand(BaseSettings):
             _log_action("script_halted_by_logic", "ERROR", error_detail, details={"exception": str(e), "type": "SystemExit"})
             _log_data_global["overall_status"] = "HALTED_BY_SCRIPT_LOGIC"
             _log_data_global["final_summary"] = error_detail
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
             safe_typer_secho(f"\n💥 Script halted: {error_detail}", fg=typer.colors.RED, bold=True, err=True)
             raise typer.Exit(code=1) # Re-raise to exit Typer properly.
         except subprocess.CalledProcessError as e:
@@ -4881,6 +4994,7 @@ class CLICommand(BaseSettings):
             elif "brew" in cmd_str_lower:
                 _log_action("brew_hint", "WARN", "Homebrew might be required for some installations. Ensure it's installed and working.")
 
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
             safe_typer_secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         except FileNotFoundError as e:
@@ -4898,6 +5012,7 @@ class CLICommand(BaseSettings):
                 safe_typer_secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW, err=True)
             elif cmd_name == "curl":
                 safe_typer_secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW, err=True)
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
             safe_typer_secho("Setup aborted.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         except Exception as e:
@@ -4911,18 +5026,25 @@ class CLICommand(BaseSettings):
             })
             _log_data_global["overall_status"] = "UNEXPECTED_ERROR"
             _log_data_global["final_summary"] = error_message
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
 
             safe_typer_secho(f"\n💥 AN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", fg=typer.colors.RED, bold=True, err=True)
             safe_typer_secho(f"{tb_str}\nSetup aborted due to an unexpected error. Please review the traceback and the JSON log.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         finally:
+            # Unregister atexit callback to prevent double-write (finally block handles normal save)
+            try:
+                atexit.unregister(atexit_callback)
+            except (NameError, ValueError):
+                pass  # atexit_callback not defined or already unregistered
+
             # Ensure the log file is always saved at the end of the execution,
             # even if an error caused an early exit.
             if _log_data_global: # Only save if _init_log was called successfully.
                 # Update summary in log with VS Code config status (restored from deprecated main).
                 _log_data_global["vscode_settings_json_status"] = vscode_settings_status
                 _log_data_global["vscode_launch_json_status"] = vscode_launch_status
-                _save_log(self)
+                _save_log(self, checkpoint=FINAL_SAVE)  # Complete final save
 
             # Restore the original working directory
             try:

@@ -98,6 +98,21 @@ class TempProjectManager:
             yield temp_dir
 
         finally:
+            # Preserve logs before cleanup if in multi-run/debugging mode
+            iteration = os.environ.get('PYUVSTARTER_CURRENT_ITERATION')
+            if iteration and iteration != '0':
+                # Find and preserve pyuvstarter log files before cleanup
+                log_files = list(temp_dir.glob('*pyuvstarter*log*.json'))
+                if log_files:
+                    # Copy to project root with iteration-specific names
+                    project_root = Path(__file__).parent.parent
+                    for log_file in log_files:
+                        dest_name = f"iteration_{iteration.zfill(2)}_{fixture.name}_{log_file.name}"
+                        try:
+                            shutil.copy2(log_file, project_root / dest_name)
+                        except Exception:
+                            pass  # Don't fail tests if log preservation fails
+
             self._cleanup_dir(temp_dir)
             if temp_dir in self.temp_dirs:
                 self.temp_dirs.remove(temp_dir)
