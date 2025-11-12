@@ -22,9 +22,8 @@ import subprocess
 import stat
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
-from unittest.mock import Mock, patch
 
 # Add parent directory to path for pyuvstarter imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -529,13 +528,14 @@ class OutputValidator:
                 if "python.defaultInterpreterPath" not in settings:
                     raise AssertionError("Python interpreter path not configured in VS Code settings")
 
-                expected_path = str(venv_path / "bin" / "python")
-                if os.name == 'nt':  # Windows
-                    expected_path = str(venv_path / "Scripts" / "python.exe")
-
                 actual_path = settings["python.defaultInterpreterPath"]
-                if not actual_path.endswith("python") and not actual_path.endswith("python.exe"):
-                    raise AssertionError(f"Invalid Python interpreter path: {actual_path}")
+
+                # Validate path ends with correct Python executable for platform
+                expected_suffix = "python.exe" if os.name == 'nt' else "python"
+                if not actual_path.endswith(expected_suffix):
+                    raise AssertionError(
+                        f"Python interpreter path should end with '{expected_suffix}', got: {actual_path}"
+                    )
 
             except json.JSONDecodeError as e:
                 raise AssertionError(f"Invalid VS Code settings.json: {e}")
