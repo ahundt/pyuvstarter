@@ -335,7 +335,7 @@ if not check_python_version():
 
 # --- Version Information ---
 # Single source of truth for version information
-PYUVSTARTER_VERSION = "0.2.1"
+PYUVSTARTER_VERSION = "0.3.0"
 
 # --- Windows Unicode Encoding Setup ---
 # Handle Windows Unicode encoding issues at module import time

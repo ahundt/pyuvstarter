@@ -25,20 +25,20 @@ Whether you are starting a new application or modernizing a years-old codebase, 
 ## Quick Look
 
 
-![pyuvstarter demo v0.2.0 Demo showing pyuvstarter automatically discovering and installing 20+ hidden dependencies from a legacy Python ML project, including imports from Jupyter notebooks, handling comments in requirements.txt, and creating a modern reproducible environment with pyproject.toml](https://github.com/user-attachments/assets/af8c45ff-c97b-4c95-a11f-c58024cfecec)
+![pyuvstarter demo v0.3.0 Demo showing pyuvstarter automatically discovering and installing 20+ hidden dependencies from a legacy Python ML project, including imports from Jupyter notebooks, handling comments in requirements.txt, and creating a modern reproducible environment with pyproject.toml](https://github.com/user-attachments/assets/af8c45ff-c97b-4c95-a11f-c58024cfecec)
 
 
-Watch `pyuvstarter` rescue a legacy ML project by automatically finding ALL dependencies (even those hidden in notebooks), fixing incorrect package names, and creating a modern reproducible environment - all in under 30 seconds.
+Watch `pyuvstarter` rescue a legacy ML project by discovering dependencies from `.py` files and Jupyter notebooks (including those from `!pip install` cells), fixing incorrect package names, and creating a modern reproducible environment - all in under 30 seconds.
 
 ## Is `pyuvstarter` for You?
 
 `pyuvstarter` is designed to be a valuable assistant for any Python developer, whether you're building from scratch or upgrading an existing codebase.
 
-*   **For Modernizing Existing Projects:** Do you have an old project with a messy `requirements.txt`? Run `pyuvstarter` in its directory. It handles real-world requirements files (inline comments, package extras like `requests[security]`), discovers every dependency in your code and notebooks, and builds a fresh environment managed by `pyproject.toml`.
+*   **For Modernizing Existing Projects:** Do you have an old project with a messy `requirements.txt`? Run `pyuvstarter` in its directory. It handles real-world requirements files (inline comments, package extras like `requests[security]`), discovers dependencies in your code and notebooks, and builds a fresh environment managed by `pyproject.toml`.
 
 *   **For Starting New Projects:** Get a new web app, CLI, or data analysis project off the ground instantly. `pyuvstarter` provides a clean slate with a `pyproject.toml`, a virtual environment, and all the necessary configurations, so you can start coding immediately.
 
-*   **For Data Scientists & ML Engineers:** Stop wrestling with notebook-only `!pip install` cells. `pyuvstarter` detects these installations, adds them to a central `pyproject.toml`, and ensures your analysis environment is robust and truly reproducible for yourself, your team, and your production pipeline.
+*   **For Data Scientists & ML Engineers:** Stop wrestling with notebook-only `!pip install` cells. `pyuvstarter` detects these installations, adds them to a central `pyproject.toml`, and helps make your analysis environment more robust and reproducible for yourself, your team, and your production pipeline.
 
 ## The `pyuvstarter` Philosophy
 
@@ -50,31 +50,31 @@ Watch `pyuvstarter` rescue a legacy ML project by automatically finding ALL depe
 4.  **Automation Should Be Transparent:** Every action `pyuvstarter` takes is logged to `pyuvstarter_setup_log.json` for full visibility.
 
 ### Why Not Just Use `uv` Directly?
-You absolutely can! `uv` is a phenomenal low-level tool. `pyuvstarter` acts as a higher-level **orchestrator** that chains `uv` commands together with other best-practice tools like `pipreqs` and `ruff`. It automates the *workflow* of discovery, migration, and configuration that you would otherwise have to perform manually.
+You absolutely can! `uv` is a powerful low-level tool. `pyuvstarter` acts as a higher-level **orchestrator** that chains `uv` commands together with other best-practice tools like `pipreqs` and `ruff`. It automates the *workflow* of discovery, migration, and configuration that you would otherwise have to perform manually.
 
 ## What `pyuvstarter` Does For You: A Detailed Workflow
 
-When you run `pyuvstarter` on a new or existing project directory, it performs a comprehensive setup sequence:
+When you run `pyuvstarter` on a new or existing project directory, it performs this setup sequence:
 
 1.  **Establishes a Modern Foundation:** It checks for a `pyproject.toml` file. If one doesn't exist, `pyuvstarter` runs `uv init` to create it. If one does exist, it uses it as the foundation.
 
 2.  **Creates an Isolated, High-Speed Environment:** It runs `uv venv` to create a local `.venv` directory.
 
-3.  **Discovers Every Dependency, Everywhere:** `pyuvstarter` meticulously scans your project to find every package you need.
+3.  **Discovers Dependencies:** `pyuvstarter` scans your project to find imported packages.
     *   **For `.py` files,** it uses [`pipreqs`](https://github.com/bndr/pipreqs) to analyze `import` statements.
-    *   **For Jupyter Notebooks (`.ipynb`),** it uses a robust two-stage process:
-        1.  **Primary Method:** It uses `jupyter nbconvert` to safely convert notebooks to Python scripts for the most accurate analysis.
-        2.  **Fallback Method:** If `jupyter` isn't available, `pyuvstarter` parses the raw notebook file, using AST for `import` statements and regex to catch `!pip install` commands.
+    *   **For Jupyter Notebooks (`.ipynb`),** it uses a two-stage process:
+        1.  **Primary Method:** Uses `jupyter nbconvert` to convert notebooks to Python scripts for analysis.
+        2.  **Fallback Method:** If `jupyter` isn't available, parses the raw notebook file using AST for `import` statements and regex for `!pip install` commands.
 
 4.  **Manages and Installs Your Full Dependency Tree:**
-    *   It intelligently migrates packages from a legacy `requirements.txt` file based on your chosen strategy.
+    *   It migrates packages from a legacy `requirements.txt` file based on your chosen strategy.
     *   It adds all discovered dependencies to your `pyproject.toml` using `uv add`.
     *   It installs necessary notebook execution tools like `ipykernel` and `jupyter` if notebooks are present.
-    *   Finally, it runs `uv sync` to install the complete, resolved set of packages into your `.venv` and creates a `uv.lock` file for perfect, byte-for-byte reproducibility.
+    *   Finally, it runs `uv sync` to install the complete, resolved set of packages into your `.venv` and creates a `uv.lock` file for byte-for-byte reproducibility.
 
 5.  **Configures and Cleans Your Tooling:**
     *   It runs [`ruff`](https://docs.astral.sh/ruff/) to detect and warn you about unused imports.
-    *   It creates or updates a comprehensive `.gitignore` file.
+    *   It creates or updates `.gitignore` with common Python project patterns.
     *   It configures VS Code by creating or updating `.vscode/settings.json` and `.vscode/launch.json`.
 
 ## How to Use `pyuvstarter`
@@ -147,36 +147,80 @@ uv pip uninstall pyuvstarter
 
 ### Command-Line Arguments
 
-You can run `pyuvstarter` with the following options:
-
--   `pyuvstarter [project_dir]`
-    Run setup in the specified `project_dir`. Defaults to the current directory.
-
--   `pyuvstarter --version`
-    Print the installed version of `pyuvstarter` and exit.
-
--   `--dependency-migration {auto,all-requirements,only-imported,skip-requirements}`
-    Strategy for handling an existing `requirements.txt` file.
-    *   `'auto'` (default): Intelligently migrates `requirements.txt` entries only if they are actively imported, and adds all other imported packages.
-    *   `'all-requirements'`: Migrates every single entry from `requirements.txt` as-is, and then adds any additional discovered imported packages.
-    *   `'only-imported'`: Only migrates `requirements.txt` entries that are actively imported, and adds all other imported packages.
-    *   `'skip-requirements'`: Ignores `requirements.txt` entirely and relies solely on discovering dependencies from `import` statements.
-
-**Examples:**
+#### Basic Usage
 
 ```bash
-# Run in the current directory
+pyuvstarter [project_dir] [options]
+```
+
+#### Core Options
+
+-   `project_dir`
+    Project directory to operate on. Defaults to current directory if not specified.
+
+-   `--version`
+    Show installed version and exit.
+
+-   `--verbose, -v`
+    Show detailed technical output for debugging and learning.
+
+#### Dependency Management
+
+-   `--dependency-migration {auto,all-requirements,only-imported,skip-requirements}`
+    Strategy for handling existing `requirements.txt` files:
+    *   `'auto'` (default): Migrates `requirements.txt` entries only if actively imported, plus all discovered imports
+    *   `'all-requirements'`: Migrates every `requirements.txt` entry, plus discovered imports
+    *   `'only-imported'`: Migrates only `requirements.txt` entries that are imported, plus discovered imports
+    *   `'skip-requirements'`: Ignores `requirements.txt`, uses only discovered imports
+
+#### Customization Options
+
+-   `--venv-name <name>`
+    Name of virtual environment directory (default: `.venv`)
+
+-   `--log-file-name <name>`
+    Name of JSON log file (default: `pyuvstarter_setup_log.json`)
+
+-   `--config-file <path>, -c <path>`
+    Path to JSON configuration file with option presets
+
+#### Gitignore Control
+
+-   `--no-gitignore`
+    Disable all `.gitignore` operations
+
+-   `--full-gitignore-overwrite`
+    Replace existing `.gitignore` completely instead of merging
+
+-   `--gitignore-name <name>`
+    Name of gitignore file (default: `.gitignore`)
+
+-   `--ignore-pattern <pattern>, -i <pattern>`
+    Additional gitignore patterns to add (can be specified multiple times)
+
+#### Examples
+
+```bash
+# Run in current directory (most common)
 pyuvstarter
 
-# Run in a specific directory
+# Run in specific directory
 pyuvstarter /path/to/your/project
 
-# Show version
-pyuvstarter --version
+# Show detailed output for debugging
+pyuvstarter --verbose
 
 # Migrate all requirements.txt entries, even if unused
 pyuvstarter --dependency-migration all-requirements
 
+# Custom virtual environment name
+pyuvstarter --venv-name my_venv
+
+# Add custom patterns to .gitignore
+pyuvstarter --ignore-pattern "*.tmp" --ignore-pattern "cache/"
+
+# Completely replace existing .gitignore
+pyuvstarter --full-gitignore-overwrite
 ```
 
 ## Expected Outcome: A Ready-to-Use Development Environment
@@ -198,7 +242,7 @@ The script achieves this by creating or modifying the following files in your pr
 *   **`.gitignore`**: A file configured to ignore the virtual environment, logs, and other common artifacts.
 *   **`.vscode/settings.json`**: Configures VS Code to use the correct Python interpreter.
 *   **`.vscode/launch.json`**: Provides a default debug configuration.
-*   **`pyuvstarter_setup_log.json`**: A detailed log of every action the script performed.
+*   **`pyuvstarter_setup_log.json`**: A detailed log of all actions the script performed.
 
 ## Typical Next Steps After Running `pyuvstarter`
 
@@ -214,12 +258,40 @@ Contributions are welcome! Please feel free to open an issue to report a bug or 
 
 ## Troubleshooting
 
+### Error Handling Behavior
+
+**Critical Failures (script stops):**
+- `uv` installation fails → Install `uv` manually from [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)
+- `pyproject.toml` creation fails → Check write permissions, resolve conflicts
+- Virtual environment creation fails → Run `uv venv` manually for diagnostic output
+- File permission errors → Adjust with `chmod` or use directory you control
+
+**Partial Success (script continues):**
+- Some packages fail → Installs successful packages; check `pyuvstarter_setup_log.json` → `failed_packages` for reasons
+- Dependency discovery issues → Skips unparseable files; manually add missing packages with `uv add <package>`
+- Notebook parsing failures → Skips corrupt notebooks; fix format or add dependencies manually
+- Import fixing failures → Reports issues; manually fix complex relative imports
+
+**Check diagnostic log:**
+```bash
+# View errors
+cat pyuvstarter_setup_log.json | grep -A 5 '"status": "ERROR"'
+
+# Check overall status: SUCCESS | COMPLETED_WITH_ERRORS | CRITICAL_FAILURE
+grep '"overall_status"' pyuvstarter_setup_log.json
+```
+
+**Common package failure reasons:**
+- "no Python 3.14 wheel" → Package not yet compatible; use older Python version
+- "version conflict" → Adjust version constraints in `pyproject.toml`
+- "package not found" → Verify package name spelling on PyPI
+
 ### Common Issues
 
 *   If `uv` or other tools fail to install, check the console output for hints.
-*   If `pipreqs` misidentifies a dependency, you can manually edit `pyproject.toml` and then run `uv sync` to add the correct package or `uv remove <incorrect-package>` to remove it.
-*   **For notebook issues:** The script's most reliable detection method requires `jupyter`. If it's missing, `pyuvstarter` uses a fallback parser. For best results, install it via `uv pip install jupyter`.
-*   Always check the `pyuvstarter_setup_log.json` file for detailed error messages.
+*   If `pipreqs` misidentifies a dependency, manually edit `pyproject.toml` and run `uv sync` to apply changes, or use `uv remove <incorrect-package>` to remove it.
+*   **For notebook issues:** The most reliable detection requires `jupyter`. If missing, `pyuvstarter` uses a fallback parser that may miss some dependencies. Install with `uv pip install jupyter` for best results.
+*   Always check the `pyuvstarter_setup_log.json` file for detailed error messages and specific failure reasons.
 
 ### Running pyuvstarter in Different Contexts
 
@@ -271,20 +343,45 @@ which pyuvstarter
 ### Running Tests
 
 #### Test Structure
-- `tests/` - Integration tests for core functionality
+
+**Python Test Suite** (`tests/*.py`):
+- `test_configuration.py` - Configuration management and CLI arguments
+- `test_cross_platform.py` - Cross-platform compatibility (Windows, macOS, Linux)
+- `test_dependency_migration.py` - Requirements.txt migration strategies
+- `test_error_handling.py` - Error detection and graceful degradation
+- `test_extraction_fix.py` - Package name extraction and canonicalization
+- `test_import_fixing.py` - Import statement detection and relative import handling
+- `test_jupyter_pipeline.py` - Jupyter notebook dependency discovery
+- `test_mixed_package_availability.py` - Package availability edge cases
+- `test_project_structure.py` - Flat vs src-layout project structure detection
+- `test_utils.py` - Core utility functions and helpers
+- `test_wheel_unavailability.py` - Python 3.14+ wheel unavailability handling
+
+**Shell Test Scripts** (`tests/*.sh`):
+- `run_all_tests.sh` - Main test runner for all integration tests
+- `test_new_project.sh` - Empty project initialization
+- `test_legacy_migration.sh` - Requirements.txt migration
+
+**Comprehensive Test Suites**:
 - `create_demo.sh --unit-test` - Comprehensive test suite including notebook parsing
 - `create_demo2.sh --unit-test` - Extended tests with edge cases
 
 #### Run Tests Locally
+
 ```bash
-# Run all integration tests
+# Run Python test suite (pytest)
 ./tests/run_all_tests.sh
 
-# Run specific tests
-./tests/test_new_project.sh      # Empty project initialization
-./tests/test_legacy_migration.sh  # Requirements.txt migration
+# Run specific Python test modules
+python -m pytest tests/test_jupyter_pipeline.py -v
+python -m pytest tests/test_import_fixing.py -v
+python -m pytest tests/test_wheel_unavailability.py -v
 
-# Run comprehensive test suites (recommended)
+# Run shell-based integration tests
+./tests/test_new_project.sh
+./tests/test_legacy_migration.sh
+
+# Run comprehensive test suites (recommended for full validation)
 ./create_demo.sh --unit-test
 ./create_demo2.sh --unit-test
 ```
