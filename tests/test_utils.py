@@ -28,25 +28,71 @@ from dataclasses import dataclass
 # Add parent directory to path for pyuvstarter imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+def _read_log_data(project_dir: Path) -> Optional[Dict[str, Any]]:
+    """Read pyuvstarter JSON log safely, returning None on any error."""
+    log_file = project_dir / "pyuvstarter_setup_log.json"
+    if not log_file.exists():
+        return None
+    try:
+        with open(log_file, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _add_project_file_listing(error_parts: List[str], project_dir: Path) -> None:
+    """Add project file count and names to error_parts list (in-place)."""
+    try:
+        py_files = list(project_dir.glob("**/*.py"))
+        ipynb_files = list(project_dir.glob("**/*.ipynb"))
+        error_parts.append(f"Project files: {len(py_files)} .py files, {len(ipynb_files)} .ipynb files")
+        if ipynb_files:
+            error_parts.append(f"Notebook files: {[f.name for f in ipynb_files]}")
+    except Exception:
+        pass
+
+def _add_log_actions(error_parts: List[str], project_dir: Path, action_filter: str = None, max_actions: int = 5) -> None:
+    """Add JSON log action diagnostics to error_parts list (in-place)."""
+    log_data = _read_log_data(project_dir)
+    if not log_data:
+        return
+
+    actions = log_data.get("actions", [])
+    if not actions:
+        return
+
+    if action_filter:
+        # Find specific action type (e.g., "pipreqs_discover")
+        filtered = [a for a in actions if action_filter in a.get("action_name", "")]
+        if filtered:
+            last_action = filtered[-1]
+            error_parts.append(f"{action_filter} action: {last_action.get('action_name', 'unknown')}")
+            error_parts.append(f"Status: {last_action.get('level', 'unknown')}")
+            if last_action.get("message"):
+                error_parts.append(f"Message: {last_action['message']}")
+            if "details" in last_action:
+                error_parts.append(f"Details: {json.dumps(last_action['details'], indent=2)}")
+    else:
+        # Get last N actions for general context
+        last_actions = actions[-max_actions:] if len(actions) > max_actions else actions
+        error_parts.append(f"Last {len(last_actions)} actions: {json.dumps(last_actions, indent=2)}")
+
 def format_pyuvstarter_error(test_name: str, result, project_dir: Path) -> str:
-    """Format comprehensive error message for pyuvstarter failures."""
+    """Format comprehensive error message for pyuvstarter execution failures."""
     error_parts = [
         f"{test_name}: PyUVStarter failed (exit code {result.returncode})",
         f"Stdout (last 300 chars): {result.stdout[-300:] if result.stdout else 'EMPTY'}",
         f"Stderr (last 300 chars): {result.stderr[-300:] if result.stderr else 'EMPTY'}"
     ]
+    _add_log_actions(error_parts, project_dir)
+    return "\n".join(error_parts)
 
-    # Try to get log file tail
-    log_file = project_dir / "pyuvstarter_setup_log.json"
-    if log_file.exists():
-        try:
-            with open(log_file, 'r') as f:
-                lines = f.readlines()
-                last_lines = ''.join(lines[-10:]) if len(lines) > 10 else ''.join(lines)
-                error_parts.append(f"Log file tail (last 10 lines):\n{last_lines}")
-        except Exception:
-            pass
-
+def format_dependency_mismatch(test_name: str, expected_pkg: str, dependencies: list, project_dir: Path) -> str:
+    """Format comprehensive error message when expected package not found in dependencies."""
+    error_parts = [
+        f"{test_name}: Expected package '{expected_pkg}' not found in dependencies: {dependencies}"
+    ]
+    _add_log_actions(error_parts, project_dir, action_filter="pipreqs_discover")
+    _add_project_file_listing(error_parts, project_dir)
     return "\n".join(error_parts)
 
 @dataclass
@@ -239,14 +285,30 @@ class PyuvstarterCommandExecutor:
         # Ensure uv is available
         process_env["PATH"] = self._ensure_uv_in_path(process_env.get("PATH", ""))
 
-        return subprocess.run(
-            cmd,
-            capture_output=capture_output,
-            text=True,
-            cwd=project_dir.resolve(),  # Run from test project directory to avoid contamination
-            timeout=timeout,
-            env=process_env
-        )
+        try:
+            return subprocess.run(
+                cmd,
+                capture_output=capture_output,
+                text=True,
+                cwd=project_dir.resolve(),  # Run from test project directory to avoid contamination
+                timeout=timeout,
+                env=process_env
+            )
+        except subprocess.TimeoutExpired as e:
+            # Capture partial output and retrieve JSON log for timeout diagnostics
+            # TimeoutExpired includes stdout/stderr from the partial run before timeout
+            error_parts = [
+                f"TIMEOUT after {timeout}s",
+                f"Partial stderr: {e.stderr if e.stderr else 'No stderr captured'}"
+            ]
+            _add_log_actions(error_parts, project_dir, max_actions=5)
+
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=-1,
+                stdout=e.stdout if e.stdout else "",
+                stderr="\n".join(error_parts)
+            )
 
     def run_pyuvstarter_legacy_compatible(
         self,
@@ -511,7 +573,7 @@ class OutputValidator:
                         break
 
                 if not found:
-                    raise AssertionError(f"Expected package '{expected_pkg}' not found in dependencies: {deps}")
+                    raise AssertionError(format_dependency_mismatch("validate_pyproject_toml", expected_pkg, deps, project_dir))
 
         return pyproject_data
 

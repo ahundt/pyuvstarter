@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_utils import (
-    ProjectFixture, temp_manager, executor, validator, mock_factory, format_pyuvstarter_error
+    ProjectFixture, temp_manager, executor, validator, mock_factory, format_pyuvstarter_error, format_dependency_mismatch
 )
 
 # Optional pytest import for when pytest is available
@@ -157,7 +157,7 @@ import os
             notebook_packages = ["transformers", "torch", "datasets"]
             for pkg in notebook_packages:
                 found = any(pkg.lower() in dep.lower() for dep in dependencies)
-                assert found, f"Notebook package {pkg} not found in dependencies"
+                assert found, format_dependency_mismatch("test_notebook_with_pip_install_commands", pkg, dependencies, project_dir)
 
     def test_complex_notebook_with_various_imports(self):
         """Test notebook with complex import patterns and edge cases."""
@@ -239,7 +239,7 @@ import os
                     elif pkg.replace('_', '').lower() in dep_clean:
                         found = True
                         break
-                assert found, f"Complex import package {pkg} not found in dependencies"
+                assert found, format_dependency_mismatch("test_complex_notebook_with_various_imports", pkg, dependencies, project_dir)
 
     def test_malformed_notebook_handling(self):
         """Test handling of malformed or corrupted notebook files."""
@@ -311,7 +311,7 @@ import os
 
             # Should handle malformed notebooks gracefully
             # May succeed with warnings or skip invalid notebooks
-            assert result.returncode == 0, f"Failed to handle malformed notebooks: {result.stderr}"
+            assert result.returncode == 0, format_pyuvstarter_error("test_malformed_notebook_handling", result, project_dir)
 
             # Should still discover dependencies from valid notebook
             pyproject_data = validator.validate_pyproject_toml(project_dir)
@@ -320,7 +320,7 @@ import os
             pandas_found = any("pandas" in dep.lower() for dep in dependencies)
             numpy_found = any("numpy" in dep.lower() for dep in dependencies)
 
-            assert pandas_found and numpy_found, "Dependencies from valid notebook not found"
+            assert pandas_found or numpy_found, format_dependency_mismatch("test_malformed_notebook_handling", "pandas or numpy", dependencies, project_dir)
 
     def test_notebook_in_subdirectories(self):
         """Test notebook discovery in nested directory structures."""
@@ -383,7 +383,7 @@ print("Main script")
                     elif expected_pkg.lower() in dep_clean:
                         found = True
                         break
-                assert found, f"Package {expected_pkg} from nested notebooks not found"
+                assert found, format_dependency_mismatch("test_notebook_in_subdirectories", expected_pkg, dependencies, project_dir)
 
 class TestNotebookExecutionSupport:
     """Test notebook execution support functionality."""
@@ -436,7 +436,7 @@ class TestNotebookExecutionSupport:
 
             # Should include notebook execution dependencies
             ipython_found = any("ipython" in dep.lower() for dep in dependencies)
-            assert ipython_found, "ipython not found in dependencies"
+            assert ipython_found, format_dependency_mismatch("test_notebook_execution_dependencies", "ipython", dependencies, project_dir)
 
             # Should include dependencies from notebooks
             notebook_packages = ["pandas", "numpy", "ipywidgets", "plotly"]

@@ -5133,14 +5133,14 @@ def main(
     try:
         command = CLICommand(**cli_kwargs)  # noqa: F841 - Instance creation triggers validation
     except ValidationError as e:
-        safe_typer_secho("\u274c Configuration validation error:", fg=typer.colors.RED, bold=True)  # ❌
+        safe_typer_secho("\u274c Configuration validation error:", fg=typer.colors.RED, bold=True, err=True)  # ❌
         for error in e.errors():
             field = " -> ".join(str(loc) for loc in error['loc'])
-            safe_typer_secho("  • {}: {}".format(field, error['msg']), fg=typer.colors.RED)
+            safe_typer_secho("  • {}: {}".format(field, error['msg']), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
     except Exception as e:
-        safe_typer_secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True)
-        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED)
+        safe_typer_secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True, err=True)
+        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
 # new main with app() is new functionality to repair and keep
@@ -5156,7 +5156,7 @@ if __name__ == "__main__":
         # This is a last-resort error handler for issues *before* the model_post_init
         # can log them (e.g., Typer internal errors or Pydantic ValidationError
         # if the CLI input format is totally wrong).
-        safe_typer_secho(f"\n💥 A critical error occurred during application startup: {e}", fg=typer.colors.RED, bold=True)
-        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED)
-        safe_typer_secho("Setup aborted due to an unexpected startup error.", fg=typer.colors.RED)
+        safe_typer_secho(f"\n💥 A critical error occurred during application startup: {e}", fg=typer.colors.RED, bold=True, err=True)
+        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED, err=True)
+        safe_typer_secho("Setup aborted due to an unexpected startup error.", fg=typer.colors.RED, err=True)
         sys.exit(1)

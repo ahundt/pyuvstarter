@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_utils import (
-    ProjectFixture, temp_manager, executor, validator, OutputValidator
+    ProjectFixture, temp_manager, executor, validator, OutputValidator, format_dependency_mismatch
 )
 
 # Optional pytest import for when pytest is available
@@ -546,7 +546,7 @@ def helper_function():
                         if found:
                             break
 
-                    assert found, f"Expected package '{expected_pkg}' not found in dependencies: {dependencies}"
+                    assert found, format_dependency_mismatch("test_equivalent_dependency_discovery_across_layouts", expected_pkg, dependencies, project_dir)
 
     def test_project_structure_vscode_configuration(self):
         """Test VS Code configuration generation for different project structures."""
