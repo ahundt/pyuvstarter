@@ -654,3 +654,83 @@ CI Run 19290993356 (before permission fix) shows:
 - Commit 55e0617 adds permissions for PR comment posting
 - Theory: All platforms should pass if both fixes are effective
 
+---
+
+## 2025-11-12 Evening Investigation Update
+
+### CI Run 19291646710 Results (commit d082da4)
+
+**Failures (3 of 9 jobs):**
+- Ubuntu 3.13: test_complex_notebook_with_various_imports timed out after 120 seconds
+- Ubuntu 3.14: test_complex_notebook_with_various_imports, test_notebook_in_subdirectories → dependencies: []
+- macOS 3.14: test_complex_notebook_with_various_imports, test_notebook_in_subdirectories → dependencies: []
+
+**Successes:**
+- Ubuntu 3.11, 3.12: All tests passed
+- macOS 3.13: All tests passed
+- Windows 3.12, 3.13, 3.14: All tests passed
+
+### Root Cause Analysis
+
+**pipreqs Version Constraint:**
+- pipreqs requires Python >=3.8.1,<3.13 (PyPI page, verified 2025-11-12)
+- Latest version: 0.5.0 (February 18, 2024)
+- Project status: Inactive, "Looking for maintainers"
+
+**Observed Behavior:**
+- pipreqs DOES execute on Python 3.14 with SyntaxWarnings but works
+- Manual test: `UV_PYTHON=3.14 uvx pipreqs --print .` → successfully detects pandas, numpy
+- When UV_PYTHON=3.13+ is set, uvx tries to install/run pipreqs with that Python version
+- Installation of 55 packages can take >120s in CI (causes timeout on Ubuntu 3.13)
+- Empty dependencies on Ubuntu/macOS 3.14 suggest pipreqs fails silently or returns early
+
+### Fixes Implemented (Commits b40bced, 6d38b1f, 2aea66d)
+
+**Commit b40bced:** Test result differentiation
+- .github/workflows/ci.yml: Added PYUVSTARTER_TEST_OS, PYUVSTARTER_TEST_PYTHON env vars
+- .github/workflows/ci.yml: Updated check_name to include OS and Python version
+- tests/run_all_tests.sh: Enhanced XML generation with OS/Python suffix in testsuite names
+- tests/run_all_tests.sh: Fixed 3 shellcheck warnings (quoted variables)
+
+**Commit 6d38b1f:** UV_PYTHON subprocess isolation
+- pyuvstarter.py (line 1953): Added env parameter to _run_command()
+- pyuvstarter.py (line 1979): Pass env to subprocess.run()
+- pyuvstarter.py (lines 3051-3063): Unset UV_PYTHON for uvx pipreqs subprocess via os.environ.copy()
+- Rationale: Let uvx auto-select compatible Python for tools with version constraints
+- Result: uvx selects Python 3.12 for pipreqs when UV_PYTHON=3.13+
+
+**Commit 2aea66d:** Enhanced error diagnostics
+- pyuvstarter.py: Added err=True to 7 early error handlers (lines 5136,5139,5142,5143,5159,5160,5161)
+- tests/test_utils.py: Added DRY helpers (_read_log_data, _add_log_actions, _add_project_file_listing)
+- tests/test_utils.py: Enhanced timeout handler to capture partial output and JSON log
+- tests/test_jupyter_pipeline.py: Updated 6 assertions to use format_dependency_mismatch()
+- tests/test_project_structure.py: Updated 1 assertion to use format_dependency_mismatch()
+
+**Verification (Local Testing):**
+- Manual test: `UV_PYTHON=3.14 uv run pyuvstarter .` with valid notebook → pandas, numpy detected ✅
+- Mock factory: Verified execution_count is added to all code cells (lines 662-671) ✅
+- Test with UV_PYTHON=3.14: test_complex_notebook_with_various_imports → FAILED, dependencies: []
+- Diagnostic output now shows: project file counts, notebook names, pipreqs actions from JSON log
+
+### Outstanding Issues (Unresolved)
+
+**Empty Dependencies on Python 3.13+ (Primary Issue):**
+- Test: UV_PYTHON=3.14 python3 tests/test_jupyter_pipeline.py
+- Results: 10/12 tests passed
+- Failed: test_complex_notebook_with_various_imports, test_notebook_in_subdirectories
+- Error: "Expected package 'pandas' not found in dependencies: []"
+- Execution time: 5-10 seconds (not timeout)
+- Diagnostics show: Notebooks exist (1-3 .ipynb files), but dependencies empty
+
+**Theories (Low Confidence):**
+1. UV_PYTHON unset fix may not be applied in test execution path (executor.run_pyuvstarter uses subprocess, not _run_command)
+2. Test framework environment inheritance may reintroduce UV_PYTHON
+3. pipreqs may still fail on notebooks created by mock factory (despite execution_count being present)
+4. Different behavior between `uv run pyuvstarter` (works) vs test subprocess execution (fails)
+
+**Next Investigation Steps:**
+1. Verify UV_PYTHON unset message appears in test subprocess JSON logs
+2. Check if test executor properly isolates environment or reintroduces UV_PYTHON
+3. Compare JSON logs between manual run (works) and test run (fails)
+4. Determine if mock_factory notebooks differ from manually created notebooks in any way
+
