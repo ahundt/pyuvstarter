@@ -28,6 +28,7 @@ set -e
 # Parse command-line arguments
 ITERATIONS="${1:-1}"
 MULTI_RUN_OUTPUT_DIR="${2:-./test_run_outputs}"
+PYTHON_VERSION="${3:-}"  # Optional Python version (e.g., "3.14")
 CURRENT_ITERATION="${PYUVSTARTER_CURRENT_ITERATION:-0}"  # Used internally for multi-run
 
 # Input validation: Show help if requested or invalid input
@@ -36,22 +37,36 @@ if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
 🚀 PyUVStarter Integration Test Suite
 
 Usage:
-  ./run_all_tests.sh [iterations] [output_dir]
+  ./run_all_tests.sh [iterations] [output_dir] [python_version]
 
 Arguments:
-  iterations  - Number of times to run test suite (default: 1)
-  output_dir  - Directory for multi-run logs (default: ./test_run_outputs)
+  iterations      - Number of times to run test suite (default: 1)
+  output_dir      - Directory for multi-run logs (default: ./test_run_outputs)
+  python_version  - Optional Python version to use (e.g., "3.14", "3.12")
+                    If provided, sets UV_PYTHON environment variable
 
 Examples:
-  ./run_all_tests.sh              # Run once (normal mode)
+  ./run_all_tests.sh              # Run once (normal mode, uses default Python)
   ./run_all_tests.sh 10           # Run 10 times to debug intermittent failures
   ./run_all_tests.sh 10 /tmp/logs # Run 10 times, save logs to custom directory
+  ./run_all_tests.sh 1 ./logs 3.14 # Run once with Python 3.14
+  ./run_all_tests.sh 5 ./logs 3.12 # Run 5 times with Python 3.12
 
 Multi-Run Mode:
   Automatically activates when iterations > 1. Useful for debugging non-deterministic
   test failures by running the suite multiple times and preserving all logs.
+
+Python Version Control:
+  Set python_version to test against a specific Python version. This sets UV_PYTHON
+  before running tests, ensuring all tests use the specified version.
 HELP_EOF
     exit 0
+fi
+
+# Set UV_PYTHON if a Python version was specified
+if [ -n "$PYTHON_VERSION" ]; then
+    export UV_PYTHON="$PYTHON_VERSION"
+    echo "📌 Python version override: UV_PYTHON=$UV_PYTHON"
 fi
 
 # Validate iterations is a positive integer

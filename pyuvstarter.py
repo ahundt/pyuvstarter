@@ -3090,10 +3090,12 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
             ipynb_files = list(scan_path.rglob("*.ipynb"))
             if py_files or ipynb_files:
                 warning_msg = f"`pipreqs` found no import-based dependencies despite {len(py_files)} .py and {len(ipynb_files)} .ipynb files present."
+                warning_msg += f"\nCommand executed: {' '.join(pipreqs_args)}"
+                warning_msg += f"\nWorking directory: {scan_path.resolve()}"
                 if uv_python:
-                    warning_msg += f" Verified using Python {uv_python} via UV_PYTHON."
+                    warning_msg += f"\nOriginal UV_PYTHON: {uv_python} (but was unset for pipreqs subprocess)"
                 else:
-                    warning_msg += " UV_PYTHON not set - this may indicate Python version mismatch between tool installation and execution."
+                    warning_msg += "\nUV_PYTHON not set - pipreqs selected compatible Python version"
                 _log_action(action_name, "WARN", warning_msg)
             else:
                 _log_action(action_name, "INFO", "`pipreqs` found no import-based dependencies in this source.")
