@@ -3089,8 +3089,10 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
         return packages_specs
 
     except subprocess.CalledProcessError as e:
-        # ENHANCEMENT (from va): Provide a more actionable error message.
-        error_details = f"\nCommand: {' '.join(pipreqs_args)}\nUV_PYTHON: {uv_python if uv_python else 'not set'}"
+        # ENHANCEMENT (from va): Provide a more actionable error message with exit code and stderr.
+        error_details = f"\nCommand: {' '.join(pipreqs_args)}\nExit code: {e.returncode}\nUV_PYTHON: {uv_python if uv_python else 'not set'}"
+        if e.stderr:
+            error_details += f"\nStderr: {e.stderr}"
         _log_action(action_name, "ERROR", f"`uvx pipreqs` command failed. Check pyuvstarter_setup_log.json for details.{error_details}\nTry running `uvx pipreqs --help` to verify pipreqs is available.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"An unexpected error occurred while running `pipreqs`: {e}", details={"exception": str(e)})
@@ -4481,7 +4483,11 @@ class CLICommand(BaseSettings):
         # Register atexit fallback for crash safety (catches SIGTERM, unexpected exits)
         # This ensures logs are saved if process terminates without reaching finally block
         # Will be unregistered in finally block to prevent double-write
-        atexit_callback = lambda: _save_log(self, checkpoint=CHECKPOINT_SAVE) if _log_data_global else None
+        # Using def instead of lambda per PEP 8 / ruff E731 (lambdas should only be used for simple inline callbacks)
+        def atexit_callback():
+            """Fallback log saver for unexpected termination."""
+            if _log_data_global:
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)
         atexit.register(atexit_callback)
 
         # Define common paths used throughout the orchestration.

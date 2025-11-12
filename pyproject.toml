@@ -39,4 +39,13 @@ backend-path = ["."] # Tells setuptools to look for build-related files in the c
 [tool.setuptools]
 py-modules = ["pyuvstarter"]
 
+# Ruff linter configuration
+# Excludes test fixtures that contain intentional code issues for testing pyuvstarter's
+# ability to detect and fix problems. These fixtures must NOT be "fixed" by linting.
+[tool.ruff]
+exclude = [
+    "tests/fixtures/",           # Test fixtures with intentional dependency/import issues
+    "tests/test_import_projects/",  # Test fixtures with intentional relative import issues
+]
+
 
