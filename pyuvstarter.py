@@ -247,6 +247,15 @@ import shutil
 import subprocess
 import datetime
 import platform
+import re
+import ast
+import tempfile
+import shlex
+import traceback
+import functools
+
+from pathlib import Path
+from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
 
 # --- Python Version Check ---
 # Check Python version early to provide helpful error messages for incompatible versions
@@ -322,17 +331,6 @@ def check_python_version():
 # Check Python version before proceeding
 if not check_python_version():
     sys.exit(1)
-
-
-import re
-import ast
-import tempfile
-import shlex
-import traceback
-import functools
-
-from pathlib import Path
-from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
 
 # --- Version Information ---
 # Single source of truth for version information
@@ -413,7 +411,6 @@ except ImportError:
     GitWildMatchPattern = None
     PathSpec = None
 
-from tqdm import tqdm
 
 try:
     import typer
@@ -3409,8 +3406,8 @@ def _manage_project_dependencies(
                             f"⚠️  Failed to install {len(failed_packages)}/{len(final_packages_to_add)} packages:\n" +
                             "\n".join(f"  • {pkg}: {reason}" for pkg, reason in failed_packages[:10]) +
                             (f"\n  ... and {len(failed_packages) - 10} more (see log)" if len(failed_packages) > 10 else "") +
-                            f"\n\n💡 TIP: These packages were skipped to allow the rest of your project to work.\n" +
-                            f"    You can manually adjust versions in pyproject.toml or remove incompatible packages."
+                            "\n\n💡 TIP: These packages were skipped to allow the rest of your project to work.\n" +
+                            "    You can manually adjust versions in pyproject.toml or remove incompatible packages."
                         )
                         _log_action("uv_add_partial_failure", "WARN", failure_summary,
                                   details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages]})
@@ -3845,10 +3842,10 @@ def _detect_project_structure(project_root: Path) -> dict:
             python_files = list(project_root.glob("*.py"))
             if python_files:
                 result['layout'] = 'scripts_only_potential_package'
-                _log_action(action_name, "INFO", f"Detected script-only project with Python files")
+                _log_action(action_name, "INFO", "Detected script-only project with Python files")
             else:
                 result['layout'] = 'scripts_only'
-                _log_action(action_name, "INFO", f"Detected scripts-only project")
+                _log_action(action_name, "INFO", "Detected scripts-only project")
 
     return result
 
@@ -4694,26 +4691,22 @@ class CLICommand(BaseSettings):
                 _run_command(["uv", "sync", "--python", str(venv_python_executable)], "uv_sync_dependencies_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
                 _log_action("uv_final_sync", "SUCCESS", "Environment synced successfully.")
                 major_action_results.append(("uv_final_sync", "SUCCESS"))
-            except subprocess.CalledProcessError as e:
+            except subprocess.CalledProcessError:
                 # Sync failed - log the error but don't crash the entire script
                 # This allows users to see what was accomplished and get actionable guidance
                 _log_action("uv_final_sync", "WARN",
-                           f"⚠️  Environment sync failed. Some packages may be incompatible with your Python version.\n"
-                           f"   The script will continue to show what was accomplished.\n"
-                           f"   See error details above for specific package conflicts.")
+                           "⚠️  Environment sync failed. Some packages may be incompatible with your Python version.\n"
+                           "   The script will continue to show what was accomplished.\n"
+                           "   See error details above for specific package conflicts.")
                 major_action_results.append(("uv_final_sync", "FAILED"))
 
                 # Read requires-python from pyproject.toml for guidance
                 requires_python_str = "not specified"
                 try:
-                    if sys.version_info >= (3, 11):
-                        import tomllib
+                    if tomllib is not None:
                         with open(pyproject_file_path, "rb") as f:
                             pyproject_data = tomllib.load(f)
-                    else:
-                        with open(pyproject_file_path, "rb") as f:
-                            pyproject_data = toml.load(f)
-                    requires_python_str = pyproject_data.get('project', {}).get('requires-python', 'not specified')
+                        requires_python_str = pyproject_data.get('project', {}).get('requires-python', 'not specified')
                 except Exception:
                     pass  # If we can't read it, just use default
 

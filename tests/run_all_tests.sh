@@ -42,8 +42,12 @@ PYTHON_TESTS=(
     "test_extraction_fix.py"
     "test_import_fixing.py"
     "test_dependency_migration.py"
-    "test_jupyter_pipeline_simple.py"
-    "test_project_structure_simple.py"
+    "test_jupyter_pipeline.py"
+    "test_project_structure.py"
+    "test_utils.py"
+    "test_configuration.py"
+    "test_cross_platform.py"
+    "test_error_handling.py"
 )
 
 FAILED_TESTS=()

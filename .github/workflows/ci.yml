@@ -161,33 +161,36 @@ jobs:
         chmod +x create_demo.sh create_demo2.sh
 
         echo ""
-        echo "🧪 Running Python unit tests with pytest..."
-        echo "=========================================="
-        # Run focused test suite that validates core pyuvstarter functionality
-        echo "🧪 Running focused pytest suite for cross-platform compatibility..."
-        echo "==============================================================="
-
-        # Test core configuration functionality that works across all platforms
-        echo "🧪 Testing core configuration functionality..."
-        if uv run pytest tests/test_configuration.py --tb=short --color=yes; then
-          echo "✅ Configuration tests PASSED"
-
-          # Test basic pyuvstarter functionality
-          echo ""
-          echo "🧪 Testing basic pyuvstarter functionality..."
-          mkdir -p test_basic_ci
-          cd test_basic_ci
-          if uv run pyuvstarter . --dry-run; then
-            echo "✅ Basic pyuvstarter functionality PASSED"
-            PYTEST_EXIT_CODE=0
-          else
-            echo "❌ Basic pyuvstarter functionality FAILED"
-            PYTEST_EXIT_CODE=1
+        echo "🧪 Running Python unit tests..."
+        echo "==================================="
+        TESTS_PASSED=true
+        TEST_COUNT=0
+        for test_file in tests/test_*.py; do
+          # Check if glob matched any files (if not, test_file will be literal "tests/test_*.py")
+          if [ ! -f "$test_file" ]; then
+            echo "No Python test files found matching tests/test_*.py"
+            break
           fi
-          cd ..
-        else
-          echo "❌ Configuration tests FAILED"
+          TEST_COUNT=$((TEST_COUNT + 1))
+          echo "Running: $test_file"
+          if python "$test_file"; then
+            echo "✅ $test_file PASSED"
+          else
+            echo "❌ $test_file FAILED"
+            TESTS_PASSED=false
+          fi
+          echo ""
+        done
+
+        if [ $TEST_COUNT -eq 0 ]; then
+          echo "⚠️  No Python unit tests found - skipping"
+          PYTEST_EXIT_CODE=0
+        elif [ "$TESTS_PASSED" = false ]; then
+          echo "❌ Python unit tests failed"
           PYTEST_EXIT_CODE=1
+        else
+          echo "✅ All Python unit tests passed ($TEST_COUNT tests)"
+          PYTEST_EXIT_CODE=0
         fi
 
         # Run the demo script tests
@@ -197,12 +200,26 @@ jobs:
         ./create_demo2.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo2"
         DEMO2_EXIT_CODE=$?
 
+        echo "DEBUG: Copying test results from demo directory..."
+        if [ -f "${{ runner.temp }}/pyuvstarter_demo2/test_results.xml" ]; then
+          cp "${{ runner.temp }}/pyuvstarter_demo2/test_results.xml" ./
+          echo "✅ Copied test_results.xml from demo directory"
+        else
+          echo "⚠️  test_results.xml not found in demo directory"
+        fi
+
         echo "DEBUG: Checking for test_results.xml..."
         ls -la test_results* || echo "No test_results* files found"
 
         echo "Running create_demo.sh unit tests..."
         ./create_demo.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo1"
         DEMO1_EXIT_CODE=$?
+
+        echo "DEBUG: Checking for test results from demo1..."
+        if [ -f "${{ runner.temp }}/pyuvstarter_demo1/test_results.xml" ]; then
+          cp "${{ runner.temp }}/pyuvstarter_demo1/test_results.xml" ./test_results_demo1.xml
+          echo "✅ Copied test_results_demo1.xml from demo1 directory"
+        fi
 
         # Run comprehensive test suite
         echo ""
@@ -212,6 +229,15 @@ jobs:
           chmod +x tests/run_all_tests.sh
           ./tests/run_all_tests.sh
           COMPREHENSIVE_EXIT_CODE=$?
+
+          echo "DEBUG: Checking for comprehensive test results..."
+          # Comprehensive tests might generate test results in different locations
+          if [ -f "test_results.xml" ]; then
+            echo "✅ Found test_results.xml from comprehensive tests"
+          elif [ -f "tests/test_results.xml" ]; then
+            cp tests/test_results.xml ./test_results_comprehensive.xml
+            echo "✅ Copied test_results_comprehensive.xml from tests directory"
+          fi
         else
           echo "⚠️  Comprehensive test runner not found - skipping"
           COMPREHENSIVE_EXIT_CODE=0
@@ -220,7 +246,7 @@ jobs:
         # Check if any test suite failed
         if [ $PYTEST_EXIT_CODE -ne 0 ] || [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ] || [ $COMPREHENSIVE_EXIT_CODE -ne 0 ]; then
           echo "❌ Unit tests failed"
-          echo "pytest exit code: $PYTEST_EXIT_CODE"
+          echo "Python unit tests exit code: $PYTEST_EXIT_CODE"
           echo "Demo1 exit code: $DEMO1_EXIT_CODE"
           echo "Demo2 exit code: $DEMO2_EXIT_CODE"
           echo "Comprehensive test exit code: $COMPREHENSIVE_EXIT_CODE"
@@ -228,11 +254,16 @@ jobs:
         fi
         echo "✅ All unit tests passed"
 
+        # Final check for all test results before publishing
+        echo ""
+        echo "DEBUG: Final check for all test result files before publishing..."
+        ls -la test_results*.xml || echo "No test_results*.xml files found for publishing"
+
     - name: Publish Test Results
       if: always() && runner.os == 'Linux'
       uses: EnricoMi/publish-unit-test-result-action@v2
       with:
-        files: test_results.xml
+        files: test_results*.xml
         check_name: "PyUVStarter Unit Tests"
         comment_title: "PyUVStarter Test Results"
         github_token: ${{ secrets.GITHUB_TOKEN }}
