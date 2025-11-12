@@ -374,27 +374,47 @@ class PyuvstarterCommandExecutor:
         except subprocess.TimeoutExpired as e:
             # Capture complete diagnostic information for timeout
             cmd_str = " ".join(cmd)
+
+            # Collect all relevant environment variables for reproduction
             env_vars = {
                 "UV_PYTHON": process_env.get("UV_PYTHON", "not set"),
                 "PYUVSTARTER_TEST_PYTHON": process_env.get("PYUVSTARTER_TEST_PYTHON", "not set"),
                 "PYUVSTARTER_TEST_OS": process_env.get("PYUVSTARTER_TEST_OS", "not set"),
+                "PATH": process_env.get("PATH", "not set")[:200] + "..." if len(process_env.get("PATH", "")) > 200 else process_env.get("PATH", "not set"),
             }
 
+            # Decode output from bytes if necessary to avoid b'...' representation
+            stdout_str = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode('utf-8', errors='replace') if e.stdout else "")
+            stderr_str = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode('utf-8', errors='replace') if e.stderr else "")
+
+            # Show more context (last 1000 chars) and format for readability
+            stdout_display = stdout_str[-1000:] if stdout_str else "No stdout"
+            stderr_display = stderr_str[-1000:] if stderr_str else "No stderr"
+
             error_parts = [
+                f"\n{'='*70}",
                 f"TIMEOUT after {timeout}s",
-                f"Command: {cmd_str}",
+                f"Command (as string): {cmd_str}",
+                f"Command (exact list): {cmd}",
                 f"Working directory: {project_dir.resolve()}",
-                f"Environment: {', '.join(f'{k}={v}' for k, v in env_vars.items())}",
-                f"Stdout (last 300 chars): {(e.stdout[-300:] if e.stdout else 'No stdout')}",
-                f"Stderr (last 300 chars): {(e.stderr[-300:] if e.stderr else 'No stderr')}",
+                f"Environment variables:",
             ]
+            for k, v in env_vars.items():
+                error_parts.append(f"  {k}={v}")
+            error_parts.extend([
+                f"\n--- Stdout (last 1000 chars) ---",
+                stdout_display,
+                f"\n--- Stderr (last 1000 chars) ---",
+                stderr_display,
+                f"{'='*70}",
+            ])
             # Add recent log actions to identify what was executing when timeout occurred
             _add_log_actions(error_parts, project_dir, max_actions=5)
 
             return subprocess.CompletedProcess(
                 args=cmd,
                 returncode=-1,
-                stdout=e.stdout if e.stdout else "",
+                stdout=stdout_str,
                 stderr="\n".join(error_parts)
             )
 
