@@ -1270,8 +1270,8 @@ ACTION_STATUS_MAPPING = {
     "ensure_project_initialized_with_pyproject": ("\U0001f4c1 Initializing project with pyproject.toml", "\U0001f4c1 Initialized project with pyproject.toml"),  # 📁
     "ensure_gitignore": ("\U0001f4dd Setting up .gitignore", "\U0001f4dd Set up .gitignore"),  # 📝
     "create_or_verify_venv": ("\U0001f40d Creating virtual environment .venv/", "\U0001f40d Created virtual environment .venv/"),  # 🐍
-    "ensure_tool_pipreqs": ("\U0001f527 Installing pipreqs via uv tool install", "\U0001f527 Installed pipreqs via uv tool install"),  # 🔧
-    "ensure_tool_ruff": ("\U0001f527 Installing ruff via uv tool install", "\U0001f527 Installed ruff via uv tool install"),  # 🔧
+    "ensure_tool_pipreqs": ("\U0001f527 Preparing pipreqs (via uvx)", "\U0001f527 Pipreqs ready (via uvx)"),  # 🔧
+    "ensure_tool_ruff": ("\U0001f527 Preparing ruff (via uvx)", "\U0001f527 Ruff ready (via uvx)"),  # 🔧
     "ruff_unused_import_check": ("\U0001f50d Running ruff unused import checks", "\U0001f50d Completed ruff unused import checks"),  # 🔍
     "manage_project_dependencies": ("\U0001f4e6 Installing project dependencies", "\U0001f4e6 Installed project dependencies"),  # 📦
     "ensure_notebook_execution_support": ("\U0001f4d3 Setting up notebook support", "\U0001f4d3 Set up notebook support"),  # 📓
@@ -1376,8 +1376,8 @@ class ProgressTracker:
 
         elif action_name.startswith("ensure_tool_"):
             tool_name = action_name.replace("ensure_tool_", "")
-            present = f"🔧 Installing {tool_name} via uv tool install"
-            past = f"🔧 Installed {tool_name} via uv tool install"
+            present = f"🔧 Preparing {tool_name} (via uvx)"
+            past = f"🔧 {tool_name} ready (via uvx)"
             return present, past
 
         elif action_name == "manage_project_dependencies":
@@ -2037,111 +2037,31 @@ def _ensure_uv_installed(dry_run: bool):
         _log_action(action_name, "ERROR", f"All automatic `uv` installation attempts failed (methods tried: {' -> '.join(methods)}).\n      ACTION: Please install `uv` manually from https://astral.sh/uv.")
         return False
 
-def _build_uv_command_with_python(base_cmd: List[str]) -> List[str]:
-    """
-    Build a UV command with --python flag if UV_PYTHON environment variable is set.
-
-    **Problem This Solves:**
-    UV tools (pipreqs, ruff, etc.) installed via `uv tool install` are Python-version-specific
-    and stored in `~/.local/share/uv/tools/<tool>/<python-version>/`. When tests or CI runs
-    execute sequentially with different Python versions:
-
-    1. First run: Installs tool for Python 3.12 → tool works correctly
-    2. Second run: Tries to use Python 3.12's tool with Python 3.14 environment → fails silently
-    3. Result: Empty dependency detection, tests fail with `dependencies: []`
-
-    **How This Fixes It:**
-    By respecting UV_PYTHON environment variable and passing `--python` flag to all UV commands,
-    we ensure tools are installed AND executed with the same Python version throughout the entire
-    execution chain (CI → tests → pyuvstarter → uvx tools).
-
-    **Why It's Needed:**
-    - GitHub Actions CI matrix tests multiple Python versions sequentially in same runner
-    - Tools installed by first test (Python X) persist for second test (Python Y)
-    - Without explicit version control, tools fail silently due to Python mismatch
-    - This was root cause of Jupyter notebook dependency detection failures in CI
-
-    Args:
-        base_cmd: Base command list (e.g., ["uvx", "pipreqs"] or ["uv", "tool", "install", "ruff"])
-
-    Returns:
-        Command list with --python flag inserted after first element if UV_PYTHON is set
-
-    Examples:
-        UV_PYTHON=3.14 → ["uvx", "--python", "3.14", "pipreqs", ...]
-        UV_PYTHON=3.14 → ["uv", "tool", "install", "--python", "3.14", "pipreqs"]
-        UV_PYTHON not set → ["uvx", "pipreqs", ...] (unchanged, UV uses default discovery)
-
-    Backward Compatibility:
-    When UV_PYTHON is not set, commands remain unchanged and UV uses standard Python discovery:
-    - `uv venv`: Uses python in PATH or system default
-    - `uvx`: Uses tool's installed Python or creates new environment
-    - `uv tool install`: Uses system Python or requested version
-    """
-    uv_python = os.environ.get("UV_PYTHON")
-    if not uv_python or not base_cmd:
-        return base_cmd
-
-    # Determine where to insert --python flag based on UV command structure
-    cmd_type = base_cmd[0] if base_cmd else None
-
-    if cmd_type == "uvx":
-        # uvx --python 3.14 pipreqs ...
-        # --python flag goes immediately after uvx
-        return [base_cmd[0], "--python", uv_python] + base_cmd[1:]
-
-    elif cmd_type == "uv" and len(base_cmd) >= 2:
-        subcommand = base_cmd[1]
-
-        # Commands where --python goes after the subcommand verb
-        if subcommand == "tool" and len(base_cmd) >= 3:
-            # uv tool install --python 3.14 ruff
-            # Format: ["uv", "tool", "install", "--python", "3.14", "package"]
-            return base_cmd[:3] + ["--python", uv_python] + base_cmd[3:]
-
-        elif subcommand == "run":
-            # uv run --python 3.14 script.py
-            # Format: ["uv", "run", "--python", "3.14", "script.py"]
-            return base_cmd[:2] + ["--python", uv_python] + base_cmd[2:]
-
-        # Other uv subcommands (add, sync, pip, venv) don't typically use --python in our context
-        # Let them pass through unchanged
-
-    return base_cmd
-
 def _ensure_tool_available(tool_name: str, major_action_results: list, dry_run: bool, website: str = None):
     """
-    Ensures a CLI tool is installed via `uv tool install` for use with `uvx`.
-    Optionally provide a website for user guidance. Handles all error logging internally.
-    Updates major_action_results for each tool.
+    Verify tool will be available via uvx (ephemeral execution).
+
+    Tools are executed via `uvx` which automatically downloads and caches them in
+    ephemeral environments. No pre-installation via `uv tool install` is needed.
+
+    Benefits of uvx approach:
+    - No persistent global state that can become corrupted
+    - Automatic caching (virtually no overhead on subsequent runs)
+    - Respects UV_PYTHON environment variable automatically
+    - Each invocation gets correct Python version without manual coordination
+
+    See: https://docs.astral.sh/uv/guides/tools/
     """
     action_name = f"ensure_tool_{tool_name}"
-    package_to_install = tool_name # Often the package name is the same as the tool name
-
-    # Diagnostic output for Python version tracking
     uv_python = os.environ.get("UV_PYTHON")
-    if uv_python:
-        _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install}`) is available for `uvx` with Python {uv_python}.")
-    else:
-        _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install}`) is available for `uvx` (UV_PYTHON not set, using system default).")
 
-    try:
-        # uv tool install is idempotent and safer to just run (or dry-run)
-        # Respect UV_PYTHON environment variable for consistent Python version
-        cmd = _build_uv_command_with_python(["uv", "tool", "install", package_to_install])
-        _run_command(cmd, f"{action_name}_uv_tool_install", suppress_console_output_on_success=True, dry_run=dry_run)
-        _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
-        major_action_results.append((f"{tool_name}_cli_tool", "SUCCESS"))
-        return True
-    except Exception:
-        website_msg = f"\nSee documentation or troubleshooting at: {website}" if website else ""
-        _log_action(
-            action_name,
-            "ERROR",
-            f"Failed to ensure `{tool_name}` via `uv tool install`.\nTry running: uv tool install {package_to_install}{website_msg}"
-        )
-        major_action_results.append((f"{tool_name}_cli_tool", "FAILED"))
-        return False
+    if uv_python:
+        _log_action(action_name, "INFO", f"Tool `{tool_name}` will be executed via `uvx` with Python {uv_python} (from UV_PYTHON env var).")
+    else:
+        _log_action(action_name, "INFO", f"Tool `{tool_name}` will be executed via `uvx` (automatic download and caching).")
+
+    major_action_results.append((f"{tool_name}_cli_tool", "READY"))
+    return True
 
 
 ######################################################################
@@ -3006,8 +2926,8 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
     else:
         _log_action(action_name, "INFO", "Running pipreqs with system default Python (UV_PYTHON not set).")
 
-    # Use helper to build command with --python flag if UV_PYTHON is set
-    pipreqs_args = _build_uv_command_with_python(["uvx", "pipreqs", "--print", "--scan-notebooks"])
+    # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+    pipreqs_args = ["uvx", "pipreqs", "--print", "--scan-notebooks"]
 
     # Add mode if specified (for fallback strategy)
     if mode:
@@ -3109,8 +3029,8 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
 
     try:
         # ENHANCED Ruff CLI arguments to check both unused imports and relative imports
-        # Use helper to build command with --python flag if UV_PYTHON is set
-        ruff_args = _build_uv_command_with_python([
+        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+        ruff_args = [
             "uvx",
             "ruff",
             "check",
@@ -3119,7 +3039,7 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
             "--select=F401,TID252",
             "--exit-zero",
             str(project_root),
-        ])
+        ]
         # Ruff analysis should run even in dry run mode to detect import issues
         # Only the actual fixing operations should be prevented in dry run mode
         result_stdout, _ = _run_command(
@@ -3221,8 +3141,8 @@ ban-relative-imports = "all"
 
                     try:
                         # Use Ruff to automatically fix relative imports and unused imports
-                        # Use helper to build command with --python flag if UV_PYTHON is set
-                        fix_cmd = _build_uv_command_with_python([
+                        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+                        fix_cmd = [
                             "uvx",
                             "ruff",
                             "check",
@@ -3231,7 +3151,7 @@ ban-relative-imports = "all"
                             "--select=TID252,F401",  # Relative imports + unused imports
                             "--config", str(temp_config_path),  # Use our temporary config
                             str(project_root)
-                        ])
+                        ]
 
                         _run_command(
                             fix_cmd,
@@ -3979,15 +3899,15 @@ def _detect_relative_import_issues(project_root: Path, project_info: dict) -> li
         # Use Ruff to detect relative import violations
         # TID252: Relative imports are used above the top-level package
         # F401: Unused imports (often exposed when fixing relative imports)
-        # Use helper to build command with --python flag if UV_PYTHON is set
-        cmd = _build_uv_command_with_python([
+        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+        cmd = [
             "uvx",
             "ruff",
             "check",
             "--select=TID252",  # Relative imports above top level
             "--output-format=json",
             str(project_root)
-        ])
+        ]
 
         stdout, _ = _run_command(
             cmd,
@@ -4061,15 +3981,15 @@ def _fix_relative_imports(project_root: Path, project_info: dict, dry_run: bool)
 
     try:
         # Use Ruff to automatically fix relative imports and related issues
-        # Use helper to build command with --python flag if UV_PYTHON is set
-        cmd = _build_uv_command_with_python([
+        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+        cmd = [
             "uvx",
             "ruff",
             "check",
             "--fix",  # Automatically fix detected issues
             "--select=TID252,F401",  # Relative imports + unused imports
             str(project_root)
-        ])
+        ]
 
         _run_command(
             cmd,

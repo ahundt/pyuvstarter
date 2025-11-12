@@ -76,7 +76,15 @@
 
 set -e  # Exit on any error
 
-echo "🧹 Refreshing pyuvstarter installation (clearing all caches)"
+# Optional Python version parameter
+PYTHON_VERSION="${1:-}"
+
+if [ -n "$PYTHON_VERSION" ]; then
+    echo "🧹 Refreshing pyuvstarter installation with Python $PYTHON_VERSION"
+    export UV_PYTHON="$PYTHON_VERSION"
+else
+    echo "🧹 Refreshing pyuvstarter installation (using default Python)"
+fi
 echo "============================================================"
 echo ""
 
@@ -121,8 +129,13 @@ uv cache prune --force
 # Step 5: Create fresh virtual environment (foundation for rebuild)
 echo ""
 echo "5️⃣  Creating fresh virtual environment..."
-uv venv
-echo "  ✅ Created .venv"
+if [ -n "$PYTHON_VERSION" ]; then
+    uv venv --python "$PYTHON_VERSION"
+    echo "  ✅ Created .venv with Python $PYTHON_VERSION"
+else
+    uv venv
+    echo "  ✅ Created .venv"
+fi
 
 # Step 6: Sync dependencies
 echo ""
@@ -142,8 +155,13 @@ echo "8️⃣  Installing pyuvstarter as UV tool (for direct command)..."
 # Uninstall first if present
 uv tool uninstall pyuvstarter 2>/dev/null || echo "  ℹ️  Tool not previously installed"
 # Install fresh
-uv tool install --force --reinstall .
-echo "  ✅ Installed UV tool"
+if [ -n "$PYTHON_VERSION" ]; then
+    uv tool install --force --reinstall --python "$PYTHON_VERSION" .
+    echo "  ✅ Installed UV tool with Python $PYTHON_VERSION"
+else
+    uv tool install --force --reinstall .
+    echo "  ✅ Installed UV tool"
+fi
 
 echo ""
 echo "============================================================"
@@ -161,5 +179,13 @@ echo "  uv run pyuvstarter --version"
 echo "  pyuvstarter --version"
 echo ""
 echo "🚀 Run tests:"
-echo "  uv run tests/test_jupyter_pipeline.py"
-echo "  tests/run_all_tests.sh"
+if [ -n "$PYTHON_VERSION" ]; then
+    echo "  UV_PYTHON=$PYTHON_VERSION uv run tests/test_jupyter_pipeline.py"
+    echo "  UV_PYTHON=$PYTHON_VERSION tests/run_all_tests.sh"
+else
+    echo "  uv run tests/test_jupyter_pipeline.py"
+    echo "  tests/run_all_tests.sh"
+fi
+echo ""
+echo "💡 Usage: $0 [python-version]"
+echo "   Example: $0 3.13"
