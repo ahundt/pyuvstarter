@@ -51,8 +51,12 @@ jobs:
 
     - name: Install pyuvstarter dependencies
       run: |
-        uv venv
+        uv venv --python ${{ matrix.python-version }}
         uv sync
+
+    - name: Verify Python version in venv
+      run: |
+        uv run python --version
 
     - name: Check Python syntax
       run: |
@@ -70,7 +74,7 @@ jobs:
     - name: Install pyuvstarter as tool
       run: |
         # Install pyuvstarter as a global tool for testing
-        uv tool install .
+        uv tool install . --python ${{ matrix.python-version }}
 
     - name: Test pyuvstarter as installed package
       run: |
@@ -85,8 +89,11 @@ jobs:
         TEST_FAILED=0
         # Create a completely separate test environment
         cd ${{ runner.temp }}
-        uv venv test-env
+        uv venv test-env --python ${{ matrix.python-version }}
         source test-env/bin/activate
+        # Verify Python version
+        echo "🔍 Python version in isolated env:"
+        python --version
         # Install from the built wheel using uv
         uv pip install ${{ github.workspace }}/dist/pyuvstarter-*.whl
         # Test the installed command
@@ -114,8 +121,11 @@ jobs:
         $TEST_FAILED = 0
         # Create a completely separate test environment
         cd $env:RUNNER_TEMP
-        uv venv test-env
+        uv venv test-env --python ${{ matrix.python-version }}
         . test-env\Scripts\activate
+        # Verify Python version
+        Write-Host "🔍 Python version in isolated env:"
+        python --version
         # Install from the built wheel
         $wheel = Get-ChildItem "${{ github.workspace }}\dist\*.whl" | Select-Object -First 1
         uv pip install $wheel.FullName
@@ -279,8 +289,8 @@ jobs:
         mkdir test_windows
         cd test_windows
         Write-Host "📁 Created test directory: $(Get-Location)"
-        Write-Host "🚀 Running: pyuvstarter ."
-        pyuvstarter .
+        Write-Host "🚀 Running: uv tool run pyuvstarter ."
+        uv tool run pyuvstarter .
         Write-Host ""
         Write-Host "🔍 Verifying generated files:"
         if (Test-Path "pyproject.toml") { 
