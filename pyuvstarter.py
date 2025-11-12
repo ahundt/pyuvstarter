@@ -1950,6 +1950,42 @@ def _save_log(config: 'CLICommand', checkpoint: bool = False):
             _log_action("save_log", "ERROR", f"Failed to save JSON log to '{log_file_path.name}'")
 
 # --- Core Helper Functions ---
+def _get_env_diagnostics(custom_env: dict = None) -> dict:
+    """Extract relevant environment variables for command execution diagnostics.
+
+    Provides standard environment variable information for debugging subprocess
+    command execution, with special focus on UV_PYTHON version control.
+
+    Args:
+        custom_env: Optional custom environment dict that will be/was passed to subprocess.
+                   If None, returns info about the current process environment.
+
+    Returns:
+        Dict with environment variable diagnostic info. Keys include:
+        - UV_PYTHON: The Python version control variable used by uv/uvx
+
+    Usage:
+        env_info = _get_env_diagnostics()  # Current environment
+        env_info = _get_env_diagnostics(custom_env)  # Custom subprocess environment
+    """
+    # UV_PYTHON is critical for Python version control in uv/uvx
+    parent_uv_python = os.environ.get("UV_PYTHON")
+
+    if custom_env is not None:
+        # Custom environment provided to subprocess
+        custom_uv_python = custom_env.get("UV_PYTHON")
+        if parent_uv_python and not custom_uv_python:
+            uv_python_status = "unset (was in parent env)"
+        elif custom_uv_python:
+            uv_python_status = custom_uv_python
+        else:
+            uv_python_status = "not set"
+    else:
+        # Using parent environment
+        uv_python_status = parent_uv_python if parent_uv_python else "not set"
+
+    return {"UV_PYTHON": uv_python_status}
+
 def _run_command(command_list: list[str], action_log_name: str, work_dir: Path = None, shell: bool = False, capture_output: bool = True, suppress_console_output_on_success: bool = False, dry_run: bool = False, env: dict = None):
     """
     Runs a shell command and logs its execution. Raises CalledProcessError on failure.
@@ -1973,7 +2009,13 @@ def _run_command(command_list: list[str], action_log_name: str, work_dir: Path =
 
     _log_action(action_log_name, "INFO", f"EXEC: \"{cmd_str}\" in \"{work_dir}\" (Logged as action: {action_log_name})")
 
-    log_details = {"command": cmd_str, "working_directory": str(work_dir), "shell_used": shell, "capture_output_setting": capture_output}
+    log_details = {
+        "command": cmd_str,
+        "working_directory": str(work_dir),
+        "shell_used": shell,
+        "capture_output_setting": capture_output,
+        "environment": _get_env_diagnostics(env)
+    }
 
     try:
         process = subprocess.run(command_list, cwd=work_dir, capture_output=capture_output, text=True, shell=shell, check=True, env=env)
@@ -3096,7 +3138,16 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
                     warning_msg += f"\nOriginal UV_PYTHON: {uv_python} (but was unset for pipreqs subprocess)"
                 else:
                     warning_msg += "\nUV_PYTHON not set - pipreqs selected compatible Python version"
-                _log_action(action_name, "WARN", warning_msg)
+
+                # Include diagnostic details in JSON log for test error reporting
+                warning_details = {
+                    "command": ' '.join(pipreqs_args),
+                    "working_directory": str(scan_path.resolve()),
+                    "environment": _get_env_diagnostics(uvx_env),
+                    "py_files_count": len(py_files),
+                    "ipynb_files_count": len(ipynb_files)
+                }
+                _log_action(action_name, "WARN", warning_msg, details=warning_details)
             else:
                 _log_action(action_name, "INFO", "`pipreqs` found no import-based dependencies in this source.")
 

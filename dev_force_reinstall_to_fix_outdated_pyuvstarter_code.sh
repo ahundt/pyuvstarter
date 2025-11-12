@@ -76,8 +76,22 @@
 
 set -e  # Exit on any error
 
-# Optional Python version parameter
-PYTHON_VERSION="${1:-}"
+# Parse optional Python version parameter (supports both --python flag and positional arg)
+PYTHON_VERSION=""
+
+if [[ "$1" == "--python" ]]; then
+    # Flag-based usage: ./script.sh --python 3.14
+    PYTHON_VERSION="${2:-}"
+    if [ -z "$PYTHON_VERSION" ]; then
+        echo "❌ ERROR: --python flag requires a version argument"
+        echo "Usage: $0 [--python VERSION]"
+        echo "Example: $0 --python 3.14"
+        exit 1
+    fi
+elif [ -n "$1" ]; then
+    # Backwards compatible positional usage: ./script.sh 3.14
+    PYTHON_VERSION="$1"
+fi
 
 if [ -n "$PYTHON_VERSION" ]; then
     echo "🧹 Refreshing pyuvstarter installation with Python $PYTHON_VERSION"
@@ -182,5 +196,7 @@ else
     echo "  tests/run_all_tests.sh"
 fi
 echo ""
-echo "💡 Usage: $0 [python-version]"
-echo "   Example: $0 3.13"
+echo "💡 Usage: $0 [--python VERSION | VERSION]"
+echo "   Examples:"
+echo "     $0 3.14           # Positional argument (backwards compatible)"
+echo "     $0 --python 3.14  # Flag-based argument"
