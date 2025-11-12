@@ -2312,6 +2312,8 @@ def _categorize_uv_add_error(stderr: str) -> str:
         return "no compatible wheel available for your platform/Python version"
     elif "failed to build" in stderr_lower:
         return "build failed (missing system dependencies)"
+    elif any(term in stderr_lower for term in ["network", "connection", "timeout", "unreachable", "failed to download", "failed to fetch"]):
+        return "network error (check internet connection)"
     elif "could not find" in stderr_lower or "does not exist" in stderr_lower:
         return "package not found on PyPI"
     else:

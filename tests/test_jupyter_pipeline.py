@@ -17,28 +17,9 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Platform-specific package availability
-# Some packages don't have wheels for Python 3.14+ yet (as of 2025-11)
-# Update this when new wheels become available
-PYTHON_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}"
-PACKAGES_WITHOUT_PY314_WHEELS = ["tensorflow"]  # torch has 3.14 wheels, tensorflow doesn't yet
-
-def is_package_available_on_current_python(package_name: str) -> bool:
-    """Check if a package has wheels available for the current Python version.
-
-    Args:
-        package_name: Name of the package to check
-
-    Returns:
-        True if the package should be available, False if known to lack wheels
-
-    Note:
-        This is based on known wheel availability as of 2025-11.
-        As packages release new wheels for Python 3.14+, update PACKAGES_WITHOUT_PY314_WHEELS.
-    """
-    if PYTHON_VERSION >= "3.14" and package_name in PACKAGES_WITHOUT_PY314_WHEELS:
-        return False
-    return True
+# Note: Tests should validate pyuvstarter's core functionality without relying on
+# specific packages being unavailable on specific Python versions. Use mock-based
+# unit tests (test_wheel_unavailability.py) to test wheel unavailability code paths.
 
 from tests.test_utils import (
     ProjectFixture, temp_manager, executor, validator, mock_factory, format_pyuvstarter_error, format_dependency_mismatch
@@ -207,13 +188,6 @@ import os
                             "from scipy import stats\n",
                             "from bs4 import BeautifulSoup\n",
                             "\n",
-                            "# Try-except imports (optional dependencies)\n",
-                            "try:\n",
-                            "    import tensorflow as tf\n",
-                            "    import torch\n",
-                            "except ImportError:\n",
-                            "    print('ML libraries not available')\n",
-                            "\n",
                             "# Conditional imports\n",
                             "import sys\n",
                             "if sys.version_info >= (3, 8):\n",
@@ -229,76 +203,39 @@ import os
                 ]))
             },
             directories=[],
+            # Note: This test deliberately uses IMPORT names (bs4, sklearn) rather than PACKAGE names
+            # (beautifulsoup4, scikit-learn) to validate that pyuvstarter correctly maps imports to packages.
+            # The test harness uses the same mapping as pyuvstarter (_canonicalize_pkg_name) to verify this.
+            #
+            # Mapping examples tested:
+            #   - "bs4" (import) → "beautifulsoup4" (package) - Tests HTML parsing library name conversion
+            #   - "sklearn" (import) → "scikit-learn" (package) - Tests machine learning library name conversion
+            #
+            # This validates real-world usage where developers write `from bs4 import BeautifulSoup`
+            # but pip/uv must install `beautifulsoup4`.
+            #
+            # Removed tensorflow/torch from integration tests - wheel unavailability scenarios are
+            # covered by mock-based unit tests (test_wheel_unavailability.py) which don't depend on
+            # actual package availability.
             expected_packages=[
                 "pandas", "numpy", "matplotlib", "seaborn", "plotly",
-                "sklearn", "scipy", "bs4",
-                "tensorflow", "torch", "typing_extensions"
+                "sklearn", "scipy", "bs4", "typing_extensions"
             ]
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
+            # pyuvstarter should succeed even if some optional packages can't install
             assert result.returncode == 0, format_pyuvstarter_error("test_complex_notebook_with_various_imports", result, project_dir)
 
-            # Filter expected packages to only include those available on current Python version
-            filtered_expected_packages = [
-                pkg for pkg in fixture.expected_packages
-                if is_package_available_on_current_python(pkg)
-            ]
+            # validate_pyproject_toml uses _map_import_to_package_names() to handle import→package mapping
+            # This validates that "bs4" (import name) correctly maps to "beautifulsoup4" (PyPI package)
+            pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
 
-            pyproject_data = validator.validate_pyproject_toml(project_dir, filtered_expected_packages)
-            dependencies = pyproject_data["project"]["dependencies"]
-
-            # Validate various import patterns were discovered
-            # Core packages that should work on all Python versions
-            complex_packages = ["pandas", "numpy", "matplotlib", "seaborn", "plotly", "sklearn", "scipy", "beautifulsoup4"]
-
-            # Platform-limited packages (may not have wheels for Python 3.14+)
-            platform_limited_packages = ["tensorflow", "torch", "typing_extensions"]
-
-            for pkg in complex_packages:
-                found = False
-                for dep in dependencies:
-                    dep_clean = dep.lower().replace('-', '')
-                    # Handle sklearn -> scikit-learn mapping specifically
-                    if pkg == "sklearn" and "scikitlearn" in dep_clean:
-                        found = True
-                        break
-                    # General substring matching
-                    elif pkg.lower() in dep_clean:
-                        found = True
-                        break
-                    # Handle underscore to hyphen conversion
-                    elif pkg.replace('_', '').lower() in dep_clean:
-                        found = True
-                        break
-                assert found, format_dependency_mismatch("test_complex_notebook_with_various_imports", pkg, dependencies, project_dir)
-
-            # Platform-limited packages: only assert if available on current Python version
-            for pkg in platform_limited_packages:
-                if is_package_available_on_current_python(pkg):
-                    found = False
-                    for dep in dependencies:
-                        dep_clean = dep.lower().replace('-', '')
-                        if pkg.lower() in dep_clean or pkg.replace('_', '').lower() in dep_clean:
-                            found = True
-                            break
-                    assert found, format_dependency_mismatch("test_complex_notebook_with_various_imports", pkg, dependencies, project_dir)
-                else:
-                    # Package not available on this Python version - verify it's NOT in dependencies
-                    # (our graceful degradation should have skipped it)
-                    found_incorrectly = False
-                    for dep in dependencies:
-                        dep_clean = dep.lower().replace('-', '')
-                        if pkg.lower() in dep_clean:
-                            found_incorrectly = True
-                            break
-                    assert not found_incorrectly, (
-                        f"Package '{pkg}' should not be in dependencies on Python {PYTHON_VERSION} "
-                        f"(lacks wheels for this version), but found: {dep}. "
-                        f"Dependencies: {dependencies}"
-                    )
+            # Integration tests validate core functionality with reliably available packages.
+            # Mock-based unit tests (test_wheel_unavailability.py) cover edge cases like
+            # wheel unavailability, version conflicts, and graceful degradation scenarios.
 
     def test_malformed_notebook_handling(self):
         """Test handling of malformed or corrupted notebook files."""
@@ -406,7 +343,7 @@ import os
                 "experiments/ml/experiment_1.ipynb": json.dumps(mock_factory.create_mock_notebook_json([
                     {
                         "cell_type": "code",
-                        "source": ["import sklearn\nimport tensorflow as tf"],
+                        "source": ["import sklearn\nimport scipy"],
                         "metadata": {},
                         "outputs": []
                     }
@@ -418,7 +355,9 @@ print("Main script")
 """
             },
             directories=["notebooks/data_analysis", "experiments/ml"],
-            expected_packages=["pandas", "numpy", "scipy", "matplotlib", "sklearn", "tensorflow"]
+            # Test discovery of packages from nested directory structures.
+            # All packages listed should be reliably available across Python versions.
+            expected_packages=["pandas", "numpy", "scipy", "matplotlib", "sklearn"]
         )
 
         with temp_manager.create_temp_project(fixture) as project_dir:
@@ -426,35 +365,11 @@ print("Main script")
 
             assert result.returncode == 0, format_pyuvstarter_error("test_notebook_in_subdirectories", result, project_dir)
 
-            # Filter expected packages to only include those available on current Python version
-            filtered_expected_packages = [
-                pkg for pkg in fixture.expected_packages
-                if is_package_available_on_current_python(pkg)
-            ]
-
-            pyproject_data = validator.validate_pyproject_toml(project_dir, filtered_expected_packages)
+            pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
 
             # Should discover packages from all nested notebooks
-            # Platform-aware validation: skip assertions for packages lacking wheels on this Python version
             for expected_pkg in fixture.expected_packages:
-                # Skip assertion if package isn't available on current Python version
-                if not is_package_available_on_current_python(expected_pkg):
-                    # Verify it's correctly NOT in dependencies (graceful degradation)
-                    found_incorrectly = False
-                    for dep in dependencies:
-                        dep_clean = dep.lower().replace('-', '')
-                        if expected_pkg.lower() in dep_clean:
-                            found_incorrectly = True
-                            break
-                    assert not found_incorrectly, (
-                        f"Package '{expected_pkg}' should not be in dependencies on Python {PYTHON_VERSION} "
-                        f"(lacks wheels for this version), but found in dependencies. "
-                        f"Dependencies: {dependencies}"
-                    )
-                    continue
-
-                # Package should be available - assert it's present
                 found = False
                 for dep in dependencies:
                     dep_clean = dep.lower().replace('-', '')
