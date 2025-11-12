@@ -12,8 +12,6 @@ Tests various error conditions and how pyuvstarter handles them:
 """
 
 import sys
-import json
-import tempfile
 import os
 from pathlib import Path
 
@@ -21,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_utils import (
-    ProjectFixture, temp_manager, executor, validator, mock_factory
+    ProjectFixture, temp_manager, executor
 )
 
 def test_dependency_conflict_handling():

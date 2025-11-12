@@ -10,14 +10,13 @@ This test validates that pyuvstarter correctly:
 5. Handles legacy requirements.txt projects
 """
 
-import os
 import sys
 import json
 import subprocess
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import List, Tuple
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -150,14 +149,14 @@ class ImportFixingTestSuite:
                     timeout=30
                 )
                 if result.returncode == 0:
-                    print(f"❌ UNEXPECTED: Script execution should have failed with ImportError but succeeded")
-                    print(f"   This indicates the test project setup is incorrect")
+                    print("❌ UNEXPECTED: Script execution should have failed with ImportError but succeeded")
+                    print("   This indicates the test project setup is incorrect")
                     return False
                 else:
-                    print(f"✅ EXPECTED: Script execution failed with ImportError (this is correct before pyuvstarter fixes)")
+                    print("✅ EXPECTED: Script execution failed with ImportError (this is correct before pyuvstarter fixes)")
                     # Verify it's the expected ImportError
                     if "attempted relative import" in result.stderr or "relative import" in result.stderr:
-                        print(f"✅ Correct error type detected: relative import ImportError")
+                        print("✅ Correct error type detected: relative import ImportError")
                     else:
                         print(f"⚠️  Different error than expected, but still failed: {result.stderr.strip()}")
                         # Still consider this success since the goal is that it fails before fixing
@@ -179,7 +178,7 @@ class ImportFixingTestSuite:
             print(f"🔍 Relative imports after fixing: {len(remaining_relative)}")
 
             if len(remaining_relative) > 0:
-                print(f"❌ Some relative imports were not fixed:")
+                print("❌ Some relative imports were not fixed:")
                 for file_path, line_num, line in remaining_relative:
                     print(f"  - {file_path}:{line_num}: {line}")
                 return False
@@ -197,10 +196,10 @@ class ImportFixingTestSuite:
                     timeout=30
                 )
                 if result.returncode == 0:
-                    print(f"✅ SUCCESS: Script execution works after pyuvstarter fixed imports!")
+                    print("✅ SUCCESS: Script execution works after pyuvstarter fixed imports!")
                     print(f"   Output: {result.stdout.strip()}")
                 else:
-                    print(f"❌ FAILURE: Script execution still fails after pyuvstarter fix")
+                    print("❌ FAILURE: Script execution still fails after pyuvstarter fix")
                     print(f"   Error: {result.stderr}")
                     return False
             except Exception as e:
@@ -263,7 +262,7 @@ class ImportFixingTestSuite:
 
         try:
             # Check initial state - should have imports but not in a package
-            print(f"🔍 Checking if this is detected as non-package...")
+            print("🔍 Checking if this is detected as non-package...")
 
             # Run pyuvstarter
             returncode, stdout, stderr = self.run_pyuvstarter(temp_project, dry_run=True)

@@ -12,7 +12,6 @@ scenarios without requiring actual Jupyter installation or GUI interaction.
 import sys
 
 import json
-import tempfile
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -820,7 +819,6 @@ class TestNotebookEdgeCases:
 
 def main():
     """Run all Jupyter pipeline tests."""
-    import sys
 
     # Simple test runner for manual execution
     test_classes = [

@@ -4,14 +4,13 @@ Tests for pyuvstarter dependency migration strategies.
 """
 
 import sys
-import tempfile
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_utils import (
-    ProjectFixture, temp_manager, executor, validator, mock_factory
+    ProjectFixture, temp_manager, executor
 )
 
 def test_basic_dependency_migration():

@@ -16,14 +16,13 @@ and applies appropriate behaviors for each structure.
 import sys
 
 import json
-import tempfile
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_utils import (
-    ProjectFixture, temp_manager, executor, validator, mock_factory, OutputValidator
+    ProjectFixture, temp_manager, executor, validator, OutputValidator
 )
 
 # Optional pytest import for when pytest is available
@@ -736,7 +735,6 @@ def helper():
 
 def main():
     """Run all project structure tests."""
-    import sys
 
     # Simple test runner for manual execution
     test_classes = [
