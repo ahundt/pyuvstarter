@@ -2312,12 +2312,71 @@ def _categorize_uv_add_error(stderr: str) -> str:
         return "no compatible wheel available for your platform/Python version"
     elif "failed to build" in stderr_lower:
         return "build failed (missing system dependencies)"
+    elif "building wheel" in stderr_lower or "running setup.py" in stderr_lower:
+        return "building from source (very slow - missing pre-built wheel)"
+    elif "error:" in stderr_lower and ("rust" in stderr_lower or "cargo" in stderr_lower):
+        return "requires Rust compiler (install rustc or use different Python version)"
     elif any(term in stderr_lower for term in ["network", "connection", "timeout", "unreachable", "failed to download", "failed to fetch"]):
         return "network error (check internet connection)"
     elif "could not find" in stderr_lower or "does not exist" in stderr_lower:
         return "package not found on PyPI"
     else:
         return "unknown error"
+
+
+def _get_suggested_actions_for_error_type(failure_reason: str, package_name: str = "") -> list:
+    """Get context-specific suggested actions based on error type.
+
+    Provides actionable guidance that matches the specific failure reason,
+    following the "Specific and Actionable Feedback" philosophy.
+
+    Args:
+        failure_reason: The categorized error reason from _categorize_uv_add_error()
+        package_name: Optional specific package name for tailored guidance
+
+    Returns:
+        List of suggested action strings
+    """
+    suggestions = []
+    reason_lower = failure_reason.lower()
+
+    if "wheel" in reason_lower or "building from source" in reason_lower:
+        suggestions.extend([
+            f"• Check package availability: https://pypi.org/{package_name}/" if package_name else "• Check package availability on PyPI",
+            "• Use a Python version with pre-built wheels (usually 3.11-3.13)",
+            "• For CI: Install build dependencies (gcc, python3-dev) or use different Python version",
+            "• Building from source can take 5-20 minutes vs 5-20 seconds for wheels"
+        ])
+
+    if "rust" in reason_lower:
+        suggestions.extend([
+            "• Install Rust compiler: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+            "• Or use a Python version where pre-built wheels are available",
+            "• Rust compilation can be very slow (10-30 minutes for large packages)"
+        ])
+
+    if "network" in reason_lower or "connection" in reason_lower:
+        suggestions.extend([
+            "• Check internet connection and PyPI status: https://status.python.org",
+            "• Try again - network issues are often temporary",
+            "• Use a package mirror if behind a firewall: uv pip install --index-url <mirror>"
+        ])
+
+    if "version conflict" in reason_lower or "incompatible" in reason_lower:
+        suggestions.extend([
+            "• Check pyproject.toml for conflicting version requirements",
+            "• Try flexible version ranges: package>=1.0,<2.0 instead of package==1.0.0",
+            "• Use 'uv add --resolution lowest' to find oldest compatible versions"
+        ])
+
+    if "not found" in reason_lower:
+        suggestions.extend([
+            "• Verify package name spelling (PyPI is case-sensitive for search)",
+            "• Check if package exists: https://pypi.org/project/<package>/",
+            "• Some packages have different import vs install names (e.g., 'import sklearn' but 'uv add scikit-learn')"
+        ])
+
+    return suggestions
 
 
 def _try_packages_individually(
@@ -4950,19 +5009,39 @@ class CLICommand(BaseSettings):
                             major_action_results.append(("dependency_management", "PARTIAL_SUCCESS"))
 
                         if failed_packages_with_reasons:
-                            failure_summary = (
-                                f"⚠️  Failed to install {len(failed_packages_with_reasons)}/{len(packages_no_versions)} packages:\n" +
-                                "\n".join(f"  • {pkg}: {reason}" for pkg, reason in failed_packages_with_reasons[:15]) +
-                                (f"\n  ... and {len(failed_packages_with_reasons) - 15} more (see log)" if len(failed_packages_with_reasons) > 15 else "") +
-                                "\n\n💡 NEXT STEPS:\n" +
-                                "    1. Your project can use the successfully installed packages\n" +
-                                "    2. For packages missing Python 3.14 wheels:\n" +
-                                "       - Use Python 3.13: UV_PYTHON=3.13 uv venv\n" +
-                                "       - Or remove these imports from your code\n" +
-                                "    3. For packages with version conflicts:\n" +
-                                "       - Check pyproject.toml for incompatible version requirements\n" +
-                                "    4. Check the detailed error messages above for specific guidance"
-                            )
+                            # Build failure summary with package-specific guidance
+                            failure_lines = [f"⚠️  Failed to install {len(failed_packages_with_reasons)}/{len(packages_no_versions)} packages:\n"]
+
+                            # Show failed packages with reasons
+                            for pkg, reason in failed_packages_with_reasons[:15]:
+                                failure_lines.append(f"  • {pkg}: {reason}")
+
+                            if len(failed_packages_with_reasons) > 15:
+                                failure_lines.append(f"  ... and {len(failed_packages_with_reasons) - 15} more (see log)")
+
+                            # Collect all unique suggested actions from failed packages
+                            all_suggestions = set()
+                            for pkg, reason in failed_packages_with_reasons:
+                                # Extract package name from specifier
+                                pkg_name = _extract_package_name_from_specifier(pkg) if isinstance(pkg, str) else pkg
+                                suggestions = _get_suggested_actions_for_error_type(reason, pkg_name)
+                                all_suggestions.update(suggestions)
+
+                            # Add suggested actions section
+                            if all_suggestions:
+                                failure_lines.append("\n💡 SUGGESTED ACTIONS:")
+                                for suggestion in sorted(all_suggestions):
+                                    failure_lines.append(f"    {suggestion}")
+
+                            # Add general next steps
+                            failure_lines.extend([
+                                "\n📋 NEXT STEPS:",
+                                "    1. Your project can use the successfully installed packages",
+                                "    2. Review the suggested actions above for each failure type",
+                                "    3. For detailed diagnostics, check the JSON log file"
+                            ])
+
+                            failure_summary = "\n".join(failure_lines)
                             _log_action("individual_install_partial_failure", "WARN", failure_summary,
                                       details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages_with_reasons]})
 
