@@ -259,6 +259,8 @@ PYTHON_TESTS=(
     "test_dependency_migration.py"
     "test_jupyter_pipeline.py"
     "test_project_structure.py"
+    "test_mixed_package_availability.py"
+    "test_wheel_unavailability.py"
     "test_utils.py"
     "test_configuration.py"
     "test_cross_platform.py"
