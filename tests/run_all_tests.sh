@@ -65,7 +65,8 @@ for test in "${PYTHON_TESTS[@]}"; do
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     test_start=$(date +%s.%N 2>/dev/null || date +%s)
-    if source "$ORIGINAL_DIR/.venv/bin/activate" && python3 "tests/$test"; then
+    # Use uv run to execute test file (respects UV_PYTHON if set)
+    if (cd "$ORIGINAL_DIR" && uv run "tests/$test"); then
         test_end=$(date +%s.%N 2>/dev/null || date +%s)
         test_duration=$(echo "$test_end - $test_start" | bc 2>/dev/null || echo "0")
         echo "✅ $test PASSED"

@@ -28,6 +28,9 @@ jobs:
           - os: windows-latest
             python-version: "3.11"
 
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -51,12 +54,15 @@ jobs:
 
     - name: Install pyuvstarter dependencies
       run: |
+        # Use explicit version + UV_PYTHON env var for maximum robustness
         uv venv --python ${{ matrix.python-version }}
         uv sync
 
     - name: Verify Python version in venv
       run: |
         uv run python --version
+        echo "Expected: Python ${{ matrix.python-version }}"
+        echo "UV_PYTHON env var: $UV_PYTHON"
 
     - name: Check Python syntax
       run: |
@@ -73,7 +79,7 @@ jobs:
 
     - name: Install pyuvstarter as tool
       run: |
-        # Install pyuvstarter as a global tool for testing
+        # Install pyuvstarter as a global tool with explicit Python version + UV_PYTHON env var
         uv tool install . --python ${{ matrix.python-version }}
 
     - name: Test pyuvstarter as installed package
@@ -87,13 +93,15 @@ jobs:
         echo "🧪 INTEGRATION TEST: Isolated environment"
         echo "========================================="
         TEST_FAILED=0
-        # Create a completely separate test environment
+        # Create isolated test environment with explicit Python version + UV_PYTHON env var
         cd ${{ runner.temp }}
         uv venv test-env --python ${{ matrix.python-version }}
         source test-env/bin/activate
-        # Verify Python version
+        # Verify Python version matches expected
         echo "🔍 Python version in isolated env:"
         python --version
+        echo "Expected: Python ${{ matrix.python-version }}"
+        echo "UV_PYTHON=$UV_PYTHON"
         # Install from the built wheel using uv
         uv pip install ${{ github.workspace }}/dist/pyuvstarter-*.whl
         # Test the installed command
@@ -119,13 +127,15 @@ jobs:
         Write-Host "🧪 INTEGRATION TEST: Isolated environment (Windows)"
         Write-Host "================================================="
         $TEST_FAILED = 0
-        # Create a completely separate test environment
+        # Create isolated test environment with explicit Python version + UV_PYTHON env var
         cd $env:RUNNER_TEMP
         uv venv test-env --python ${{ matrix.python-version }}
         . test-env\Scripts\activate
-        # Verify Python version
+        # Verify Python version matches expected
         Write-Host "🔍 Python version in isolated env:"
         python --version
+        Write-Host "Expected: Python ${{ matrix.python-version }}"
+        Write-Host "UV_PYTHON=$env:UV_PYTHON"
         # Install from the built wheel
         $wheel = Get-ChildItem "${{ github.workspace }}\dist\*.whl" | Select-Object -First 1
         uv pip install $wheel.FullName
@@ -165,9 +175,6 @@ jobs:
       if: runner.os != 'Windows'
       working-directory: ${{ github.workspace }}
       run: |
-        # Activate the virtual environment so pyuvstarter dependencies are available
-        source .venv/bin/activate
-
         chmod +x create_demo.sh create_demo2.sh
 
         echo ""
@@ -183,7 +190,8 @@ jobs:
           fi
           TEST_COUNT=$((TEST_COUNT + 1))
           echo "Running: $test_file"
-          if python "$test_file"; then
+          # Use uv run to execute test file (respects UV_PYTHON env var)
+          if uv run "$test_file"; then
             echo "✅ $test_file PASSED"
           else
             echo "❌ $test_file FAILED"
