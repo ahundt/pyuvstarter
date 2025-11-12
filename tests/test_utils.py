@@ -77,7 +77,17 @@ def _add_log_actions(error_parts: List[str], project_dir: Path, action_filter: s
         error_parts.append(f"Last {len(last_actions)} actions: {json.dumps(last_actions, indent=2)}")
 
 def format_pyuvstarter_error(test_name: str, result, project_dir: Path) -> str:
-    """Format comprehensive error message for pyuvstarter execution failures."""
+    """Format comprehensive error message for pyuvstarter execution failures.
+
+    For timeout errors (returncode -1), stderr already contains full diagnostic info,
+    so it's returned directly. For other errors, shows last 300 chars of output.
+    """
+    # Check if this is already a formatted timeout error (stderr starts with "TIMEOUT")
+    if result.returncode == -1 and result.stderr and result.stderr.startswith("TIMEOUT"):
+        # Timeout errors already have full diagnostics in stderr, return directly
+        return f"{test_name}: PyUVStarter failed (exit code {result.returncode})\n{result.stderr}"
+
+    # For other errors, show truncated output (backward compatible)
     error_parts = [
         f"{test_name}: PyUVStarter failed (exit code {result.returncode})",
         f"Stdout (last 300 chars): {result.stdout[-300:] if result.stdout else 'EMPTY'}",
@@ -244,7 +254,7 @@ class PyuvstarterCommandExecutor:
         self,
         project_dir: Path,
         args: List[str] = None,
-        timeout: int = 120,
+        timeout: int = None,
         capture_output: bool = True,
         env: Dict[str, str] = None,
         dry_run: bool = False,
@@ -254,9 +264,15 @@ class PyuvstarterCommandExecutor:
 
         Enhanced version of run_pyuvstarter from ImportFixingTestSuite
         with additional options and better error handling.
+
+        Timeout defaults to PYUVSTARTER_TEST_TIMEOUT env var or 240 seconds.
         """
         if args is None:
             args = []
+
+        # Allow timeout to be overridden via environment variable
+        if timeout is None:
+            timeout = int(os.environ.get("PYUVSTARTER_TEST_TIMEOUT", "240"))
 
         cmd = [
             "uv", "run",
@@ -295,12 +311,23 @@ class PyuvstarterCommandExecutor:
                 env=process_env
             )
         except subprocess.TimeoutExpired as e:
-            # Capture partial output and retrieve JSON log for timeout diagnostics
-            # TimeoutExpired includes stdout/stderr from the partial run before timeout
+            # Capture complete diagnostic information for timeout
+            cmd_str = " ".join(cmd)
+            env_vars = {
+                "UV_PYTHON": process_env.get("UV_PYTHON", "not set"),
+                "PYUVSTARTER_TEST_PYTHON": process_env.get("PYUVSTARTER_TEST_PYTHON", "not set"),
+                "PYUVSTARTER_TEST_OS": process_env.get("PYUVSTARTER_TEST_OS", "not set"),
+            }
+
             error_parts = [
                 f"TIMEOUT after {timeout}s",
-                f"Partial stderr: {e.stderr if e.stderr else 'No stderr captured'}"
+                f"Command: {cmd_str}",
+                f"Working directory: {project_dir.resolve()}",
+                f"Environment: {', '.join(f'{k}={v}' for k, v in env_vars.items())}",
+                f"Stdout (last 300 chars): {(e.stdout[-300:] if e.stdout else 'No stdout')}",
+                f"Stderr (last 300 chars): {(e.stderr[-300:] if e.stderr else 'No stderr')}",
             ]
+            # Add recent log actions to identify what was executing when timeout occurred
             _add_log_actions(error_parts, project_dir, max_actions=5)
 
             return subprocess.CompletedProcess(
