@@ -32,6 +32,8 @@ jobs:
 
     env:
       UV_PYTHON: ${{ matrix.python-version }}
+      PYUVSTARTER_TEST_OS: ${{ matrix.os }}
+      PYUVSTARTER_TEST_PYTHON: ${{ matrix.python-version }}
 
     steps:
     - name: Checkout repository
@@ -284,8 +286,8 @@ jobs:
       uses: EnricoMi/publish-unit-test-result-action@v2
       with:
         files: test_results*.xml
-        check_name: "PyUVStarter Unit Tests"
-        comment_title: "PyUVStarter Test Results"
+        check_name: "PyUVStarter Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
+        comment_title: "PyUVStarter Test Results (${{ matrix.os }}, py${{ matrix.python-version }})"
         github_token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Run unit tests (Windows)

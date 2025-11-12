@@ -196,7 +196,7 @@ if [ "$MULTI_RUN_MODE" = true ]; then
             echo "❌ Iteration $iter_num: FAILED"
 
             # Show which specific tests failed
-            iter_dir="$MULTI_RUN_OUTPUT_DIR/iteration_$(printf '%02d' $iter_num)"
+            iter_dir="$MULTI_RUN_OUTPUT_DIR/iteration_$(printf '%02d' "$iter_num")"
             if [ -f "$iter_dir/stdout.log" ]; then
                 echo "   Failed tests:"
                 grep -E "❌.*FAILED" "$iter_dir/stdout.log" 2>/dev/null | sed 's/^/   - /' | head -5 || true
@@ -205,7 +205,7 @@ if [ "$MULTI_RUN_MODE" = true ]; then
     done
 
     echo "📁 All iteration logs saved in: $MULTI_RUN_OUTPUT_DIR"
-    exit_with_summary $pass_count $ITERATIONS
+    exit_with_summary $pass_count "$ITERATIONS"
 fi
 
 # Normal single-run mode continues below (backward compatible)
@@ -303,7 +303,7 @@ add_xml_testcases() {
         # Only include tests matching the extension
         if [[ "$name" == test_*$extension ]]; then
             # Extract test name without extension
-            local test_name="${name%$extension}"
+            local test_name="${name%"$extension"}"
             local classname="pyuvstarter.tests.$test_name"
 
             if [ "$status" = "PASSED" ]; then
@@ -339,17 +339,25 @@ generate_junit_xml() {
     local total_tests=$((${#PYTHON_TESTS[@]} + ${#INTEGRATION_TESTS[@]}))
     local failed_count=${#FAILED_TESTS[@]}
 
+    # Build testsuite name suffix from environment (os, python version)
+    local name_suffix=""
+    if [ -n "$PYUVSTARTER_TEST_OS" ] || [ -n "$PYUVSTARTER_TEST_PYTHON" ]; then
+        local os_part="${PYUVSTARTER_TEST_OS:-unknown}"
+        local py_part="${PYUVSTARTER_TEST_PYTHON:-unknown}"
+        name_suffix=" ($os_part, py$py_part)"
+    fi
+
     cat > "$xml_file" << 'XML_EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 XML_EOF
 
     # Add testsuites opening tag with optional properties for tracing
     cat >> "$xml_file" << XML_EOF
-<testsuites name="pyuvstarter_comprehensive_tests" tests="$total_tests" failures="$failed_count" time="$TOTAL_DURATION">
+<testsuites name="pyuvstarter_comprehensive_tests${name_suffix}" tests="$total_tests" failures="$failed_count" time="$TOTAL_DURATION">
 XML_EOF
 
     # Add properties element for environment context (JUnit XML standard)
-    if [ -n "$PYUVSTARTER_CURRENT_ITERATION" ] || [ -n "$UV_PYTHON" ] || [ -n "$GITHUB_RUN_ID" ]; then
+    if [ -n "$PYUVSTARTER_CURRENT_ITERATION" ] || [ -n "$UV_PYTHON" ] || [ -n "$GITHUB_RUN_ID" ] || [ -n "$PYUVSTARTER_TEST_OS" ] || [ -n "$PYUVSTARTER_TEST_PYTHON" ]; then
         cat >> "$xml_file" << 'XML_EOF'
   <properties>
 XML_EOF
@@ -363,6 +371,16 @@ XML_EOF
     <property name="env.UV_PYTHON" value="$UV_PYTHON"/>
 XML_EOF
         fi
+        if [ -n "$PYUVSTARTER_TEST_OS" ]; then
+            cat >> "$xml_file" << XML_EOF
+    <property name="test.os" value="$PYUVSTARTER_TEST_OS"/>
+XML_EOF
+        fi
+        if [ -n "$PYUVSTARTER_TEST_PYTHON" ]; then
+            cat >> "$xml_file" << XML_EOF
+    <property name="test.python_version" value="$PYUVSTARTER_TEST_PYTHON"/>
+XML_EOF
+        fi
         if [ -n "$GITHUB_RUN_ID" ]; then
             cat >> "$xml_file" << XML_EOF
     <property name="ci.github_run_id" value="$GITHUB_RUN_ID"/>
@@ -374,7 +392,7 @@ XML_EOF
     fi
 
     cat >> "$xml_file" << XML_EOF
-  <testsuite name="pyuvstarter.python_unit_tests" tests="${#PYTHON_TESTS[@]}" failures="0" time="0">
+  <testsuite name="pyuvstarter.python_unit_tests${name_suffix}" tests="${#PYTHON_TESTS[@]}" failures="0" time="0">
 XML_EOF
 
     # Add Python test results
@@ -383,7 +401,7 @@ XML_EOF
     # Close Python test suite, open integration test suite
     cat >> "$xml_file" << XML_EOF
   </testsuite>
-  <testsuite name="pyuvstarter.integration_tests" tests="${#INTEGRATION_TESTS[@]}" failures="0" time="0">
+  <testsuite name="pyuvstarter.integration_tests${name_suffix}" tests="${#INTEGRATION_TESTS[@]}" failures="0" time="0">
 XML_EOF
 
     # Add integration test results
