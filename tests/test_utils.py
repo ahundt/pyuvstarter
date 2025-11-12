@@ -387,6 +387,21 @@ class PyuvstarterCommandExecutor:
             stdout_str = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode('utf-8', errors='replace') if e.stdout else "")
             stderr_str = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode('utf-8', errors='replace') if e.stderr else "")
 
+            # Detect common timeout causes from output
+            timeout_indicators = []
+            combined_output = (stdout_str + "\n" + stderr_str).lower()
+
+            if "no compatible wheel" in combined_output or "no matching distribution" in combined_output:
+                timeout_indicators.append("⚠️  WHEEL UNAVAILABILITY: Package may be building from source (very slow)")
+            if "building wheel" in combined_output or "running setup.py" in combined_output:
+                timeout_indicators.append("⚠️  BUILDING FROM SOURCE: Compiling package instead of using pre-built wheel")
+            if "network" in combined_output or "connection" in combined_output or "timeout" in combined_output:
+                timeout_indicators.append("⚠️  NETWORK ISSUE: Connection problems detected")
+            if "error:" in combined_output and ("rust" in combined_output or "cargo" in combined_output):
+                timeout_indicators.append("⚠️  RUST COMPILATION: Package requires Rust compiler (can be very slow)")
+            if "downloading" in combined_output or "resolving" in combined_output:
+                timeout_indicators.append("⚠️  PACKAGE DOWNLOAD: May be downloading large ML packages (~GB)")
+
             # Show more context (last 1000 chars) and format for readability
             stdout_display = stdout_str[-1000:] if stdout_str else "No stdout"
             stderr_display = stderr_str[-1000:] if stderr_str else "No stderr"
@@ -394,11 +409,21 @@ class PyuvstarterCommandExecutor:
             error_parts = [
                 f"\n{'='*70}",
                 f"TIMEOUT after {timeout}s",
+            ]
+
+            # Add detected timeout indicators first (most actionable info)
+            if timeout_indicators:
+                error_parts.append("\n🔍 DETECTED TIMEOUT CAUSES:")
+                for indicator in timeout_indicators:
+                    error_parts.append(f"   {indicator}")
+                error_parts.append("")  # Blank line for readability
+
+            error_parts.extend([
                 f"Command (as string): {cmd_str}",
                 f"Command (exact list): {cmd}",
                 f"Working directory: {project_dir.resolve()}",
                 f"Environment variables:",
-            ]
+            ])
             for k, v in env_vars.items():
                 error_parts.append(f"  {k}={v}")
             error_parts.extend([
