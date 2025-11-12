@@ -9,6 +9,8 @@ on:
 permissions:
   contents: read
   checks: write
+  pull-requests: write  # Required for EnricoMi/publish-unit-test-result-action to comment on PRs
+  issues: read  # Required to read PR information
 
 jobs:
   test:
