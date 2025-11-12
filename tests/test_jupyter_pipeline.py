@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_utils import (
-    ProjectFixture, temp_manager, executor, validator, mock_factory
+    ProjectFixture, temp_manager, executor, validator, mock_factory, format_pyuvstarter_error
 )
 
 # Optional pytest import for when pytest is available
@@ -149,7 +149,7 @@ import os
                 dry_run=False
             )
 
-            assert result.returncode == 0
+            assert result.returncode == 0, format_pyuvstarter_error("test_notebook_with_pip_install_commands", result, project_dir)
 
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
@@ -217,7 +217,7 @@ import os
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, format_pyuvstarter_error("test_complex_notebook_with_various_imports", result, project_dir)
 
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
@@ -366,7 +366,7 @@ print("Main script")
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, format_pyuvstarter_error("test_notebook_in_subdirectories", result, project_dir)
 
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
@@ -427,7 +427,7 @@ class TestNotebookExecutionSupport:
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, format_pyuvstarter_error("test_notebook_execution_dependencies", result, project_dir)
 
             # Check for notebook execution support in output
             assert "notebook execution support" in result.stdout.lower() or "ipykernel" in result.stdout.lower() or "ipython" in result.stdout.lower()
@@ -486,7 +486,7 @@ class TestNotebookExecutionSupport:
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, format_pyuvstarter_error("test_notebook_systems_detection", result, project_dir)
 
             # Should detect notebooks in various locations
             assert "notebook" in result.stdout.lower()
@@ -561,7 +561,7 @@ class TestNotebookFallbackMethods:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
             # Should still succeed using manual parsing (nbconvert may or may not be available)
-            assert result.returncode == 0
+            assert result.returncode == 0, format_pyuvstarter_error("test_manual_json_parsing", result, project_dir)
 
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
@@ -606,7 +606,7 @@ class TestNotebookFallbackMethods:
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, f"PyUVStarter failed (exit={result.returncode}). Stdout: {result.stdout[:200]} Stderr: {result.stderr[:300]}"
 
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
@@ -663,7 +663,7 @@ class TestNotebookEdgeCases:
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, f"PyUVStarter failed (exit={result.returncode}). Stdout: {result.stdout[:200]} Stderr: {result.stderr[:300]}"
 
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]
@@ -720,7 +720,7 @@ class TestNotebookEdgeCases:
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, f"PyUVStarter failed (exit={result.returncode}). Stdout: {result.stdout[:200]} Stderr: {result.stderr[:300]}"
 
             pyproject_data = validator.validate_pyproject_toml(project_dir)
             dependencies = pyproject_data["project"]["dependencies"]
@@ -808,7 +808,7 @@ class TestNotebookEdgeCases:
         with temp_manager.create_temp_project(fixture) as project_dir:
             result = executor.run_pyuvstarter(project_dir, dry_run=False)
 
-            assert result.returncode == 0
+            assert result.returncode == 0, f"PyUVStarter failed (exit={result.returncode}). Stdout: {result.stdout[:200]} Stderr: {result.stderr[:300]}"
 
             pyproject_data = validator.validate_pyproject_toml(project_dir, fixture.expected_packages)
             dependencies = pyproject_data["project"]["dependencies"]

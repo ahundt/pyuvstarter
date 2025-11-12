@@ -29,6 +29,27 @@ from unittest.mock import Mock, patch
 # Add parent directory to path for pyuvstarter imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+def format_pyuvstarter_error(test_name: str, result, project_dir: Path) -> str:
+    """Format comprehensive error message for pyuvstarter failures."""
+    error_parts = [
+        f"{test_name}: PyUVStarter failed (exit code {result.returncode})",
+        f"Stdout (last 300 chars): {result.stdout[-300:] if result.stdout else 'EMPTY'}",
+        f"Stderr (last 300 chars): {result.stderr[-300:] if result.stderr else 'EMPTY'}"
+    ]
+
+    # Try to get log file tail
+    log_file = project_dir / "pyuvstarter_setup_log.json"
+    if log_file.exists():
+        try:
+            with open(log_file, 'r') as f:
+                lines = f.readlines()
+                last_lines = ''.join(lines[-10:]) if len(lines) > 10 else ''.join(lines)
+                error_parts.append(f"Log file tail (last 10 lines):\n{last_lines}")
+        except Exception:
+            pass
+
+    return "\n".join(error_parts)
+
 @dataclass
 class ProjectFixture:
     """Represents a test project structure with files and metadata."""

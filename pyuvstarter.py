@@ -4429,13 +4429,19 @@ class CLICommand(BaseSettings):
         try:
             # Step 1: Ensure uv is installed and verified.
             if not _ensure_uv_installed(self.dry_run):
-                raise SystemExit("`uv` could not be installed or verified.")
+                error_msg = "`uv` could not be installed or verified."
+                _log_action("uv_install_critical_failure", "ERROR", error_msg)
+                safe_typer_secho(f"\n💥 CRITICAL: {error_msg}", fg=typer.colors.RED, bold=True, err=True)
+                raise SystemExit(error_msg)
             _log_action("ensure_uv_installed", "SUCCESS", "uv installation verified successfully.")
             major_action_results.append(("uv_installed", "SUCCESS"))
 
             # Step 2: Ensure pyproject.toml exists and project is initialized.
             if not _ensure_project_initialized(self.project_dir, self.dry_run):
-                raise SystemExit("Project could not be initialized with 'pyproject.toml'.")
+                error_msg = "Project could not be initialized with 'pyproject.toml'."
+                _log_action("project_init_critical_failure", "ERROR", error_msg)
+                safe_typer_secho(f"\n💥 CRITICAL: {error_msg}", fg=typer.colors.RED, bold=True, err=True)
+                raise SystemExit(error_msg)
             _log_action("ensure_project_initialized_with_pyproject", "SUCCESS", "Project structure and pyproject.toml initialized successfully.")
             major_action_results.append(("project_initialized", "SUCCESS"))
 
@@ -4471,7 +4477,10 @@ class CLICommand(BaseSettings):
 
             # Critical check: ensure the venv Python executable exists after creation (if not dry run).
             if not self.dry_run and not venv_python_executable.exists():
-                raise SystemExit(f"CRITICAL ERROR: Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command.")
+                error_msg = f"CRITICAL ERROR: Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command."
+                _log_action("venv_python_missing", "ERROR", error_msg, details={"expected_path": str(venv_python_executable)})
+                safe_typer_secho(f"\n💥 {error_msg}", fg=typer.colors.RED, bold=True, err=True)
+                raise SystemExit(error_msg)
             elif self.dry_run:
                 _log_action("create_or_verify_venv", "INFO", "In dry-run mode: assuming virtual environment would be ready.")
             else:
@@ -4838,10 +4847,11 @@ class CLICommand(BaseSettings):
             # Caught for clean exits initiated by other functions.
             vscode_settings_status = "FAILED"
             vscode_launch_status = "FAILED"
-            _log_action("script_halted_by_logic", "ERROR", f"SCRIPT HALTED: {e}")
+            error_detail = f"SCRIPT HALTED: {e}. Exit code: {e.code if hasattr(e, 'code') else 'unknown'}"
+            _log_action("script_halted_by_logic", "ERROR", error_detail, details={"exception": str(e), "type": "SystemExit"})
             _log_data_global["overall_status"] = "HALTED_BY_SCRIPT_LOGIC"
-            _log_data_global["final_summary"] = f"Script halted by explicit exit: {e}"
-            safe_typer_secho(f"\n💥 Script halted: {e}", fg=typer.colors.RED, bold=True)
+            _log_data_global["final_summary"] = error_detail
+            safe_typer_secho(f"\n💥 Script halted: {error_detail}", fg=typer.colors.RED, bold=True, err=True)
             raise typer.Exit(code=1) # Re-raise to exit Typer properly.
         except subprocess.CalledProcessError as e:
             failed_cmd_str = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
@@ -4856,7 +4866,7 @@ class CLICommand(BaseSettings):
             _log_data_global["final_summary"] = error_message
 
             # Provide specific, actionable hints based on the failed command.
-            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True, err=True)
             cmd_str_lower = failed_cmd_str.lower()
             if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_lower or "uv sync" in cmd_str_lower:
                 _log_action("install_sync_hint", "WARN", f"INSTALLATION/SYNC HINT: A package operation with `uv` failed.\n  - Review `uv`'s error output (logged as FAIL_STDOUT/FAIL_STDERR for the command) for specific package names or reasons.\n  - Ensure the package name is correct and exists on PyPI (https://pypi.org) or your configured index.\n  - Some packages require system-level (non-Python) libraries to be installed first. Check the package's documentation.\n  - You might need to manually edit 'pyproject.toml' and then run `uv sync --python {venv_python_executable}`.")
@@ -4871,7 +4881,7 @@ class CLICommand(BaseSettings):
             elif "brew" in cmd_str_lower:
                 _log_action("brew_hint", "WARN", "Homebrew might be required for some installations. Ensure it's installed and working.")
 
-            safe_typer_secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED)
+            safe_typer_secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         except FileNotFoundError as e:
             # Caught for missing external executables (e.g., 'uv' itself, 'brew', 'curl').
@@ -4883,12 +4893,12 @@ class CLICommand(BaseSettings):
             _log_data_global["overall_status"] = "MISSING_SYSTEM_COMMAND"
             _log_data_global["final_summary"] = error_message
 
-            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True, err=True)
             if cmd_name == "brew":
-                safe_typer_secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW)
+                safe_typer_secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW, err=True)
             elif cmd_name == "curl":
-                safe_typer_secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW)
-            safe_typer_secho("Setup aborted.", fg=typer.colors.RED)
+                safe_typer_secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW, err=True)
+            safe_typer_secho("Setup aborted.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         except Exception as e:
             # Catch-all for any unexpected errors.
@@ -4902,8 +4912,8 @@ class CLICommand(BaseSettings):
             _log_data_global["overall_status"] = "UNEXPECTED_ERROR"
             _log_data_global["final_summary"] = error_message
 
-            safe_typer_secho(f"\n💥 AN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", fg=typer.colors.RED, bold=True)
-            safe_typer_secho(f"{tb_str}\nSetup aborted due to an unexpected error. Please review the traceback and the JSON log.", fg=typer.colors.RED)
+            safe_typer_secho(f"\n💥 AN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", fg=typer.colors.RED, bold=True, err=True)
+            safe_typer_secho(f"{tb_str}\nSetup aborted due to an unexpected error. Please review the traceback and the JSON log.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         finally:
             # Ensure the log file is always saved at the end of the execution,
