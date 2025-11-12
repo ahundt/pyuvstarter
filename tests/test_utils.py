@@ -79,7 +79,10 @@ class TempProjectManager:
         This provides an enhanced version of the setup_test_environment method
         used in existing ImportFixingTestSuite, but is fully backward compatible.
         """
-        temp_dir = Path(tempfile.mkdtemp(prefix=f"pyuvstarter_test_{fixture.name}_"))
+        # Create temp directory with valid package name for uv init
+        # Use suffix to ensure directory name always ends with alphanumeric (PEP 508 requirement)
+        # Pattern: pyuvstarter_test_fixture_name_randomchars_test (readable and valid)
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"pyuvstarter_test_{fixture.name}_", suffix="_test"))
         self.temp_dirs.append(temp_dir)
 
         try:
@@ -123,7 +126,8 @@ class TempProjectManager:
         additional functionality for fixture-based testing.
         """
         project_name = test_project_path.name
-        temp_project_path = self.temp_dirs[0] / project_name if self.temp_dirs else Path(tempfile.mkdtemp(prefix="pyuvstarter_test_"))
+        # Create temp directory with valid package name (suffix ensures alphanumeric ending)
+        temp_project_path = self.temp_dirs[0] / project_name if self.temp_dirs else Path(tempfile.mkdtemp(prefix="pyuvstarter_test_", suffix="_test"))
 
         if not self.temp_dirs:
             self.temp_dirs.append(temp_project_path)
@@ -676,7 +680,8 @@ def setup_test_environment_compatible(test_project_path: Path, temp_dir: Path = 
     offering enhanced functionality.
     """
     if temp_dir is None:
-        temp_dir = Path(tempfile.mkdtemp(prefix="pyuvstarter_test_"))
+        # Create temp directory with valid package name (suffix ensures alphanumeric ending)
+        temp_dir = Path(tempfile.mkdtemp(prefix="pyuvstarter_test_", suffix="_test"))
 
     project_name = test_project_path.name
     temp_project_path = temp_dir / project_name

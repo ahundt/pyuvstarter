@@ -544,3 +544,85 @@ error: The current directory (`pyuvstarter_test_notebook_pip_commands_ajtix80_`)
 - Why does libpython3.12.dylib go missing from venv?
 - Why does clustering occur (6 consecutive failures, then 4 consecutive passes)?
 - Are test directory names causing uv init failures systematically?
+
+---
+
+## 2025-11-12 Investigation Update - CI Lint Failures and Invalid Package Names
+
+### CI Failure Analysis (PR #1, Run 19283291744)
+
+**Observed CI Results:**
+- All Unix platforms (Ubuntu 3.11-3.14, macOS 3.13-3.14): FAILURE
+- All Windows platforms (3.12-3.14): SUCCESS
+- Failure occurs at "Lint check with ruff" step before tests execute
+
+**Concrete CI Lint Error:**
+```
+Found 62 errors.
+[*] 55 fixable with the `--fix` option (5 hidden fixes can be enabled with the `--unsafe-fixes` option).
+```
+
+**Error Distribution:**
+- tests/test_jupyter_pipeline.py: F401 (unused tempfile import), F401 (duplicate sys import)
+- tests/test_project_structure.py: F401 (unused tempfile, mock_factory imports), F401 (duplicate sys import)
+- tests/test_utils.py: F401 (unused Union, Mock, patch imports), F841 (unused expected_path variable)
+- tests/fixtures/: 28 errors in test fixtures (unused imports in dependency test scenarios)
+- tests/test_import_projects/: 23 errors in import fixing test fixtures (intentional relative imports)
+
+### Local Test Results (2025-11-12)
+
+**Test Command:** `./tests/run_all_tests.sh 10 ./test_run_clean`
+**Environment:** macOS, Python 3.14.0, commit 9a6ae07 + staged changes
+**Results:** 7/10 PASSED (70% pass rate), 3/10 FAILED
+
+**Failure Pattern (Non-Contaminated Run):**
+- Iterations 1-6: PASSED
+- Iteration 7: FAILED - test_project_structure.py
+- Iteration 8: FAILED - test_jupyter_pipeline.py  
+- Iteration 9: FAILED - test_jupyter_pipeline.py
+- Iteration 10: PASSED
+
+**Concrete Error from JSON Logs:**
+```
+error: The current directory (`pyuvstarter_test_single_file_zl7qg0x_`) is not a valid package name. Please provide a package name with `--name`.
+```
+
+**Theory: Invalid Package Names from mkdtemp Trailing Underscore**
+
+Observed pattern in failed iterations:
+- Test code uses `tempfile.mkdtemp(prefix="pyuvstarter_test_")` with trailing underscore
+- mkdtemp appends random characters directly to prefix
+- Concrete example: Directory name `pyuvstarter_test_single_file_zl7qg0x_` (ends with underscore)
+- PEP 508 requirement: Package names must end with alphanumeric character
+- Observable behavior: uv init command exits with code 2, stderr shows "is not a valid package name"
+
+**Affected Code Locations:**
+- tests/test_utils.py:82 - `mkdtemp(prefix=f"pyuvstarter_test_{fixture.name}_")`
+- tests/test_utils.py:126 - `mkdtemp(prefix="pyuvstarter_test_")`
+- tests/test_utils.py:679 - `mkdtemp(prefix="pyuvstarter_test_")`
+- tests/test_import_fixing.py:30 - `mkdtemp(prefix="pyuvstarter_test_")`
+
+**Changes Staged (Not Committed):**
+- Removed trailing underscore from all mkdtemp prefix parameters
+- Changed: `mkdtemp(prefix="pyuvstarter_test_")` → `mkdtemp(prefix="pyuvstarter_test")`
+- Result: Creates `pyuvstarter_testxyz123` (valid) instead of `pyuvstarter_test_xyz123_` (invalid)
+
+**CI Lint Issue - Changes Committed (9a6ae07, ad437d1, 9b2876c):**
+- pyproject.toml: Added `[tool.ruff]` `exclude = ["tests/fixtures/", "tests/test_import_projects/"]`
+- tests/test_*.py: Removed unused imports from test runner files
+- tests/test_utils.py: Fixed unused expected_path variable
+- pyuvstarter.py: Converted lambda to def (E731), enhanced pipreqs error logging
+
+**Testing Theory (2025-11-12 03:03):**
+
+**Hypothesis:** Removing trailing underscore from mkdtemp prefix will prevent invalid package name errors
+**Test run:** `./tests/run_all_tests.sh 10 ./test_run_verification`
+**Code changes:** mkdtemp prefix modified (staged, not committed)
+**Status:** Running (iterations completing in background)
+**Prediction:** If theory is correct, pass rate should increase from 70% baseline
+
+**Outstanding Questions:**
+- Does mkdtemp fix achieve 100% pass rate or are there other intermittent issues?
+- Are there additional failure modes beyond invalid package names?
+- Why did iterations 7-9 fail but not earlier iterations?
+

@@ -105,16 +105,11 @@ fi
 # Step 2: Remove Python bytecode cache
 echo ""
 echo "2️⃣  Removing Python bytecode cache..."
-if [ -d "__pycache__" ]; then
-    rm -rf __pycache__
-    echo "  ✅ Removed __pycache__"
-else
-    echo "  ℹ️  No __pycache__ to remove"
-fi
-
+# Remove all __pycache__ directories recursively (not just root)
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 # Remove any .pyc files
-find . -name "*.pyc" -type f -delete 2>/dev/null
-echo "  ✅ Removed any .pyc files"
+find . -name "*.pyc" -type f -delete 2>/dev/null || true
+echo "  ✅ Removed __pycache__ directories and .pyc files"
 
 # Step 3: Clear UV cache for pyuvstarter (package-specific)
 echo ""

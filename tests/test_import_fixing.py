@@ -27,7 +27,8 @@ class ImportFixingTestSuite:
     def __init__(self):
         self.test_dir = Path(__file__).parent / "test_import_projects"
         self.original_dir = Path.cwd()
-        self.temp_dir = Path(tempfile.mkdtemp(prefix="pyuvstarter_test_"))
+        # Create temp directory with valid package name (suffix ensures alphanumeric ending)
+        self.temp_dir = Path(tempfile.mkdtemp(prefix="pyuvstarter_test_", suffix="_test"))
         self.pyuvstarter_path = Path(__file__).parent.parent
 
     def setup_test_environment(self, test_project_path: Path, suffix: str = "") -> Path:
