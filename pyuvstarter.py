@@ -1950,12 +1950,15 @@ def _save_log(config: 'CLICommand', checkpoint: bool = False):
             _log_action("save_log", "ERROR", f"Failed to save JSON log to '{log_file_path.name}'")
 
 # --- Core Helper Functions ---
-def _run_command(command_list: list[str], action_log_name: str, work_dir: Path = None, shell: bool = False, capture_output: bool = True, suppress_console_output_on_success: bool = False, dry_run: bool = False):
+def _run_command(command_list: list[str], action_log_name: str, work_dir: Path = None, shell: bool = False, capture_output: bool = True, suppress_console_output_on_success: bool = False, dry_run: bool = False, env: dict = None):
     """
     Runs a shell command and logs its execution. Raises CalledProcessError on failure.
     Returns (stdout_str, stderr_str) if capture_output is True.
     If capture_output is False, stdout/stderr will be empty strings, and output streams to console.
     If dry_run is True, logs the command but does not execute it.
+
+    Args:
+        env: Optional environment variables dict. If None, inherits parent environment.
 
     Note: Since the main() function changes the CWD to project_root, work_dir defaults to
     the project root directory, making command execution safe and consistent.
@@ -1973,7 +1976,7 @@ def _run_command(command_list: list[str], action_log_name: str, work_dir: Path =
     log_details = {"command": cmd_str, "working_directory": str(work_dir), "shell_used": shell, "capture_output_setting": capture_output}
 
     try:
-        process = subprocess.run(command_list, cwd=work_dir, capture_output=capture_output, text=True, shell=shell, check=True)
+        process = subprocess.run(command_list, cwd=work_dir, capture_output=capture_output, text=True, shell=shell, check=True, env=env)
         stdout = process.stdout.strip() if process.stdout and capture_output else ""
         stderr = process.stderr.strip() if process.stderr and capture_output else ""
         log_details.update({"return_code": process.returncode,
@@ -3045,8 +3048,17 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
     # Standard CLI practice: the main subject of the command is the last argument.
     pipreqs_args.append(str(scan_path))
 
+    # Let uvx choose best Python version for external tools
+    # Unset UV_PYTHON via env copy so subprocess doesn't inherit project's Python version
+    # Prevents failures when tool has stricter version constraints than pyuvstarter
+    # Added 2025-11-12: pipreqs requires Python <3.13 (only up to 3.12)
+    uvx_env = os.environ.copy()
+    if "UV_PYTHON" in uvx_env:
+        del uvx_env["UV_PYTHON"]
+        _log_action(action_name, "INFO", "Unsetting UV_PYTHON for uvx subprocess to allow compatible Python version selection")
+
     try:
-        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", dry_run=dry_run)
+        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", dry_run=dry_run, env=uvx_env)
 
         # In a dry run, the mock command returns an empty string. Handle this cleanly.
         if not stdout:
