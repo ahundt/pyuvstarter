@@ -78,6 +78,7 @@ set -e  # Exit on any error
 
 # Parse optional Python version parameter (supports both --python flag and positional arg)
 PYTHON_VERSION=""
+ORIGINAL_UV_PYTHON="${UV_PYTHON:-}"
 
 if [[ "$1" == "--python" ]]; then
     # Flag-based usage: ./script.sh --python 3.14
@@ -93,11 +94,22 @@ elif [ -n "$1" ]; then
     PYTHON_VERSION="$1"
 fi
 
+# Determine final Python version to use
 if [ -n "$PYTHON_VERSION" ]; then
+    # Script parameter takes precedence over environment variable
     echo "🧹 Refreshing pyuvstarter installation with Python $PYTHON_VERSION"
+    if [ -n "$ORIGINAL_UV_PYTHON" ] && [ "$ORIGINAL_UV_PYTHON" != "$PYTHON_VERSION" ]; then
+        echo "  ℹ️  Note: Overriding UV_PYTHON=$ORIGINAL_UV_PYTHON with --python $PYTHON_VERSION"
+    fi
     export UV_PYTHON="$PYTHON_VERSION"
+elif [ -n "$ORIGINAL_UV_PYTHON" ]; then
+    # Use pre-existing UV_PYTHON from environment
+    echo "🧹 Refreshing pyuvstarter installation with Python $ORIGINAL_UV_PYTHON (from UV_PYTHON env var)"
+    PYTHON_VERSION="$ORIGINAL_UV_PYTHON"
+    # Already exported, no need to re-export
 else
-    echo "🧹 Refreshing pyuvstarter installation (using default Python)"
+    # No version specified anywhere - use system default
+    echo "🧹 Refreshing pyuvstarter installation (using system default Python)"
 fi
 echo "============================================================"
 echo ""
@@ -146,16 +158,23 @@ else
     echo "  ✅ Created .venv"
 fi
 
+# Verify the venv Python version for diagnostic purposes
+VENV_PYTHON_VERSION=$(.venv/bin/python --version 2>&1)
+echo "  📍 Virtual environment created with: $VENV_PYTHON_VERSION"
+
 # Step 6: Sync dependencies
+# IMPORTANT: Use --python .venv/bin/python to ensure uv sync uses the venv we just created
+# Without this, uv might recreate .venv with a different Python version
 echo ""
 echo "6️⃣  Syncing dependencies from lock file..."
-uv sync
+uv sync --python .venv/bin/python
 echo "  ✅ Synced dependencies"
 
 # Step 7: Install pyuvstarter as editable package
+# Use uv pip with explicit Python to ensure we install into the correct venv
 echo ""
 echo "7️⃣  Installing pyuvstarter as editable package (for 'uv run')..."
-uv pip install --reinstall --no-cache -e .
+uv pip install --python .venv/bin/python --reinstall --no-cache -e .
 echo "  ✅ Installed editable package"
 
 # Step 8: Install pyuvstarter as UV tool
