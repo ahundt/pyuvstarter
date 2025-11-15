@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "goodproject"
+version = "2.0.0"
+description = "Control test case with absolute imports"
+
+[tool.uv]
+package = true
+dev-dependencies = [
+    "ruff>=0.1.0",
+]

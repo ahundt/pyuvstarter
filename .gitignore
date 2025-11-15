@@ -54,6 +54,7 @@ coverage.xml
 *.log
 .hypothesis/
 .pytest_cache/
+test_results*.xml
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -80,7 +81,12 @@ Thumbs.db
 /.venv/
 /pyuvstarter_setup_log.json
 
-# Test and demo directories
-test_*/
+# Demo directories (but keep test directories for actual tests)
 demo_*/
 pyuvstarter_demo*/
+
+# Temporary test directories created by test suite
+pyuvstarter_test_*/
+
+# Temporary demo script file created by create_demo.sh
+demo_script.sh

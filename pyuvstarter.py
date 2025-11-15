@@ -247,6 +247,16 @@ import shutil
 import subprocess
 import datetime
 import platform
+import re
+import ast
+import tempfile
+import shlex
+import traceback
+import functools
+import atexit
+
+from pathlib import Path
+from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
 
 # --- Python Version Check ---
 # Check Python version early to provide helpful error messages for incompatible versions
@@ -323,20 +333,9 @@ def check_python_version():
 if not check_python_version():
     sys.exit(1)
 
-
-import re
-import ast
-import tempfile
-import shlex
-import traceback
-import functools
-
-from pathlib import Path
-from typing import Set, Tuple, List, Union, Dict, Optional, Any, Type
-
 # --- Version Information ---
 # Single source of truth for version information
-PYUVSTARTER_VERSION = "0.2.1"
+PYUVSTARTER_VERSION = "0.3.0"
 
 # --- Windows Unicode Encoding Setup ---
 # Handle Windows Unicode encoding issues at module import time
@@ -413,7 +412,6 @@ except ImportError:
     GitWildMatchPattern = None
     PathSpec = None
 
-from tqdm import tqdm
 
 try:
     import typer
@@ -1273,8 +1271,8 @@ ACTION_STATUS_MAPPING = {
     "ensure_project_initialized_with_pyproject": ("\U0001f4c1 Initializing project with pyproject.toml", "\U0001f4c1 Initialized project with pyproject.toml"),  # 📁
     "ensure_gitignore": ("\U0001f4dd Setting up .gitignore", "\U0001f4dd Set up .gitignore"),  # 📝
     "create_or_verify_venv": ("\U0001f40d Creating virtual environment .venv/", "\U0001f40d Created virtual environment .venv/"),  # 🐍
-    "ensure_tool_pipreqs": ("\U0001f527 Installing pipreqs via uv tool install", "\U0001f527 Installed pipreqs via uv tool install"),  # 🔧
-    "ensure_tool_ruff": ("\U0001f527 Installing ruff via uv tool install", "\U0001f527 Installed ruff via uv tool install"),  # 🔧
+    "ensure_tool_pipreqs": ("\U0001f527 Preparing pipreqs (via uvx)", "\U0001f527 Pipreqs ready (via uvx)"),  # 🔧
+    "ensure_tool_ruff": ("\U0001f527 Preparing ruff (via uvx)", "\U0001f527 Ruff ready (via uvx)"),  # 🔧
     "ruff_unused_import_check": ("\U0001f50d Running ruff unused import checks", "\U0001f50d Completed ruff unused import checks"),  # 🔍
     "manage_project_dependencies": ("\U0001f4e6 Installing project dependencies", "\U0001f4e6 Installed project dependencies"),  # 📦
     "ensure_notebook_execution_support": ("\U0001f4d3 Setting up notebook support", "\U0001f4d3 Set up notebook support"),  # 📓
@@ -1379,8 +1377,8 @@ class ProgressTracker:
 
         elif action_name.startswith("ensure_tool_"):
             tool_name = action_name.replace("ensure_tool_", "")
-            present = f"🔧 Installing {tool_name} via uv tool install"
-            past = f"🔧 Installed {tool_name} via uv tool install"
+            present = f"🔧 Preparing {tool_name} (via uvx)"
+            past = f"🔧 {tool_name} ready (via uvx)"
             return present, past
 
         elif action_name == "manage_project_dependencies":
@@ -1702,24 +1700,99 @@ def set_output_mode(config):
 
 
 
-def _init_log(project_root: Path):
-    """Initializes the global log data structure."""
+def _init_log(project_root: Path, config=None, original_cwd: Path = None):
+    """Initializes the global log data structure with comprehensive tracing information.
+
+    Args:
+        project_root: The project directory being processed
+        config: Optional CLICommand config object with all CLI parameters
+        original_cwd: Optional original working directory before chdir
+    """
     global _log_data_global
     pyproject_path = project_root / PYPROJECT_TOML_NAME
     project_version = _get_project_version(pyproject_path)
+
+    # Capture environment variables relevant for debugging (only non-None values)
+    env_vars = {}
+    for key in ["UV_PYTHON", "PYUVSTARTER_CURRENT_ITERATION", "VIRTUAL_ENV", "PYTHONPATH"]:
+        value = os.environ.get(key)
+        if value is not None:
+            env_vars[key] = value
+
+    # Build invocation context for debugging (only include non-empty values)
+    invocation_context = {}
+
+    # Always include command line
+    if sys.argv:
+        invocation_context["command_line"] = " ".join(sys.argv)
+
+    # Include original working directory if available
+    if original_cwd:
+        invocation_context["original_working_directory"] = str(original_cwd)
+
+    # Include environment variables if any captured
+    if env_vars:
+        invocation_context["environment_variables"] = env_vars
+
+    # Add CLI parameters if config provided (uses Pydantic model_dump for clean serialization)
+    if config:
+        try:
+            # Use mode="json" for JSON-safe serialization (Pydantic 2.x best practice)
+            # This converts Path objects to strings, datetimes to ISO format, etc.
+            invocation_context["cli_parameters"] = config.model_dump(mode="json")
+        except Exception as e:
+            # If model_dump fails, log what we can
+            invocation_context["cli_parameters_error"] = str(e)
+
     _log_data_global = {
         "script_name": Path(__file__).name,
         "pyuvstarter_version": _get_project_version(Path(__file__).parent / "pyproject.toml", "pyuvstarter"),
         "project_version": project_version,
         "start_time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "end_time_utc": None, "overall_status": "IN_PROGRESS",
-        "platform_info": {"system": platform.system(), "release": platform.release(),
-                          "version": platform.version(), "machine": platform.machine(),
-                          "python_version_script_host": sys.version},
-        "project_root": str(project_root), "actions": [],
-        "final_summary": "", "errors_encountered_summary": []
+        "end_time_utc": None,
+        "overall_status": "IN_PROGRESS",
+        "invocation_context": invocation_context,  # Enhanced tracing information
+        "platform_info": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "python_version_script_host": sys.version
+        },
+        "project_root": str(project_root),
+        "actions": [],
+        "final_summary": "",
+        "errors_encountered_summary": []
     }
     _log_action("script_bootstrap", "INFO", f"Script execution initiated for project at {project_root}.")
+
+
+# Log save mode constants for clarity at call sites
+CHECKPOINT_SAVE = True   # Quick save on errors (no status updates)
+FINAL_SAVE = False       # Complete save with status updates (default)
+
+
+def _write_log_to_disk(log_file_path: Path, log_data: dict) -> bool:
+    """Write log data to disk with proper flushing for crash safety.
+
+    Args:
+        log_file_path: Path to write log file
+        log_data: Dictionary to serialize as JSON
+
+    Returns:
+        True if successful, False otherwise
+
+    Uses explicit flush() and fsync() to ensure data reaches disk even if
+    process crashes immediately after. This is critical for debugging.
+    """
+    try:
+        with open(log_file_path, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, indent=2)
+            f.flush()  # Flush Python buffer
+            os.fsync(f.fileno())  # Force OS to write to disk
+        return True
+    except Exception:
+        return False
 
 
 def _log_action(action_name: str, status: str, message: str = "", details: dict = None):
@@ -1826,48 +1899,102 @@ def _get_next_steps_text(config: 'CLICommand') -> str:
     return "Next Steps:\n" + "\n".join(steps)
 
 
-def _save_log(config: 'CLICommand'):
-    """Saves the accumulated log data to a JSON file."""
+def _save_log(config: 'CLICommand', checkpoint: bool = False):
+    """Saves the accumulated log data to a JSON file.
+
+    Args:
+        config: CLICommand configuration object
+        checkpoint: If True, saves current state immediately without status updates (for error debugging).
+                   If False, updates status fields and saves final state (normal completion).
+
+    Design:
+        - Checkpoint mode: Fast write on errors for crash debugging (no status updates)
+        - Normal mode: Full save with status updates and next steps (efficient, once at end)
+    """
     global _log_data_global
+    if not _log_data_global:
+        return
+
     log_file_path = config.project_dir / config.log_file_name
 
-    _log_data_global["end_time_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    current_overall_status = _log_data_global.get("overall_status", "IN_PROGRESS")
+    # Only update status fields in normal mode (not checkpoints)
+    if not checkpoint:
+        _log_data_global["end_time_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        current_overall_status = _log_data_global.get("overall_status", "IN_PROGRESS")
 
-    if current_overall_status == "IN_PROGRESS":
-        if _log_data_global.get("errors_encountered_summary"):
-            _log_data_global["overall_status"] = "COMPLETED_WITH_ERRORS"
-            _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed, but some errors/warnings occurred. Check 'errors_encountered_summary' and 'actions' list in this log."
-        else:
-            _log_data_global["overall_status"] = "SUCCESS"
-            _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed successfully."
-    elif not _log_data_global.get("final_summary"):
-        _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
+        if current_overall_status == "IN_PROGRESS":
+            if _log_data_global.get("errors_encountered_summary"):
+                _log_data_global["overall_status"] = "COMPLETED_WITH_ERRORS"
+                _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed, but some errors/warnings occurred. Check 'errors_encountered_summary' and 'actions' list in this log."
+            else:
+                _log_data_global["overall_status"] = "SUCCESS"
+                _log_data_global["final_summary"] = _log_data_global.get("final_summary", "") + "Script completed successfully."
+        elif not _log_data_global.get("final_summary"):
+            _log_data_global["final_summary"] = f"Script execution concluded. Status: {current_overall_status}"
 
-    # Always add next steps if the script made progress
-    if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS", "HALTED_BY_SCRIPT_LOGIC"]:
-        next_steps_text = _get_next_steps_text(config)
-        # Ensure there's a newline before appending next steps if there's already a summary
-        if _log_data_global.get("final_summary"):
-            _log_data_global["final_summary"] += "\n\n" + next_steps_text
-        else:
-            _log_data_global["final_summary"] = next_steps_text
+        # Always add next steps if the script made progress
+        if _log_data_global["overall_status"] in ["SUCCESS", "COMPLETED_WITH_ERRORS", "HALTED_BY_SCRIPT_LOGIC"]:
+            next_steps_text = _get_next_steps_text(config)
+            # Ensure there's a newline before appending next steps if there's already a summary
+            if _log_data_global.get("final_summary"):
+                _log_data_global["final_summary"] += "\n\n" + next_steps_text
+            else:
+                _log_data_global["final_summary"] = next_steps_text
 
-
-    try:
-        with open(log_file_path, "w", encoding="utf-8") as f:
-            json.dump(_log_data_global, f, indent=2)
-        _log_action("save_log", "SUCCESS", f"Detailed execution log saved to '{log_file_path.name}'")
-    except Exception as e:
-        _log_action("save_log", "ERROR", f"Failed to save JSON log to '{log_file_path.name}': {e}")
+    # Use common write function for DRY compliance
+    if _write_log_to_disk(log_file_path, _log_data_global):
+        if not checkpoint:  # Only log success message in normal mode
+            _log_action("save_log", "SUCCESS", f"Detailed execution log saved to '{log_file_path.name}'")
+    else:
+        if not checkpoint:  # Only log error message in normal mode
+            _log_action("save_log", "ERROR", f"Failed to save JSON log to '{log_file_path.name}'")
 
 # --- Core Helper Functions ---
-def _run_command(command_list: list[str], action_log_name: str, work_dir: Path = None, shell: bool = False, capture_output: bool = True, suppress_console_output_on_success: bool = False, dry_run: bool = False):
+def _get_env_diagnostics(custom_env: dict = None) -> dict:
+    """Extract relevant environment variables for command execution diagnostics.
+
+    Provides standard environment variable information for debugging subprocess
+    command execution, with special focus on UV_PYTHON version control.
+
+    Args:
+        custom_env: Optional custom environment dict that will be/was passed to subprocess.
+                   If None, returns info about the current process environment.
+
+    Returns:
+        Dict with environment variable diagnostic info. Keys include:
+        - UV_PYTHON: The Python version control variable used by uv/uvx
+
+    Usage:
+        env_info = _get_env_diagnostics()  # Current environment
+        env_info = _get_env_diagnostics(custom_env)  # Custom subprocess environment
+    """
+    # UV_PYTHON is critical for Python version control in uv/uvx
+    parent_uv_python = os.environ.get("UV_PYTHON")
+
+    if custom_env is not None:
+        # Custom environment provided to subprocess
+        custom_uv_python = custom_env.get("UV_PYTHON")
+        if parent_uv_python and not custom_uv_python:
+            uv_python_status = "unset (was in parent env)"
+        elif custom_uv_python:
+            uv_python_status = custom_uv_python
+        else:
+            uv_python_status = "not set"
+    else:
+        # Using parent environment
+        uv_python_status = parent_uv_python if parent_uv_python else "not set"
+
+    return {"UV_PYTHON": uv_python_status}
+
+def _run_command(command_list: list[str], action_log_name: str, work_dir: Path = None, shell: bool = False, capture_output: bool = True, suppress_console_output_on_success: bool = False, dry_run: bool = False, env: dict = None):
     """
     Runs a shell command and logs its execution. Raises CalledProcessError on failure.
     Returns (stdout_str, stderr_str) if capture_output is True.
     If capture_output is False, stdout/stderr will be empty strings, and output streams to console.
     If dry_run is True, logs the command but does not execute it.
+
+    Args:
+        env: Optional environment variables dict. If None, inherits parent environment.
 
     Note: Since the main() function changes the CWD to project_root, work_dir defaults to
     the project root directory, making command execution safe and consistent.
@@ -1882,10 +2009,17 @@ def _run_command(command_list: list[str], action_log_name: str, work_dir: Path =
 
     _log_action(action_log_name, "INFO", f"EXEC: \"{cmd_str}\" in \"{work_dir}\" (Logged as action: {action_log_name})")
 
-    log_details = {"command": cmd_str, "working_directory": str(work_dir), "shell_used": shell, "capture_output_setting": capture_output}
+    log_details = {
+        "command": cmd_str,  # Human-readable space-joined string
+        "command_list": command_list if isinstance(command_list, list) else [command_list],  # Exact list for reproduction
+        "working_directory": str(work_dir),
+        "shell_used": shell,
+        "capture_output_setting": capture_output,
+        "environment": _get_env_diagnostics(env)
+    }
 
     try:
-        process = subprocess.run(command_list, cwd=work_dir, capture_output=capture_output, text=True, shell=shell, check=True)
+        process = subprocess.run(command_list, cwd=work_dir, capture_output=capture_output, text=True, shell=shell, check=True, env=env)
         stdout = process.stdout.strip() if process.stdout and capture_output else ""
         stderr = process.stderr.strip() if process.stderr and capture_output else ""
         log_details.update({"return_code": process.returncode,
@@ -2042,28 +2176,29 @@ def _ensure_uv_installed(dry_run: bool):
 
 def _ensure_tool_available(tool_name: str, major_action_results: list, dry_run: bool, website: str = None):
     """
-    Ensures a CLI tool is installed via `uv tool install` for use with `uvx`.
-    Optionally provide a website for user guidance. Handles all error logging internally.
-    Updates major_action_results for each tool.
+    Verify tool will be available via uvx (ephemeral execution).
+
+    Tools are executed via `uvx` which automatically downloads and caches them in
+    ephemeral environments. No pre-installation via `uv tool install` is needed.
+
+    Benefits of uvx approach:
+    - No persistent global state that can become corrupted
+    - Automatic caching (virtually no overhead on subsequent runs)
+    - Respects UV_PYTHON environment variable automatically
+    - Each invocation gets correct Python version without manual coordination
+
+    See: https://docs.astral.sh/uv/guides/tools/
     """
     action_name = f"ensure_tool_{tool_name}"
-    package_to_install = tool_name # Often the package name is the same as the tool name
-    _log_action(action_name, "INFO", f"Ensuring CLI tool `{tool_name}` (package: `{package_to_install}`) is available for `uvx`.")
-    try:
-        # uv tool install is idempotent and safer to just run (or dry-run)
-        _run_command(["uv", "tool", "install", package_to_install], f"{action_name}_uv_tool_install", suppress_console_output_on_success=True, dry_run=dry_run)
-        _log_action(action_name, "SUCCESS", f"`{tool_name}` (package '{package_to_install}') install/check via `uv tool install` complete.\nFor direct terminal use, ensure `uv`'s tool directory is in PATH (try `uv tool update-shell`).")
-        major_action_results.append((f"{tool_name}_cli_tool", "SUCCESS"))
-        return True
-    except Exception:
-        website_msg = f"\nSee documentation or troubleshooting at: {website}" if website else ""
-        _log_action(
-            action_name,
-            "ERROR",
-            f"Failed to ensure `{tool_name}` via `uv tool install`.\nTry running: uv tool install {package_to_install}{website_msg}"
-        )
-        major_action_results.append((f"{tool_name}_cli_tool", "FAILED"))
-        return False
+    uv_python = os.environ.get("UV_PYTHON")
+
+    if uv_python:
+        _log_action(action_name, "INFO", f"Tool `{tool_name}` will be executed via `uvx` with Python {uv_python} (from UV_PYTHON env var).")
+    else:
+        _log_action(action_name, "INFO", f"Tool `{tool_name}` will be executed via `uvx` (automatic download and caching).")
+
+    major_action_results.append((f"{tool_name}_cli_tool", "READY"))
+    return True
 
 
 ######################################################################
@@ -2129,19 +2264,46 @@ def _extract_package_name_from_specifier(specifier: str) -> str:
 def _categorize_uv_add_error(stderr: str) -> str:
     """Categorize uv add error messages into actionable failure reasons.
 
+    Extracts specific package names and failure details when possible to provide
+    concrete, actionable error messages following the "Specific and Actionable Feedback"
+    philosophy.
+
     Args:
-        stderr: Error output from uv add command (should be lowercased before passing)
+        stderr: Error output from uv add command (full stderr, not lowercased)
 
     Returns:
-        Human-readable failure reason string
+        Human-readable failure reason string with specific package details when available
 
     Examples:
-        'no solution found...python' -> 'incompatible with current Python version'
-        'no solution found' -> 'version conflict with existing dependencies'
-        'failed to build' -> 'build failed (missing system dependencies)'
+        'Because all versions of tensorflow have no wheels...'
+            -> 'tensorflow: no Python 3.14 wheel (available: cp39-cp313)'
+        'numpy==2.3.1 depends on Python>=3.11'
+            -> 'incompatible with current Python version'
+        'no solution found'
+            -> 'version conflict with existing dependencies'
     """
     stderr_lower = stderr.lower() if stderr else ""
 
+    # Check for wheel unavailability - most specific error type
+    # Pattern: "Because all versions of PACKAGE have no wheels with a matching Python version tag"
+    if "no wheels with a matching python version tag" in stderr_lower:
+        # Extract package name
+        pkg_match = re.search(r"all versions of (\S+) have no wheels", stderr, re.IGNORECASE)
+        if pkg_match:
+            pkg_name = pkg_match.group(1)
+
+            # Extract available Python versions
+            # Pattern: "Python ABI tags: `cp39`, `cp310`, `cp311`, `cp312`, `cp313`"
+            abi_match = re.search(r"Python ABI tags: `([^`]+)`", stderr)
+            if abi_match:
+                available_versions = abi_match.group(1)
+                return f"{pkg_name}: no Python 3.14 wheel (available: {available_versions})"
+            else:
+                return f"{pkg_name}: no compatible wheel for Python 3.14"
+        else:
+            return "no compatible wheel available for your platform/Python version"
+
+    # Check for general Python version incompatibility (version constraints)
     if "no solution found" in stderr_lower and "python" in stderr_lower:
         return "incompatible with current Python version"
     elif "no solution found" in stderr_lower:
@@ -2150,10 +2312,239 @@ def _categorize_uv_add_error(stderr: str) -> str:
         return "no compatible wheel available for your platform/Python version"
     elif "failed to build" in stderr_lower:
         return "build failed (missing system dependencies)"
+    elif "building wheel" in stderr_lower or "running setup.py" in stderr_lower:
+        return "building from source (very slow - missing pre-built wheel)"
+    elif "error:" in stderr_lower and ("rust" in stderr_lower or "cargo" in stderr_lower):
+        return "requires Rust compiler (install rustc or use different Python version)"
+    elif any(term in stderr_lower for term in ["network", "connection", "timeout", "unreachable", "failed to download", "failed to fetch"]):
+        return "network error (check internet connection)"
     elif "could not find" in stderr_lower or "does not exist" in stderr_lower:
         return "package not found on PyPI"
     else:
         return "unknown error"
+
+
+def _get_suggested_actions_for_error_type(failure_reason: str, package_name: str = "") -> list:
+    """Get context-specific suggested actions based on error type.
+
+    Provides actionable guidance that matches the specific failure reason,
+    following the "Specific and Actionable Feedback" philosophy.
+
+    Args:
+        failure_reason: The categorized error reason from _categorize_uv_add_error()
+        package_name: Optional specific package name for tailored guidance
+
+    Returns:
+        List of suggested action strings
+    """
+    suggestions = []
+    reason_lower = failure_reason.lower()
+
+    if "wheel" in reason_lower or "building from source" in reason_lower:
+        suggestions.extend([
+            f"• Check package availability: https://pypi.org/{package_name}/" if package_name else "• Check package availability on PyPI",
+            "• Use a Python version with pre-built wheels (usually 3.11-3.13)",
+            "• For CI: Install build dependencies (gcc, python3-dev) or use different Python version",
+            "• Building from source can take 5-20 minutes vs 5-20 seconds for wheels"
+        ])
+
+    if "rust" in reason_lower:
+        suggestions.extend([
+            "• Install Rust compiler: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+            "• Or use a Python version where pre-built wheels are available",
+            "• Rust compilation can be very slow (10-30 minutes for large packages)"
+        ])
+
+    if "network" in reason_lower or "connection" in reason_lower:
+        suggestions.extend([
+            "• Check internet connection and PyPI status: https://status.python.org",
+            "• Try again - network issues are often temporary",
+            "• Use a package mirror if behind a firewall: uv pip install --index-url <mirror>"
+        ])
+
+    if "version conflict" in reason_lower or "incompatible" in reason_lower:
+        suggestions.extend([
+            "• Check pyproject.toml for conflicting version requirements",
+            "• Try flexible version ranges: package>=1.0,<2.0 instead of package==1.0.0",
+            "• Use 'uv add --resolution lowest' to find oldest compatible versions"
+        ])
+
+    if "not found" in reason_lower:
+        suggestions.extend([
+            "• Verify package name spelling (PyPI is case-sensitive for search)",
+            "• Check if package exists: https://pypi.org/project/<package>/",
+            "• Some packages have different import vs install names (e.g., 'import sklearn' but 'uv add scikit-learn')"
+        ])
+
+    return suggestions
+
+
+def analyze_timeout_output(stdout: str, stderr: str) -> dict:
+    """Analyze pyuvstarter command output to detect timeout causes and suggest actions.
+
+    Detects timeout causes from pyuvstarter's logged error messages (from _categorize_uv_add_error)
+    and raw subprocess output that appears in verbose mode via _log_action.
+
+    Detection strategy:
+    1. Primary: pyuvstarter's categorized error messages ("building from source", "requires rust compiler", etc.)
+    2. Fallback: Raw subprocess keywords ("building wheel", "running setup.py", etc.)
+
+    These keywords appear in stdout when:
+    - pyuvstarter runs with --verbose flag
+    - Subprocess failures are logged with stderr content via _log_action
+    - Package installation errors are logged with categorized reasons
+
+    Designed for use by both production code and test infrastructure (DRY principle).
+
+    Args:
+        stdout: Standard output from timed-out pyuvstarter command (can be empty string)
+        stderr: Standard error from timed-out pyuvstarter command (can be empty string)
+
+    Returns:
+        dict with keys:
+            - "causes": List[str] - Human-readable timeout causes with emoji indicators
+            - "suggestions": Dict[str, List[str]] - Category → list of specific suggestions
+            - "detected_issues": List[str] - Machine-readable issue identifiers
+            - "has_issues": bool - Whether any issues were detected
+
+    Example:
+        >>> # Detects pyuvstarter's categorized error message
+        >>> diagnostics = analyze_timeout_output(stdout="building from source (very slow)", stderr="")
+        >>> diagnostics["has_issues"]
+        True
+    """
+    causes = []
+    detected_issues = []
+    combined_output = (stdout + "\n" + stderr).lower()
+
+    # Detect ONLY pyuvstarter's actual categorized error messages
+    # These exact strings come from _categorize_uv_add_error() and appear in _log_action output
+    # DO NOT add fabricated detection - only match verified pyuvstarter output
+
+    # Detection 1: "building from source (very slow - missing pre-built wheel)"
+    # This exact string is returned by _categorize_uv_add_error() line 2316
+    if "building from source" in combined_output:
+        causes.append("⚠️  BUILDING FROM SOURCE: Package compiling from source (very slow)")
+        detected_issues.append("building_from_source")
+
+    # Detection 2: "requires Rust compiler (install rustc or use different Python version)"
+    # This exact string is returned by _categorize_uv_add_error() line 2318
+    if "requires rust compiler" in combined_output:
+        causes.append("⚠️  RUST COMPILATION: Package requires Rust compiler")
+        detected_issues.append("rust_compilation")
+
+    # Detection 3: "network error (check internet connection)"
+    # This exact string is returned by _categorize_uv_add_error() line 2320
+    if "network error" in combined_output:
+        causes.append("⚠️  NETWORK ISSUE: Connection problems detected")
+        detected_issues.append("network_issue")
+
+    # Detection 4: "no compatible wheel available for your platform/Python version"
+    # This exact string is returned by _categorize_uv_add_error() lines 2300-2304, 2312
+    if "no compatible wheel" in combined_output:
+        causes.append("⚠️  WHEEL UNAVAILABILITY: No pre-built wheel available")
+        detected_issues.append("wheel_unavailability")
+
+    # Detection 5: Ruff JSON output (actual user timeout scenario from conversation)
+    # Ruff outputs JSON with "code" and "message" fields during --output-format=json
+    # This appears when ruff analysis times out, as seen in user's Ubuntu 3.11 test failure
+    if '"code":' in combined_output and '"message":' in combined_output:
+        causes.append("⚠️  RUFF ANALYSIS: Code analysis running (may be slow on large codebases)")
+        detected_issues.append("ruff_analysis")
+
+    # Build category-specific suggestions
+    suggestions = {}
+
+    if any(issue in detected_issues for issue in ["wheel_unavailability", "building_from_source"]):
+        suggestions["wheel_issues"] = [
+            "• Building from source can take 5-20 minutes vs 5-20 seconds for wheels",
+            "• Use a Python version with pre-built wheels (usually 3.11-3.13)",
+            "• For CI: Install build dependencies (gcc, python3-dev) or use different Python version",
+            "• Check package availability on PyPI for your Python version"
+        ]
+
+    if "rust_compilation" in detected_issues:
+        suggestions["rust_issues"] = [
+            "• Install Rust compiler: curl --proto='=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+            "• Or use a Python version where pre-built wheels are available",
+            "• Rust compilation can be very slow (10-30 minutes for large packages)"
+        ]
+
+    if "network_issue" in detected_issues:
+        suggestions["network_issues"] = [
+            "• Check internet connection and PyPI status: https://status.python.org",
+            "• Try again - network issues are often temporary",
+            "• Use a package mirror if behind a firewall"
+        ]
+
+    if "ruff_analysis" in detected_issues:
+        suggestions["ruff_issues"] = [
+            "• Ruff is analyzing code for import issues - this is normal but can be slow",
+            "• Large codebases with many files take longer to analyze",
+            "• Consider excluding test fixtures from analysis via pyproject.toml [tool.ruff.exclude]",
+            "• Increase timeout if needed - ruff analysis is usually fast (<30s) but varies by codebase size"
+        ]
+
+    return {
+        "causes": causes,
+        "suggestions": suggestions,
+        "detected_issues": detected_issues,
+        "has_issues": len(detected_issues) > 0
+    }
+
+
+def _try_packages_individually(
+    packages: list,
+    project_root: Path,
+    action_prefix: str = "uv_add_individual"
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Try installing packages one-by-one to salvage partial success.
+
+    This function implements the "Graceful Recovery" philosophy by attempting
+    to install each package individually, collecting successes and failures.
+
+    Args:
+        packages: List of package specifiers to install (can include versions)
+        project_root: Project directory for uv add command
+        action_prefix: Prefix for action names in logging
+
+    Returns:
+        Tuple of (successful_packages, failed_packages_with_reasons)
+        where failed_packages_with_reasons is list of (package, reason) tuples
+
+    Philosophy:
+        - "Solve Problems FOR Users": Installs what works, reports what doesn't
+        - "Specific and Actionable Feedback": Each failure has a specific reason
+        - "Graceful Recovery": Partial success is acceptable
+    """
+    successful_packages = []
+    failed_packages_with_reasons = []
+
+    for pkg in packages:
+        # Extract package name for logging
+        pkg_name = _extract_package_name_from_specifier(pkg) if isinstance(pkg, str) and any(op in pkg for op in ['==', '>=', '<=', '>', '<', '~=']) else pkg
+
+        # Skip empty package names (built-in modules)
+        if not pkg_name:
+            _log_action(f"{action_prefix}_skip_empty", "DEBUG",
+                      f"Skipping package with empty canonical name: '{pkg}'")
+            continue
+
+        try:
+            _run_command(
+                ["uv", "add", str(pkg)],
+                f"{action_prefix}_{pkg_name}",
+                work_dir=project_root,
+                suppress_console_output_on_success=True
+            )
+            successful_packages.append(pkg)
+        except subprocess.CalledProcessError as pkg_error:
+            pkg_stderr = pkg_error.stderr if pkg_error.stderr else ""
+            # Use enhanced error categorization that extracts package names and details
+            failure_reason = _categorize_uv_add_error(pkg_stderr)
+            failed_packages_with_reasons.append((pkg, failure_reason))
+
+    return successful_packages, failed_packages_with_reasons
 
 
 def _canonicalize_pkg_name(name: str) -> str:
@@ -2921,7 +3312,15 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
     action_name = f"pipreqs_discover_{scan_path.name}"
 
     # Build command as list of strings for subprocess execution
-    pipreqs_args: List[str] = ["uvx", "pipreqs", "--print"]
+    # Diagnostic output for Python version tracking
+    uv_python = os.environ.get("UV_PYTHON")
+    if uv_python:
+        _log_action(action_name, "INFO", f"Running pipreqs with explicit Python {uv_python} (from UV_PYTHON env var).")
+    else:
+        _log_action(action_name, "INFO", "Running pipreqs with system default Python (UV_PYTHON not set).")
+
+    # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+    pipreqs_args = ["uvx", "pipreqs", "--print", "--scan-notebooks"]
 
     # Add mode if specified (for fallback strategy)
     if mode:
@@ -2948,8 +3347,17 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
     # Standard CLI practice: the main subject of the command is the last argument.
     pipreqs_args.append(str(scan_path))
 
+    # Let uvx choose best Python version for external tools
+    # Unset UV_PYTHON via env copy so subprocess doesn't inherit project's Python version
+    # Prevents failures when tool has stricter version constraints than pyuvstarter
+    # Added 2025-11-12: pipreqs requires Python <3.13 (only up to 3.12)
+    uvx_env = os.environ.copy()
+    if "UV_PYTHON" in uvx_env:
+        del uvx_env["UV_PYTHON"]
+        _log_action(action_name, "INFO", "Unsetting UV_PYTHON for uvx subprocess to allow compatible Python version selection")
+
     try:
-        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", dry_run=dry_run)
+        stdout, _ = _run_command(pipreqs_args, f"{action_name}_exec", dry_run=dry_run, env=uvx_env)
 
         # In a dry run, the mock command returns an empty string. Handle this cleanly.
         if not stdout:
@@ -2976,13 +3384,39 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
         if packages_specs:
             _log_action(action_name, "SUCCESS", f"Discovered {len(packages_specs)} unique package(s).")
         else:
-            _log_action(action_name, "INFO", "`pipreqs` found no import-based dependencies in this source.")
+            # Check if there are .py or .ipynb files that should have dependencies
+            py_files = list(scan_path.rglob("*.py"))
+            ipynb_files = list(scan_path.rglob("*.ipynb"))
+            if py_files or ipynb_files:
+                warning_msg = f"`pipreqs` found no import-based dependencies despite {len(py_files)} .py and {len(ipynb_files)} .ipynb files present."
+                warning_msg += f"\nCommand executed: {' '.join(pipreqs_args)}"
+                warning_msg += f"\nWorking directory: {scan_path.resolve()}"
+                if uv_python:
+                    warning_msg += f"\nOriginal UV_PYTHON: {uv_python} (but was unset for pipreqs subprocess)"
+                else:
+                    warning_msg += "\nUV_PYTHON not set - pipreqs selected compatible Python version"
+
+                # Include diagnostic details in JSON log for test error reporting
+                warning_details = {
+                    "command": ' '.join(pipreqs_args),  # Human-readable space-joined string
+                    "command_list": pipreqs_args,  # Exact list for reproduction
+                    "working_directory": str(scan_path.resolve()),
+                    "environment": _get_env_diagnostics(uvx_env),
+                    "py_files_count": len(py_files),
+                    "ipynb_files_count": len(ipynb_files)
+                }
+                _log_action(action_name, "WARN", warning_msg, details=warning_details)
+            else:
+                _log_action(action_name, "INFO", "`pipreqs` found no import-based dependencies in this source.")
 
         return packages_specs
 
-    except subprocess.CalledProcessError:
-        # ENHANCEMENT (from va): Provide a more actionable error message.
-        _log_action(action_name, "ERROR", "`uvx pipreqs` command failed. Check pyuvstarter_setup_log.json for details.\nTry running `uvx pipreqs --help` to verify pipreqs is available.")
+    except subprocess.CalledProcessError as e:
+        # ENHANCEMENT (from va): Provide a more actionable error message with exit code and stderr.
+        error_details = f"\nCommand: {' '.join(pipreqs_args)}\nExit code: {e.returncode}\nUV_PYTHON: {uv_python if uv_python else 'not set'}"
+        if e.stderr:
+            error_details += f"\nStderr: {e.stderr}"
+        _log_action(action_name, "ERROR", f"`uvx pipreqs` command failed. Check pyuvstarter_setup_log.json for details.{error_details}\nTry running `uvx pipreqs --help` to verify pipreqs is available.")
     except Exception as e:
         _log_action(action_name, "ERROR", f"An unexpected error occurred while running `pipreqs`: {e}", details={"exception": str(e)})
 
@@ -2991,15 +3425,12 @@ def _get_packages_from_pipreqs(scan_path: Path, ignore_manager: Optional[GitIgno
 
 def _run_ruff_unused_import_check(project_root: Path, major_action_results: list, dry_run: bool):
     """
-    Runs ruff via uvx to detect unused imports (F401) and logs warnings if found.
+    Runs ruff via uvx to detect unused imports (F401) and relative import issues (TID252),
+    then automatically fixes them for package projects.
 
-    This function uses the correct argument order and format for `uvx ruff check`:
-    - The `=` syntax (e.g., --select=F401) is used to create unambiguous option-value pairs.
-    - All ruff options are placed after a `--` separator to pass them to ruff.
-    - The target directory (project_root) is placed last.
-
-    Example of the correct CLI invocation:
-        uvx ruff check -- --select=F401 --exit-zero --format=json /path/to/project
+    This function follows pyuvstarter's "Solve Problems FOR Users" philosophy by
+    automatically fixing import issues that would cause problems with VSCode debugger
+    or script execution.
 
     Args:
         project_root (Path): The root directory of the project to check.
@@ -3009,59 +3440,63 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
     Returns:
         None. Logs results and warnings as appropriate.
     """
-    action_name = "ruff_unused_import_check"
-    _log_action(action_name, "INFO", "Running ruff to check for unused imports (F401).")
+    action_name = "ruff_import_analysis"
+    _log_action(action_name, "INFO", "Running ruff to analyze imports (unused imports + relative imports).")
 
     try:
-        # CORRECTED Ruff CLI arguments using the robust '=' syntax.
+        # ENHANCED Ruff CLI arguments to check both unused imports and relative imports
+        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
         ruff_args = [
             "uvx",
             "ruff",
-            # 1. Use the global '--config' option to set the output format.
-            #    The value must be a valid TOML key-value pair string.
-            # 2. The subcommand comes next.
             "check",
             "--output-format=json",  # Use --output-format instead of --format for clarity
-            # 3. Options for the subcommand follow.
-            "--select=F401",
+            # Check for both unused imports (F401) and relative import issues (TID252)
+            "--select=F401,TID252",
             "--exit-zero",
-            # 4. The positional path argument is last.
             str(project_root),
         ]
+        # Ruff analysis should run even in dry run mode to detect import issues
+        # Only the actual fixing operations should be prevented in dry run mode
         result_stdout, _ = _run_command(
             ruff_args,
             f"{action_name}_exec",
             suppress_console_output_on_success=True,
-            dry_run=dry_run
+            dry_run=False  # Always run ruff analysis to detect issues
         )
         # print the stdout for debugging purposes
         if result_stdout:
             _log_action(action_name, "DEBUG", f"Ruff output:\n{result_stdout.strip()}")
 
-        if dry_run:
-            _log_action(action_name, "INFO", "DRY RUN: Assuming `ruff` would check for unused imports. No actual check performed.")
-            return
+        # Note: We allow ruff analysis to run even in dry run mode to detect import issues
+        # Only the actual fixing operations should be skipped in dry run mode
 
         unused = []
+        relative_imports = []
         if result_stdout:
             try:
-                # CORRECTED LOGIC: --output-format=json returns a single JSON array for all issues.
-                # We parse the entire stdout string at once.
+                # Parse JSON output from Ruff
                 issues = json.loads(result_stdout)
 
                 for issue in issues:
-                    # Now, 'issue' will be a dictionary as expected
-                    if issue.get("code") == "F401":
-                        filename = issue.get("filename")
-                        line_no = issue.get("location", {}).get("row")
-                        message = issue.get("message")
-                        # Try to get path relative to project_root, fallback to full path
-                        display_path = filename
-                        try:
-                            display_path = Path(filename).relative_to(project_root).as_posix()
-                        except ValueError:
-                            pass
+                    code = issue.get("code")
+                    filename = issue.get("filename")
+                    line_no = issue.get("location", {}).get("row")
+                    message = issue.get("message")
+
+                    # Try to get path relative to project_root, fallback to full path
+                    display_path = filename
+                    try:
+                        display_path = Path(filename).relative_to(project_root).as_posix()
+                    except ValueError:
+                        pass
+
+                    if code == "F401":
+                        # Unused import
                         unused.append((display_path, line_no, message))
+                    elif code == "TID252":
+                        # Relative import issue
+                        relative_imports.append((display_path, line_no, message))
             except json.JSONDecodeError as e:
                 _log_action(
                     action_name,
@@ -3081,22 +3516,123 @@ def _run_ruff_unused_import_check(project_root: Path, major_action_results: list
                 major_action_results.append((action_name, "FAILED_PROCESS_OUTPUT"))
                 return
 
-        if unused:
+        # Detect if this is a package project for relative import fixing
+        project_info = _detect_project_structure(project_root)
+        is_package = project_info.get('is_package', False)
+
+        # Detect F401 violations that involve relative imports (these should be fixed too)
+        relative_import_f401_violations = []
+        for file_path, line_no, message in unused:
+            # Check if the unused import message mentions relative imports
+            # Messages like '`.utils` imported but unused' indicate relative imports
+            if "relative import" in message.lower() or "`. " in message or message.strip().startswith("`"):
+                relative_import_f401_violations.append((file_path, line_no, message))
+
+        # Handle relative imports and F401 relative import violations for package projects
+        should_fix_imports = (relative_imports and is_package) or (relative_import_f401_violations and is_package)
+
+        if should_fix_imports:
+            total_issues = len(relative_imports) + len(relative_import_f401_violations)
+            _log_action(
+                action_name,
+                "INFO",
+                f"Found {total_issues} import issue(s) in package project that need fixing. Auto-fixing...",
+                details={
+                    "relative_imports_count": len(relative_imports),
+                    "relative_imports_details": relative_imports,
+                    "relative_import_f401_count": len(relative_import_f401_violations),
+                    "relative_import_f401_details": relative_import_f401_violations
+                }
+            )
+
+            if not dry_run:
+                try:
+                    # Create temporary Ruff configuration to ban all relative imports
+                    temp_config_path = project_root / ".ruff_temp.toml"
+                    temp_config_content = """[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+"""
+                    with open(temp_config_path, 'w') as f:
+                        f.write(temp_config_content)
+
+                    try:
+                        # Use Ruff to automatically fix relative imports and unused imports
+                        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+                        fix_cmd = [
+                            "uvx",
+                            "ruff",
+                            "check",
+                            "--fix",  # Automatically fix detected issues
+                            "--unsafe-fixes",  # Enable unsafe fixes to convert relative imports to absolute
+                            "--select=TID252,F401",  # Relative imports + unused imports
+                            "--config", str(temp_config_path),  # Use our temporary config
+                            str(project_root)
+                        ]
+
+                        _run_command(
+                            fix_cmd,
+                            f"{action_name}_fix_exec",
+                            work_dir=project_root,
+                            dry_run=False
+                        )
+                    finally:
+                        # Clean up temporary config file
+                        if temp_config_path.exists():
+                            temp_config_path.unlink()
+
+                    _log_action(action_name, "SUCCESS",
+                              f"✅ Automatically fixed {len(relative_imports)} relative import issue(s) and {len(relative_import_f401_violations)} relative import F401 issue(s).")
+
+                    # Enhanced logging: Show examples of fixed imports
+                    all_relative_issues = relative_imports + relative_import_f401_violations
+                    if all_relative_issues:
+                        examples = all_relative_issues[:3]  # Show first 3 examples
+                        example_text = "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in examples])
+                        if len(all_relative_issues) > 3:
+                            example_text += f"\n  ... and {len(all_relative_issues) - 3} more"
+
+                        _log_action(action_name, "INFO",
+                                  "Import examples that were converted to absolute imports:",
+                                  details={
+                                      "fixed_examples": example_text,
+                                      "total_relative_fixed": len(relative_imports),
+                                      "total_f401_fixed": len(relative_import_f401_violations)
+                                  })
+
+                    _log_action(action_name, "INFO",
+                              "Relative imports converted to absolute imports. Python files now work both as scripts and modules.",
+                              details={
+                                  "relative_imports_fixed": len(relative_imports),
+                                  "f401_relative_imports_fixed": len(relative_import_f401_violations),
+                                  "benefit": "VSCode debugger now works without special configuration"
+                              })
+
+                except subprocess.CalledProcessError as e:
+                    _log_action(action_name, "WARN",
+                              f"Failed to auto-fix import issues with Ruff: {e}",
+                              details={
+                                  "suggestion": "You can manually run: uvx ruff check . --fix --unsafe-fixes --select=TID252,F401"
+                              })
+
+        # Report remaining unused imports (if any weren't fixed)
+        remaining_unused = unused
+        if remaining_unused:
             msg = (
-                "Ruff detected unused imports (F401). These may lead to unnecessary dependencies or code cruft:\n" +
-                "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in unused]) +
-                "\nConsider removing these unused imports for a cleaner project and more accurate dependency analysis. "
-                "You can typically auto-fix them by running `uvx ruff check . --fix`."
+                f"Found {len(remaining_unused)} unused import(s) (F401):\n" +
+                "\n".join([f"  - {f}:{lineno}: {desc}" for f, lineno, desc in remaining_unused]) +
+                "\nThese can be auto-fixed by running: uvx ruff check . --fix"
             )
             _log_action(
                 action_name,
                 "WARN",
                 msg,
-                details={"unused_imports_count": len(unused), "unused_imports_details": unused}
+                details={"unused_imports_count": len(remaining_unused), "unused_imports_details": remaining_unused}
             )
             major_action_results.append((action_name, "COMPLETED_WITH_WARNINGS"))
+        elif not relative_imports:
+            _log_action(action_name, "SUCCESS", "✅ No import issues found. Great job!")
+            major_action_results.append((action_name, "SUCCESS"))
         else:
-            _log_action(action_name, "SUCCESS", "No unused imports (F401) detected by ruff. Great job!")
             major_action_results.append((action_name, "SUCCESS"))
 
     except subprocess.CalledProcessError as e:
@@ -3237,8 +3773,57 @@ def _manage_project_dependencies(
                 stderr = e.stderr.lower() if e.stderr else ""
                 stderr_full = e.stderr if e.stderr else ""
 
-                if "no solution found" in stderr and "python" in stderr:
-                    # Python version conflict - parse the error to be specific
+                # Check for wheel unavailability FIRST - this is a different category than version conflicts
+                # Pattern: "Because all versions of PACKAGE have no wheels with a matching Python version tag"
+                # These errors mention "python" but retrying with different versions won't help
+                if "no wheels with a matching python version tag" in stderr:
+                    # Wheel unavailability detected - skip retries and go straight to one-by-one
+                    # This follows "Fail Fast with Recovery Path" philosophy
+                    _log_action("uv_add_wheel_unavailable", "WARN",
+                              "⚠️  Some packages have no wheels for your Python version.\n"
+                              "    Trying packages individually to install compatible ones and identify incompatible packages...",
+                              details={"error_snippet": stderr_full[:1000]})
+
+                    # Use DRY helper function for one-by-one installation
+                    successful_packages, failed_packages = _try_packages_individually(
+                        final_packages_to_add,
+                        project_root,
+                        action_prefix="uv_add_wheel_fallback"
+                    )
+
+                    # Report results following "Specific and Actionable Feedback" philosophy
+                    if successful_packages:
+                        _log_action("uv_add_partial_success", "SUCCESS",
+                                  f"✅ Successfully installed {len(successful_packages)}/{len(final_packages_to_add)} packages:\n" +
+                                  "\n".join(f"  • {pkg}" for pkg in successful_packages[:10]) +
+                                  (f"\n  ... and {len(successful_packages) - 10} more" if len(successful_packages) > 10 else ""))
+
+                    if failed_packages:
+                        failure_summary = (
+                            f"⚠️  Failed to install {len(failed_packages)}/{len(final_packages_to_add)} packages:\n" +
+                            "\n".join(f"  • {pkg}: {reason}" for pkg, reason in failed_packages[:10]) +
+                            (f"\n  ... and {len(failed_packages) - 10} more (see log)" if len(failed_packages) > 10 else "") +
+                            "\n\n💡 TIP: These packages were skipped to allow the rest of your project to work.\n" +
+                            "    For packages missing Python 3.14 wheels, either:\n" +
+                            "      - Use Python 3.13: UV_PYTHON=3.13 uv venv\n" +
+                            "      - Remove incompatible packages from your code\n" +
+                            "      - Wait for package maintainers to release Python 3.14 wheels"
+                        )
+                        _log_action("uv_add_partial_failure", "WARN", failure_summary,
+                                  details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages]})
+
+                    # Don't return error status if we got some packages - partial success is acceptable
+                    # This follows "Graceful Recovery" philosophy
+                    if not successful_packages and failed_packages:
+                        _log_action("uv_add_total_failure", "ERROR",
+                                  "❌ Could not install any packages. All packages have wheel availability or compatibility issues.")
+                        return {"status": "TOTAL_FAILURE", "failed_packages": failed_packages}
+
+                    # Partial or full success - continue with setup
+                    return None
+
+                elif "no solution found" in stderr and "python" in stderr:
+                    # Python version conflict (NOT wheel unavailability) - parse the error to be specific
                     # Extract specific conflict information
                     conflict_details = []
 
@@ -3273,29 +3858,12 @@ def _manage_project_dependencies(
                     _log_action("uv_add_conflict", "WARN",
                               "⚡ Bulk package add failed due to conflicts. Trying packages one-by-one to install what's compatible...")
 
-                    successful_packages = []
-                    failed_packages = []
-
-                    for pkg in final_packages_to_add:
-                        # Use existing helper function (DRY principle)
-                        pkg_name = _extract_package_name_from_specifier(pkg)
-
-                        # Edge case: Skip if package name extraction failed (empty string)
-                        # This can happen for built-in modules that shouldn't be installed
-                        if not pkg_name:
-                            _log_action("uv_add_skip_empty", "DEBUG",
-                                      f"Skipping package with empty canonical name: '{pkg}'")
-                            continue
-
-                        try:
-                            _run_command(["uv", "add", pkg], f"uv_add_individual_{pkg_name}",
-                                       work_dir=project_root, suppress_console_output_on_success=True)
-                            successful_packages.append(pkg)
-                        except subprocess.CalledProcessError as pkg_error:
-                            # Use helper function to categorize error (DRY principle)
-                            pkg_stderr = pkg_error.stderr if pkg_error.stderr else ""
-                            failure_reason = _categorize_uv_add_error(pkg_stderr)
-                            failed_packages.append((pkg, failure_reason))
+                    # Use DRY helper function for one-by-one installation
+                    successful_packages, failed_packages = _try_packages_individually(
+                        final_packages_to_add,
+                        project_root,
+                        action_prefix="uv_add_conflict_fallback"
+                    )
 
                     # Report results with progressive disclosure
                     if successful_packages:
@@ -3309,8 +3877,8 @@ def _manage_project_dependencies(
                             f"⚠️  Failed to install {len(failed_packages)}/{len(final_packages_to_add)} packages:\n" +
                             "\n".join(f"  • {pkg}: {reason}" for pkg, reason in failed_packages[:10]) +
                             (f"\n  ... and {len(failed_packages) - 10} more (see log)" if len(failed_packages) > 10 else "") +
-                            f"\n\n💡 TIP: These packages were skipped to allow the rest of your project to work.\n" +
-                            f"    You can manually adjust versions in pyproject.toml or remove incompatible packages."
+                            "\n\n💡 TIP: These packages were skipped to allow the rest of your project to work.\n" +
+                            "    You can manually adjust versions in pyproject.toml or remove incompatible packages."
                         )
                         _log_action("uv_add_partial_failure", "WARN", failure_summary,
                                   details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages]})
@@ -3428,28 +3996,17 @@ def _configure_vscode_settings(project_root: Path, venv_python_executable: Path,
             settings_data = {} # Start with empty settings if error reading
 
 
-    interpreter_path = str(venv_python_executable)
+    # Use ${workspaceFolder} (VSCode substitutes this automatically) with relative path
+    # VSCode uses forward slashes even on Windows, so use as_posix()
+    relative_venv_path = venv_python_executable.relative_to(project_root)
+    interpreter_path = "${workspaceFolder}/" + relative_venv_path.as_posix()
     settings_data["python.defaultInterpreterPath"] = interpreter_path
 
-    # Construct the final content: comment + JSON string
-    comment_line = "// This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
+    # Construct the final content: JSON with comment field
+    settings_data["_comment"] = "This interpreter path is managed by pyuvstarter and uv (https://astral.sh/uv)"
     json_content_str = json.dumps(settings_data, indent=4)
 
     final_file_content = json_content_str
-    # Check if the comment is already the first line, to avoid duplicating it
-    current_first_line_exists = False
-    if settings_file_path.exists():
-        try:
-            with open(settings_file_path, 'r', encoding='utf-8') as f:
-                first_line = f.readline().strip()
-                if first_line.startswith("// This interpreter path is managed by pyuvstarter"):
-                    current_first_line_exists = True
-        except Exception:
-            # If reading fails, assume no relevant first line exists or is readable
-            pass
-
-    if not current_first_line_exists:
-        final_file_content = comment_line + "\n" + json_content_str
 
     with open(settings_file_path, 'w', encoding='utf-8') as f:
         f.write(final_file_content)
@@ -3468,6 +4025,12 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
     vscode_dir = project_root / VSCODE_DIR_NAME
     launch_path = vscode_dir / LAUNCH_FILE_NAME
     vscode_dir.mkdir(exist_ok=True)
+
+    # Use ${workspaceFolder} (VSCode substitutes this automatically) with relative path
+    # VSCode uses forward slashes even on Windows, so use as_posix()
+    relative_venv_path = venv_python_executable.relative_to(project_root)
+    vscode_python_path = "${workspaceFolder}/" + relative_venv_path.as_posix()
+
     # Use ${file} so the user can run any Python file they have open in the editor
     default_config_entry = {
         "name": "Python: Run Current File (uv venv)",
@@ -3475,7 +4038,7 @@ def _ensure_vscode_launch_json(project_root: Path, venv_python_executable: Path,
         "request": "launch",
         "program": "${file}",
         "console": "integratedTerminal",
-        "python": str(venv_python_executable),
+        "python": vscode_python_path,
         "justMyCode": True,
         "internalConsoleOptions": "neverOpen",
         # "env": {},  # Removed to let VS Code inherit the environment, including venv activation
@@ -3656,6 +4219,257 @@ def _ensure_notebook_execution_support(project_root: Path, ignore_manager: Optio
         return True
 
 
+def _detect_project_structure(project_root: Path) -> dict:
+    """
+    Detect project structure for determining if this is a package project.
+
+    This function analyzes pyproject.toml and directory structure to determine
+    if the project uses Python packages and what layout it follows.
+
+    Args:
+        project_root: The project root directory
+
+    Returns:
+        Dictionary with project structure information including:
+        - has_pyproject: bool - Whether pyproject.toml exists
+        - is_package: bool - Whether this is a package project
+        - package_name: str or None - Package name from pyproject.toml
+        - layout: str - 'src', 'flat', 'mixed', or 'scripts_only'
+        - entry_points: list - List of entry point names from [project.scripts]
+    """
+    action_name = "project_detection"
+
+    pyproject_path = project_root / "pyproject.toml"
+
+    result = {
+        'has_pyproject': pyproject_path.exists(),
+        'is_package': False,
+        'package_name': None,
+        'layout': None,  # 'src', 'flat', 'mixed', 'scripts_only'
+        'entry_points': []
+    }
+
+    if not pyproject_path.exists():
+        _log_action(action_name, "INFO", "No pyproject.toml found - assuming script-only project")
+        return result
+
+    # Parse pyproject.toml using existing tomllib implementation
+    try:
+        if tomllib is not None:
+            with open(pyproject_path, "rb") as f:
+                config = tomllib.load(f)
+        else:
+            import toml
+            with open(pyproject_path, "r", encoding="utf-8") as f:
+                config = toml.load(f)
+    except Exception as e:
+        _log_action(action_name, "WARN", f"Could not parse pyproject.toml: {e}")
+        return result
+
+    project_config = config.get("project", {})
+    package_name = project_config.get("name")
+
+    if not package_name:
+        _log_action(action_name, "INFO", "No package name found in pyproject.toml - assuming script-only project")
+        return result
+
+    result['package_name'] = package_name
+    result['entry_points'] = list(project_config.get("scripts", {}).keys())
+
+    # Detect layout type
+    src_path = project_root / "src" / package_name
+    flat_path = project_root / package_name
+
+    src_exists = src_path.exists() and (src_path / "__init__.py").exists()
+    flat_exists = flat_path.exists() and (flat_path / "__init__.py").exists()
+
+    if src_exists and flat_exists:
+        result['layout'] = 'mixed'
+        result['is_package'] = True
+        _log_action(action_name, "INFO", f"Detected mixed layout project (src/ and {package_name}/ both exist)")
+    elif src_exists:
+        result['layout'] = 'src'
+        result['is_package'] = True
+        _log_action(action_name, "INFO", f"Detected src-layout project: src/{package_name}/")
+    elif flat_exists:
+        result['layout'] = 'flat'
+        result['is_package'] = True
+        _log_action(action_name, "INFO", f"Detected flat-layout project: {package_name}/")
+    else:
+        # Enhanced package detection: look for any subdirectory with __init__.py
+        package_dirs = []
+        for subdir in project_root.iterdir():
+            if subdir.is_dir() and not subdir.name.startswith('.') and subdir.name not in ['src', '.venv', '__pycache__', 'node_modules']:
+                if (subdir / "__init__.py").exists():
+                    package_dirs.append(subdir.name)
+
+        if package_dirs:
+            result['layout'] = 'flat_custom'
+            result['is_package'] = True
+            result['package_dirs'] = package_dirs
+            _log_action(action_name, "INFO", f"Detected package project with custom directory structure: {', '.join(package_dirs)}")
+        # Check if there are Python files that might be a package without __init__.py
+        else:
+            python_files = list(project_root.glob("*.py"))
+            if python_files:
+                result['layout'] = 'scripts_only_potential_package'
+                _log_action(action_name, "INFO", "Detected script-only project with Python files")
+            else:
+                result['layout'] = 'scripts_only'
+                _log_action(action_name, "INFO", "Detected scripts-only project")
+
+    return result
+
+
+def _detect_relative_import_issues(project_root: Path, project_info: dict) -> list:
+    """
+    Use Ruff to scan for relative import issues that would cause module execution problems.
+
+    This function detects TID252 violations (relative imports above top level) and other
+    relative import issues that would prevent Python files from working when executed
+    as scripts rather than modules.
+
+    Args:
+        project_root: The project root directory to scan
+        project_info: Project structure information from _detect_project_structure()
+
+    Returns:
+        List of Ruff issue dictionaries with file paths and violation details
+    """
+    action_name = "detect_relative_imports"
+
+    # Only scan for relative imports if this is a package project
+    if not project_info.get('is_package', False):
+        _log_action(action_name, "INFO", "Not scanning for relative imports: not a package project")
+        return []
+
+    try:
+        # Use Ruff to detect relative import violations
+        # TID252: Relative imports are used above the top-level package
+        # F401: Unused imports (often exposed when fixing relative imports)
+        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+        cmd = [
+            "uvx",
+            "ruff",
+            "check",
+            "--select=TID252",  # Relative imports above top level
+            "--output-format=json",
+            str(project_root)
+        ]
+
+        stdout, _ = _run_command(
+            cmd,
+            f"{action_name}_exec",
+            work_dir=project_root,
+            dry_run=False,
+            capture_output=True,
+            suppress_console_output_on_success=True
+        )
+
+        if not stdout.strip():
+            _log_action(action_name, "SUCCESS", "No relative import issues found.")
+            return []
+
+        # Parse Ruff JSON output
+        try:
+            issues = json.loads(stdout)
+            _log_action(action_name, "INFO", f"Found {len(issues)} relative import issue(s) in project.")
+            return issues
+        except json.JSONDecodeError as e:
+            _log_action(action_name, "WARN", f"Could not parse Ruff output: {e}")
+            return []
+
+    except subprocess.CalledProcessError as e:
+        _log_action(action_name, "WARN", f"Failed to scan for relative imports with Ruff: {e}")
+        return []
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Unexpected error during relative import detection: {e}")
+        return []
+
+
+def _fix_relative_imports(project_root: Path, project_info: dict, dry_run: bool):
+    """
+    Automatically fix relative imports to absolute imports using Ruff.
+
+    This follows pyuvstarter's philosophy of "Solve Problems FOR Users" by
+    automatically converting problematic relative imports to absolute imports,
+    making Python files work correctly regardless of execution method.
+
+    Args:
+        project_root: The project root directory
+        project_info: Project structure information
+        dry_run: If True, only report what would be fixed without making changes
+    """
+    action_name = "fix_relative_imports"
+
+    # First detect issues to see if fixing is needed
+    issues = _detect_relative_import_issues(project_root, project_info)
+
+    if not issues:
+        _log_action(action_name, "SUCCESS", "No relative import issues to fix.")
+        return
+
+    # Report what will be fixed
+    files_affected = set()
+    for issue in issues:
+        if 'filename' in issue:
+            try:
+                rel_path = Path(issue['filename']).relative_to(project_root)
+                files_affected.add(str(rel_path))
+            except ValueError:
+                files_affected.add(issue['filename'])
+
+    files_list = sorted(list(files_affected))
+
+    if dry_run:
+        _log_action(action_name, "INFO", f"DRY RUN: Would fix relative imports in {len(files_list)} file(s): {', '.join(files_list[:3])}{'...' if len(files_list) > 3 else ''}")
+        return
+
+    _log_action(action_name, "INFO", f"Fixing relative imports in {len(files_list)} file(s): {', '.join(files_list[:3])}{'...' if len(files_list) > 3 else ''}")
+
+    try:
+        # Use Ruff to automatically fix relative imports and related issues
+        # uvx respects UV_PYTHON environment variable automatically - no --python flag needed
+        cmd = [
+            "uvx",
+            "ruff",
+            "check",
+            "--fix",  # Automatically fix detected issues
+            "--select=TID252,F401",  # Relative imports + unused imports
+            str(project_root)
+        ]
+
+        _run_command(
+            cmd,
+            f"{action_name}_exec",
+            work_dir=project_root,
+            dry_run=dry_run
+        )
+
+        _log_action(action_name, "SUCCESS",
+                  f"Automatically fixed {len(issues)} relative import issue(s) in {len(files_list)} file(s).")
+
+        # Provide specific guidance about what was fixed
+        _log_action(action_name, "INFO",
+                  "Relative imports converted to absolute imports. Python files now work both as scripts and modules.",
+                  details={
+                      "files_fixed": files_list,
+                      "issues_count": len(issues),
+                      "benefit": "VSCode debugger now works without special configuration"
+                  })
+
+    except subprocess.CalledProcessError as e:
+        _log_action(action_name, "ERROR",
+                  f"Failed to fix relative imports with Ruff: {e}",
+                  details={
+                      "command": "uvx ruff check --fix --select=TID252,F401",
+                      "suggestion": "Try running the command manually to see specific errors"
+                  })
+    except Exception as e:
+        _log_action(action_name, "ERROR",
+                  f"Unexpected error during import fixing: {e}")
+
+
 def _get_explicit_summary_text(project_root: Path, venv_name: str, pyproject_file_path: Path, log_file_path: Path):
     """
     Returns a legacy-style explicit summary of all key files and paths for user clarity.
@@ -3754,6 +4568,9 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
         _log_action(action_name, "SUCCESS", f"'{config.gitignore_name}' setup complete.")
     except IOError as e:
         _log_action(action_name, "ERROR", f"Gitignore setup failed: {e}\nCheck file permissions and ensure you can write to the project directory.", details={"exception": str(e)})
+        _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+        _log_data_global["final_summary"] = f"Gitignore setup failed: {e}"
+        _save_log(config, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
         raise typer.Exit(code=1)
 
 # ==============================================================================
@@ -3762,13 +4579,16 @@ def _perform_gitignore_setup(config: 'CLICommand', ignore_manager: GitIgnore):
 # to achieve a true Single Source of Truth for CLI options and configuration.
 # ==============================================================================
 
-# Configure Typer application instance.
+# Configure Typer application instance with 2025 best practices
 app = typer.Typer(
     name="pyuvstarter",
-    add_completion=False, # Disable default completion, often handled by shell scripts.
-    rich_markup_mode="markdown", # Allow rich text formatting in help messages.
-    help="🚀 **A Modern Python Project Setup Tool**", # Overall help message.
-    invoke_without_command=True, # Allow running without subcommands
+    add_completion=False,  # Disable default completion, often handled by shell scripts
+    rich_markup_mode="markdown",  # Allow rich text formatting in help messages
+    help="🚀 **A Modern Python Project Setup Tool**",  # Overall help message
+    invoke_without_command=True,  # Allow running without subcommands
+    # Exception handling configuration (Typer 0.20+) - explicit for code clarity
+    pretty_exceptions_enable=True,  # Rich tracebacks for better debugging
+    pretty_exceptions_show_locals=True,  # Show local variables for detailed error diagnosis
 )
 
 # CLICOMMAND: new functionality to repair and keep
@@ -3968,8 +4788,11 @@ class CLICommand(BaseSettings):
                 try:
                     # Load the JSON config file.
                     file_settings = json.loads(p.read_text(encoding='utf-8'))
+                    # Create a callable source for Pydantic v2
+                    def config_source():
+                        return file_settings
                     # Add file settings with lower precedence than env vars and CLI.
-                    sources.append(file_settings)
+                    sources.append(config_source)
                     _log_action("config_load", "INFO", f"Loaded settings from config file: '{p}'")
                 except json.JSONDecodeError as e:
                     safe_typer_secho(f"ERROR: Could not parse config file '{p}': {e}", fg=typer.colors.RED, err=True)
@@ -4009,14 +4832,29 @@ class CLICommand(BaseSettings):
         # Initialize intelligent output system with config
         set_output_mode(self)
 
-        # Initialize the global logging mechanism.
-        _init_log(self.project_dir)
+        # Initialize the global logging mechanism with full invocation context
+        _init_log(self.project_dir, config=self, original_cwd=original_cwd)
+
+        # Register atexit fallback for crash safety (catches SIGTERM, unexpected exits)
+        # This ensures logs are saved if process terminates without reaching finally block
+        # Will be unregistered in finally block to prevent double-write
+        # Using def instead of lambda per PEP 8 / ruff E731 (lambdas should only be used for simple inline callbacks)
+        def atexit_callback():
+            """Fallback log saver for unexpected termination."""
+            if _log_data_global:
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)
+        atexit.register(atexit_callback)
 
         # Define common paths used throughout the orchestration.
         log_file_path = self.project_dir / self.log_file_name
         pyproject_file_path = self.project_dir / "pyproject.toml"
 
         # --- RESTORED & ENHANCED: Detailed Startup Banner ---
+        # Python environment diagnostics for troubleshooting version mismatches
+        import sys
+        current_python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        uv_python_env = os.environ.get("UV_PYTHON", "not set")
+
         banner_lines = [
             "🚀 PYUVSTARTER - Modern Python Project Automation",
             "─" * 60,
@@ -4026,6 +4864,10 @@ class CLICommand(BaseSettings):
             f"Dry Run: {'Yes - Preview Only' if self.dry_run else 'No - Making Changes'}",
             f"GitIgnore Support: {'Enabled' if self.use_gitignore else 'Disabled'}",
             f"Execution Log: {self.log_file_name}",
+            "─" * 60,
+            "Python Environment:",
+            f"  Current Python: {current_python_version}",
+            f"  UV_PYTHON env: {uv_python_env}",
             "─" * 60,
             "This tool will automate project setup using the modern `uv` ecosystem, performing:",
             " ✓ Initialization: Ensure project structure and `uv` tool availability.",
@@ -4051,13 +4893,25 @@ class CLICommand(BaseSettings):
         try:
             # Step 1: Ensure uv is installed and verified.
             if not _ensure_uv_installed(self.dry_run):
-                raise SystemExit("`uv` could not be installed or verified.")
+                error_msg = "`uv` could not be installed or verified."
+                _log_action("uv_install_critical_failure", "ERROR", error_msg)
+                _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+                _log_data_global["final_summary"] = error_msg
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
+                safe_typer_secho(f"\n💥 CRITICAL: {error_msg}", fg=typer.colors.RED, bold=True, err=True)
+                raise SystemExit(error_msg)
             _log_action("ensure_uv_installed", "SUCCESS", "uv installation verified successfully.")
             major_action_results.append(("uv_installed", "SUCCESS"))
 
             # Step 2: Ensure pyproject.toml exists and project is initialized.
             if not _ensure_project_initialized(self.project_dir, self.dry_run):
-                raise SystemExit("Project could not be initialized with 'pyproject.toml'.")
+                error_msg = "Project could not be initialized with 'pyproject.toml'."
+                _log_action("project_init_critical_failure", "ERROR", error_msg)
+                _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+                _log_data_global["final_summary"] = error_msg
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
+                safe_typer_secho(f"\n💥 CRITICAL: {error_msg}", fg=typer.colors.RED, bold=True, err=True)
+                raise SystemExit(error_msg)
             _log_action("ensure_project_initialized_with_pyproject", "SUCCESS", "Project structure and pyproject.toml initialized successfully.")
             major_action_results.append(("project_initialized", "SUCCESS"))
 
@@ -4093,7 +4947,13 @@ class CLICommand(BaseSettings):
 
             # Critical check: ensure the venv Python executable exists after creation (if not dry run).
             if not self.dry_run and not venv_python_executable.exists():
-                raise SystemExit(f"CRITICAL ERROR: Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command.")
+                error_msg = f"CRITICAL ERROR: Virtual environment Python executable not found at '{venv_python_executable}' after `uv venv` command."
+                _log_action("venv_python_missing", "ERROR", error_msg, details={"expected_path": str(venv_python_executable)})
+                _log_data_global["overall_status"] = "CRITICAL_FAILURE"
+                _log_data_global["final_summary"] = error_msg
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
+                safe_typer_secho(f"\n💥 {error_msg}", fg=typer.colors.RED, bold=True, err=True)
+                raise SystemExit(error_msg)
             elif self.dry_run:
                 _log_action("create_or_verify_venv", "INFO", "In dry-run mode: assuming virtual environment would be ready.")
             else:
@@ -4104,10 +4964,7 @@ class CLICommand(BaseSettings):
             _ensure_tool_available("pipreqs", major_action_results, self.dry_run, website="https://github.com/bndr/pipreqs")
             _ensure_tool_available("ruff", major_action_results, self.dry_run, website="https://docs.astral.sh/ruff/")
 
-            # Step 6: Run unused import checks, e.g., Ruff unused import detection.
-            _run_ruff_unused_import_check(self.project_dir, major_action_results, self.dry_run)
-
-            # Step 7: Discover dependencies from all code sources.
+            # Step 6: Discover dependencies from all code sources BEFORE ruff auto-fixes imports.
             declared_deps = _get_declared_dependencies(pyproject_file_path)
             discovery_result = discover_dependencies_in_scope(
                 scan_path=self.project_dir,
@@ -4117,6 +4974,9 @@ class CLICommand(BaseSettings):
             )
             # Discovery result is logged by discover_dependencies_in_scope() function
             major_action_results.append(("code_dep_discovery", "SUCCESS"))
+
+            # Step 7: Run import analysis and auto-fix (unused imports + relative imports) AFTER dependency discovery.
+            _run_ruff_unused_import_check(self.project_dir, major_action_results, self.dry_run)
 
             # Step 8: Manage project dependencies (add/remove from pyproject.toml, sync with venv).
             _log_action("manage_project_dependencies", "INFO", "Managing project dependencies via 'pyproject.toml'.")
@@ -4233,32 +5093,99 @@ class CLICommand(BaseSettings):
                         # All three attempts failed
                         phase3_conflicts = result_phase3.get("conflicts", [])
 
-                        _log_action("dependency_resolution_failed", "ERROR",
-                                  "Unable to automatically resolve package dependencies",
+                        # All three bulk attempts failed - try one-by-one as absolute last resort
+                        # This follows "Graceful Recovery" and "Solve Problems FOR Users" philosophy
+                        _log_action("dependency_resolution_fallback_individual", "WARN",
+                                  "⚠️  All bulk installation attempts failed.\n"
+                                  "    Final attempt: Trying packages individually to salvage what's compatible...",
                                   details={
-                                      "what_we_tried": {
-                                          "attempt_1": "Exact version numbers - conflicted with Python version",
-                                          "attempt_2": "Flexible version ranges - still had conflicts",
-                                          "attempt_3": "No version numbers - could not find compatible set"
-                                      },
-                                      "action": "Manual intervention needed - see instructions below",
-                                      "common_causes": [
-                                          "Package name typo (e.g., 'numpy' vs 'nunpy')",
-                                          "Package doesn't exist on PyPI (https://pypi.org)",
-                                          "Package requires system libraries not installed",
-                                          "Could not reach PyPI servers to download packages"
-                                      ]
+                                      "strategy": "Last resort - install any compatible packages, report specific failures",
+                                      "what_we_tried_before": {
+                                          "attempt_1": "Bulk install with exact version numbers - had conflicts",
+                                          "attempt_2": "Bulk install with flexible version ranges - had conflicts",
+                                          "attempt_3": "Bulk install without version constraints - could not resolve dependencies"
+                                      }
                                   })
 
-                        # Update conflicts for manual guidance section
-                        # Prefer phase 2 conflicts as they're usually more informative
-                        if conflicts_from_phase2:
-                            conflicts = conflicts_from_phase2
-                        else:
-                            conflicts = phase3_conflicts or []
+                        # Use DRY helper function for one-by-one installation
+                        successful_packages, failed_packages_with_reasons = _try_packages_individually(
+                            sorted(packages_no_versions),
+                            self.project_dir,
+                            action_prefix="uv_add_retry_exhausted"
+                        )
 
-                        # Pass through the error for manual guidance
-                        result = result_phase3
+                        # Report results with specific, actionable feedback
+                        if successful_packages:
+                            _log_action("individual_install_partial_success", "SUCCESS",
+                                      f"✅ Successfully installed {len(successful_packages)}/{len(packages_no_versions)} packages:\n" +
+                                      "\n".join(f"  • {pkg}" for pkg in successful_packages[:15]) +
+                                      (f"\n  ... and {len(successful_packages) - 15} more" if len(successful_packages) > 15 else ""))
+                            major_action_results.append(("dependency_management", "PARTIAL_SUCCESS"))
+
+                        if failed_packages_with_reasons:
+                            # Build failure summary with package-specific guidance
+                            failure_lines = [f"⚠️  Failed to install {len(failed_packages_with_reasons)}/{len(packages_no_versions)} packages:\n"]
+
+                            # Show failed packages with reasons
+                            for pkg, reason in failed_packages_with_reasons[:15]:
+                                failure_lines.append(f"  • {pkg}: {reason}")
+
+                            if len(failed_packages_with_reasons) > 15:
+                                failure_lines.append(f"  ... and {len(failed_packages_with_reasons) - 15} more (see log)")
+
+                            # Collect all unique suggested actions from failed packages
+                            all_suggestions = set()
+                            for pkg, reason in failed_packages_with_reasons:
+                                # Extract package name from specifier
+                                pkg_name = _extract_package_name_from_specifier(pkg) if isinstance(pkg, str) else pkg
+                                suggestions = _get_suggested_actions_for_error_type(reason, pkg_name)
+                                all_suggestions.update(suggestions)
+
+                            # Add suggested actions section
+                            if all_suggestions:
+                                failure_lines.append("\n💡 SUGGESTED ACTIONS:")
+                                for suggestion in sorted(all_suggestions):
+                                    failure_lines.append(f"    {suggestion}")
+
+                            # Add general next steps
+                            failure_lines.extend([
+                                "\n📋 NEXT STEPS:",
+                                "    1. Your project can use the successfully installed packages",
+                                "    2. Review the suggested actions above for each failure type",
+                                "    3. For detailed diagnostics, check the JSON log file"
+                            ])
+
+                            failure_summary = "\n".join(failure_lines)
+                            _log_action("individual_install_partial_failure", "WARN", failure_summary,
+                                      details={"failed_packages": [{"package": pkg, "reason": reason} for pkg, reason in failed_packages_with_reasons]})
+
+                        # If we got at least some packages, consider it acceptable and continue
+                        if successful_packages:
+                            # Partial success - clear the error and continue with project setup
+                            result = None
+                        else:
+                            # Total failure - all packages failed even individually
+                            _log_action("dependency_resolution_failed", "ERROR",
+                                      "❌ Could not install any packages even when trying individually.",
+                                      details={
+                                          "what_we_tried": {
+                                              "attempt_1": "Bulk install with exact version numbers - had conflicts",
+                                              "attempt_2": "Bulk install with flexible version ranges - had conflicts",
+                                              "attempt_3": "Bulk install without version constraints - could not resolve dependencies",
+                                              "attempt_4": "Individual package installation - see specific failures below"
+                                          },
+                                          "failed_packages": failed_packages_with_reasons[:20],
+                                          "action": "Check the specific failure reasons above for each package"
+                                      })
+
+                            # Update conflicts for manual guidance section
+                            if conflicts_from_phase2:
+                                conflicts = conflicts_from_phase2
+                            else:
+                                conflicts = phase3_conflicts or []
+
+                            # Pass through the error for manual guidance
+                            result = result_phase3
 
                 # Only show manual fix guidance if all attempts failed
                 if isinstance(result, dict) and result.get("status") == "NEEDS_UNPINNED_RETRY":
@@ -4347,26 +5274,22 @@ class CLICommand(BaseSettings):
                 _run_command(["uv", "sync", "--python", str(venv_python_executable)], "uv_sync_dependencies_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
                 _log_action("uv_final_sync", "SUCCESS", "Environment synced successfully.")
                 major_action_results.append(("uv_final_sync", "SUCCESS"))
-            except subprocess.CalledProcessError as e:
+            except subprocess.CalledProcessError:
                 # Sync failed - log the error but don't crash the entire script
                 # This allows users to see what was accomplished and get actionable guidance
                 _log_action("uv_final_sync", "WARN",
-                           f"⚠️  Environment sync failed. Some packages may be incompatible with your Python version.\n"
-                           f"   The script will continue to show what was accomplished.\n"
-                           f"   See error details above for specific package conflicts.")
+                           "⚠️  Environment sync failed. Some packages may be incompatible with your Python version.\n"
+                           "   The script will continue to show what was accomplished.\n"
+                           "   See error details above for specific package conflicts.")
                 major_action_results.append(("uv_final_sync", "FAILED"))
 
                 # Read requires-python from pyproject.toml for guidance
                 requires_python_str = "not specified"
                 try:
-                    if sys.version_info >= (3, 11):
-                        import tomllib
+                    if tomllib is not None:
                         with open(pyproject_file_path, "rb") as f:
                             pyproject_data = tomllib.load(f)
-                    else:
-                        with open(pyproject_file_path, "rb") as f:
-                            pyproject_data = toml.load(f)
-                    requires_python_str = pyproject_data.get('project', {}).get('requires-python', 'not specified')
+                        requires_python_str = pyproject_data.get('project', {}).get('requires-python', 'not specified')
                 except Exception:
                     pass  # If we can't read it, just use default
 
@@ -4418,7 +5341,7 @@ class CLICommand(BaseSettings):
                 "venv_ready": "Virtual Environment",
                 "pipreqs_cli_tool": "Dependency Scanner",
                 "ruff_cli_tool": "Code Quality Tool",
-                "ruff_unused_import_check": "Unused Import Check",
+                "ruff_import_analysis": "Import Analysis & Auto-Fix",
                 "code_dep_discovery": "Dependency Discovery",
                 "dependency_management": "Package Installation",
                 "notebook_exec_support": "Notebook Support",
@@ -4464,10 +5387,12 @@ class CLICommand(BaseSettings):
             # Caught for clean exits initiated by other functions.
             vscode_settings_status = "FAILED"
             vscode_launch_status = "FAILED"
-            _log_action("script_halted_by_logic", "ERROR", f"SCRIPT HALTED: {e}")
+            error_detail = f"SCRIPT HALTED: {e}. Exit code: {e.code if hasattr(e, 'code') else 'unknown'}"
+            _log_action("script_halted_by_logic", "ERROR", error_detail, details={"exception": str(e), "type": "SystemExit"})
             _log_data_global["overall_status"] = "HALTED_BY_SCRIPT_LOGIC"
-            _log_data_global["final_summary"] = f"Script halted by explicit exit: {e}"
-            safe_typer_secho(f"\n💥 Script halted: {e}", fg=typer.colors.RED, bold=True)
+            _log_data_global["final_summary"] = error_detail
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
+            safe_typer_secho(f"\n💥 Script halted: {error_detail}", fg=typer.colors.RED, bold=True, err=True)
             raise typer.Exit(code=1) # Re-raise to exit Typer properly.
         except subprocess.CalledProcessError as e:
             failed_cmd_str = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
@@ -4482,7 +5407,7 @@ class CLICommand(BaseSettings):
             _log_data_global["final_summary"] = error_message
 
             # Provide specific, actionable hints based on the failed command.
-            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True, err=True)
             cmd_str_lower = failed_cmd_str.lower()
             if "uv pip install" in cmd_str_lower or "uv add" in cmd_str_lower or "uv sync" in cmd_str_lower:
                 _log_action("install_sync_hint", "WARN", f"INSTALLATION/SYNC HINT: A package operation with `uv` failed.\n  - Review `uv`'s error output (logged as FAIL_STDOUT/FAIL_STDERR for the command) for specific package names or reasons.\n  - Ensure the package name is correct and exists on PyPI (https://pypi.org) or your configured index.\n  - Some packages require system-level (non-Python) libraries to be installed first. Check the package's documentation.\n  - You might need to manually edit 'pyproject.toml' and then run `uv sync --python {venv_python_executable}`.")
@@ -4497,7 +5422,8 @@ class CLICommand(BaseSettings):
             elif "brew" in cmd_str_lower:
                 _log_action("brew_hint", "WARN", "Homebrew might be required for some installations. Ensure it's installed and working.")
 
-            safe_typer_secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED)
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
+            safe_typer_secho("\nSetup aborted due to a critical command failure. See log for details.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         except FileNotFoundError as e:
             # Caught for missing external executables (e.g., 'uv' itself, 'brew', 'curl').
@@ -4509,12 +5435,13 @@ class CLICommand(BaseSettings):
             _log_data_global["overall_status"] = "MISSING_SYSTEM_COMMAND"
             _log_data_global["final_summary"] = error_message
 
-            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True)
+            safe_typer_secho(f"\n💥 CRITICAL ERROR: {error_message}", fg=typer.colors.RED, bold=True, err=True)
             if cmd_name == "brew":
-                safe_typer_secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW)
+                safe_typer_secho("HINT: For Homebrew on macOS, see https://brew.sh/", fg=typer.colors.YELLOW, err=True)
             elif cmd_name == "curl":
-                safe_typer_secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW)
-            safe_typer_secho("Setup aborted.", fg=typer.colors.RED)
+                safe_typer_secho("HINT: For curl, see your OS package manager (e.g., 'sudo apt install curl' or 'sudo yum install curl').", fg=typer.colors.YELLOW, err=True)
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
+            safe_typer_secho("Setup aborted.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         except Exception as e:
             # Catch-all for any unexpected errors.
@@ -4527,18 +5454,25 @@ class CLICommand(BaseSettings):
             })
             _log_data_global["overall_status"] = "UNEXPECTED_ERROR"
             _log_data_global["final_summary"] = error_message
+            _save_log(self, checkpoint=CHECKPOINT_SAVE)  # Immediate error checkpoint
 
-            safe_typer_secho(f"\n💥 AN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", fg=typer.colors.RED, bold=True)
-            safe_typer_secho(f"{tb_str}\nSetup aborted due to an unexpected error. Please review the traceback and the JSON log.", fg=typer.colors.RED)
+            safe_typer_secho(f"\n💥 AN UNEXPECTED CRITICAL ERROR OCCURRED: {e}", fg=typer.colors.RED, bold=True, err=True)
+            safe_typer_secho(f"{tb_str}\nSetup aborted due to an unexpected error. Please review the traceback and the JSON log.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1)
         finally:
+            # Unregister atexit callback to prevent double-write (finally block handles normal save)
+            try:
+                atexit.unregister(atexit_callback)
+            except (NameError, ValueError):
+                pass  # atexit_callback not defined or already unregistered
+
             # Ensure the log file is always saved at the end of the execution,
             # even if an error caused an early exit.
             if _log_data_global: # Only save if _init_log was called successfully.
                 # Update summary in log with VS Code config status (restored from deprecated main).
                 _log_data_global["vscode_settings_json_status"] = vscode_settings_status
                 _log_data_global["vscode_launch_json_status"] = vscode_launch_status
-                _save_log(self)
+                _save_log(self, checkpoint=FINAL_SAVE)  # Complete final save
 
             # Restore the original working directory
             try:
@@ -4609,14 +5543,14 @@ def main(
     try:
         command = CLICommand(**cli_kwargs)  # noqa: F841 - Instance creation triggers validation
     except ValidationError as e:
-        safe_typer_secho("\u274c Configuration validation error:", fg=typer.colors.RED, bold=True)  # ❌
+        safe_typer_secho("\u274c Configuration validation error:", fg=typer.colors.RED, bold=True, err=True)  # ❌
         for error in e.errors():
             field = " -> ".join(str(loc) for loc in error['loc'])
-            safe_typer_secho("  • {}: {}".format(field, error['msg']), fg=typer.colors.RED)
+            safe_typer_secho("  • {}: {}".format(field, error['msg']), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
     except Exception as e:
-        safe_typer_secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True)
-        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED)
+        safe_typer_secho(f"\n💥 Unexpected error during initialization: {e}", fg=typer.colors.RED, bold=True, err=True)
+        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
 # new main with app() is new functionality to repair and keep
@@ -4632,7 +5566,7 @@ if __name__ == "__main__":
         # This is a last-resort error handler for issues *before* the model_post_init
         # can log them (e.g., Typer internal errors or Pydantic ValidationError
         # if the CLI input format is totally wrong).
-        safe_typer_secho(f"\n💥 A critical error occurred during application startup: {e}", fg=typer.colors.RED, bold=True)
-        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED)
-        safe_typer_secho("Setup aborted due to an unexpected startup error.", fg=typer.colors.RED)
+        safe_typer_secho(f"\n💥 A critical error occurred during application startup: {e}", fg=typer.colors.RED, bold=True, err=True)
+        safe_typer_secho(traceback.format_exc(), fg=typer.colors.RED, err=True)
+        safe_typer_secho("Setup aborted due to an unexpected startup error.", fg=typer.colors.RED, err=True)
         sys.exit(1)

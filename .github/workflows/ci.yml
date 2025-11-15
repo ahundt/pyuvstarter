@@ -9,6 +9,8 @@ on:
 permissions:
   contents: read
   checks: write
+  pull-requests: write  # Required for EnricoMi/publish-unit-test-result-action to comment on PRs
+  issues: read  # Required to read PR information
 
 jobs:
   test:
@@ -27,6 +29,11 @@ jobs:
           # Windows can be flaky with older Python
           - os: windows-latest
             python-version: "3.11"
+
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      PYUVSTARTER_TEST_OS: ${{ matrix.os }}
+      PYUVSTARTER_TEST_PYTHON: ${{ matrix.python-version }}
 
     steps:
     - name: Checkout repository
@@ -51,8 +58,15 @@ jobs:
 
     - name: Install pyuvstarter dependencies
       run: |
-        uv venv
+        # Use explicit version + UV_PYTHON env var for maximum robustness
+        uv venv --python ${{ matrix.python-version }}
         uv sync
+
+    - name: Verify Python version in venv
+      run: |
+        uv run python --version
+        echo "Expected: Python ${{ matrix.python-version }}"
+        echo "UV_PYTHON env var: $UV_PYTHON"
 
     - name: Check Python syntax
       run: |
@@ -69,8 +83,8 @@ jobs:
 
     - name: Install pyuvstarter as tool
       run: |
-        # Install pyuvstarter as a global tool for testing
-        uv tool install .
+        # Install pyuvstarter as a global tool with explicit Python version + UV_PYTHON env var
+        uv tool install . --python ${{ matrix.python-version }}
 
     - name: Test pyuvstarter as installed package
       run: |
@@ -83,10 +97,15 @@ jobs:
         echo "🧪 INTEGRATION TEST: Isolated environment"
         echo "========================================="
         TEST_FAILED=0
-        # Create a completely separate test environment
+        # Create isolated test environment with explicit Python version + UV_PYTHON env var
         cd ${{ runner.temp }}
-        uv venv test-env
+        uv venv test-env --python ${{ matrix.python-version }}
         source test-env/bin/activate
+        # Verify Python version matches expected
+        echo "🔍 Python version in isolated env:"
+        python --version
+        echo "Expected: Python ${{ matrix.python-version }}"
+        echo "UV_PYTHON=$UV_PYTHON"
         # Install from the built wheel using uv
         uv pip install ${{ github.workspace }}/dist/pyuvstarter-*.whl
         # Test the installed command
@@ -112,10 +131,15 @@ jobs:
         Write-Host "🧪 INTEGRATION TEST: Isolated environment (Windows)"
         Write-Host "================================================="
         $TEST_FAILED = 0
-        # Create a completely separate test environment
+        # Create isolated test environment with explicit Python version + UV_PYTHON env var
         cd $env:RUNNER_TEMP
-        uv venv test-env
+        uv venv test-env --python ${{ matrix.python-version }}
         . test-env\Scripts\activate
+        # Verify Python version matches expected
+        Write-Host "🔍 Python version in isolated env:"
+        python --version
+        Write-Host "Expected: Python ${{ matrix.python-version }}"
+        Write-Host "UV_PYTHON=$env:UV_PYTHON"
         # Install from the built wheel
         $wheel = Get-ChildItem "${{ github.workspace }}\dist\*.whl" | Select-Object -First 1
         uv pip install $wheel.FullName
@@ -155,9 +179,6 @@ jobs:
       if: runner.os != 'Windows'
       working-directory: ${{ github.workspace }}
       run: |
-        # Activate the virtual environment so pyuvstarter dependencies are available
-        source .venv/bin/activate
-
         chmod +x create_demo.sh create_demo2.sh
 
         echo ""
@@ -173,7 +194,8 @@ jobs:
           fi
           TEST_COUNT=$((TEST_COUNT + 1))
           echo "Running: $test_file"
-          if python "$test_file"; then
+          # Use uv run to execute test file (respects UV_PYTHON env var)
+          if uv run "$test_file"; then
             echo "✅ $test_file PASSED"
           else
             echo "❌ $test_file FAILED"
@@ -184,41 +206,88 @@ jobs:
 
         if [ $TEST_COUNT -eq 0 ]; then
           echo "⚠️  No Python unit tests found - skipping"
+          PYTEST_EXIT_CODE=0
         elif [ "$TESTS_PASSED" = false ]; then
           echo "❌ Python unit tests failed"
-          exit 1
+          PYTEST_EXIT_CODE=1
         else
           echo "✅ All Python unit tests passed ($TEST_COUNT tests)"
+          PYTEST_EXIT_CODE=0
         fi
 
+        # Run the demo script tests
         echo ""
         echo "Running create_demo2.sh unit tests..."
         echo "DEBUG: UNIT_TEST_MODE and file generation check:"
         ./create_demo2.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo2"
         DEMO2_EXIT_CODE=$?
-        
+
+        echo "DEBUG: Copying test results from demo directory..."
+        if [ -f "${{ runner.temp }}/pyuvstarter_demo2/test_results.xml" ]; then
+          cp "${{ runner.temp }}/pyuvstarter_demo2/test_results.xml" ./
+          echo "✅ Copied test_results.xml from demo directory"
+        else
+          echo "⚠️  test_results.xml not found in demo directory"
+        fi
+
         echo "DEBUG: Checking for test_results.xml..."
         ls -la test_results* || echo "No test_results* files found"
 
         echo "Running create_demo.sh unit tests..."
         ./create_demo.sh --unit-test --demo-dir "${{ runner.temp }}/pyuvstarter_demo1"
         DEMO1_EXIT_CODE=$?
-        # Note: create_demo.sh doesn't generate test_results.xml
 
-        # Check if either test suite failed
-        if [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ]; then
+        echo "DEBUG: Checking for test results from demo1..."
+        if [ -f "${{ runner.temp }}/pyuvstarter_demo1/test_results.xml" ]; then
+          cp "${{ runner.temp }}/pyuvstarter_demo1/test_results.xml" ./test_results_demo1.xml
+          echo "✅ Copied test_results_demo1.xml from demo1 directory"
+        fi
+
+        # Run comprehensive test suite
+        echo ""
+        echo "🧪 Running comprehensive test suite..."
+        echo "===================================="
+        if [ -x "tests/run_all_tests.sh" ]; then
+          chmod +x tests/run_all_tests.sh
+          ./tests/run_all_tests.sh
+          COMPREHENSIVE_EXIT_CODE=$?
+
+          echo "DEBUG: Checking for comprehensive test results..."
+          # Comprehensive tests might generate test results in different locations
+          if [ -f "test_results.xml" ]; then
+            echo "✅ Found test_results.xml from comprehensive tests"
+          elif [ -f "tests/test_results.xml" ]; then
+            cp tests/test_results.xml ./test_results_comprehensive.xml
+            echo "✅ Copied test_results_comprehensive.xml from tests directory"
+          fi
+        else
+          echo "⚠️  Comprehensive test runner not found - skipping"
+          COMPREHENSIVE_EXIT_CODE=0
+        fi
+
+        # Check if any test suite failed
+        if [ $PYTEST_EXIT_CODE -ne 0 ] || [ $DEMO2_EXIT_CODE -ne 0 ] || [ $DEMO1_EXIT_CODE -ne 0 ] || [ $COMPREHENSIVE_EXIT_CODE -ne 0 ]; then
           echo "❌ Unit tests failed"
+          echo "Python unit tests exit code: $PYTEST_EXIT_CODE"
+          echo "Demo1 exit code: $DEMO1_EXIT_CODE"
+          echo "Demo2 exit code: $DEMO2_EXIT_CODE"
+          echo "Comprehensive test exit code: $COMPREHENSIVE_EXIT_CODE"
           exit 1
         fi
         echo "✅ All unit tests passed"
+
+        # Final check for all test results before publishing
+        echo ""
+        echo "DEBUG: Final check for all test result files before publishing..."
+        ls -la test_results*.xml || echo "No test_results*.xml files found for publishing"
 
     - name: Publish Test Results
       if: always() && runner.os == 'Linux'
       uses: EnricoMi/publish-unit-test-result-action@v2
       with:
-        files: test_results.xml
-        check_name: "PyUVStarter Unit Tests"
-        comment_title: "PyUVStarter Test Results"
+        files: test_results*.xml
+        check_name: "PyUVStarter Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
+        comment_title: "PyUVStarter Test Results (${{ matrix.os }}, py${{ matrix.python-version }})"
         github_token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Run unit tests (Windows)
@@ -232,8 +301,8 @@ jobs:
         mkdir test_windows
         cd test_windows
         Write-Host "📁 Created test directory: $(Get-Location)"
-        Write-Host "🚀 Running: pyuvstarter ."
-        pyuvstarter .
+        Write-Host "🚀 Running: uv tool run pyuvstarter ."
+        uv tool run pyuvstarter .
         Write-Host ""
         Write-Host "🔍 Verifying generated files:"
         if (Test-Path "pyproject.toml") { 

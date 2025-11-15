@@ -1,6 +1,6 @@
 [project]
 name = "pyuvstarter"
-version = "0.2.0" # You can update the version as you develop
+version = "0.3.0" # You can update the version as you develop
 description = "A script to automate Python project setup using uv, focusing on pyproject.toml, and configuring VS Code."
 readme = "README.md"
 requires-python = ">=3.11" # The pyuvstarter.py script aims for 3.11+ compatibility
@@ -38,5 +38,14 @@ backend-path = ["."] # Tells setuptools to look for build-related files in the c
 # The correct key is 'py-modules' (with a hyphen).
 [tool.setuptools]
 py-modules = ["pyuvstarter"]
+
+# Ruff linter configuration
+# Excludes test fixtures that contain intentional code issues for testing pyuvstarter's
+# ability to detect and fix problems. These fixtures must NOT be "fixed" by linting.
+[tool.ruff]
+exclude = [
+    "tests/fixtures/",           # Test fixtures with intentional dependency/import issues
+    "tests/test_import_projects/",  # Test fixtures with intentional relative import issues
+]
 
 
