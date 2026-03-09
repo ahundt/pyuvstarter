@@ -1806,3 +1806,121 @@ def test_releasing_md_normalizes_project_name():
         assert result is True
         content = (root / "RELEASING.md").read_text()
         assert "my-cool-tool" in content, "Should show PyPI-normalized name"
+
+
+# ── Edge case tests ────────────────────────────────────────────────────────────
+
+
+def test_detect_build_backend_pdm_uses_uv():
+    """Unknown backend (pdm) should fall through to uv build/publish."""
+    from pyuvstarter import _detect_build_backend
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[build-system]\nbuild-backend = "pdm.backend"\n'
+        )
+        build_cmd, publish_cmd = _detect_build_backend(root)
+        assert build_cmd == "uv build"
+        assert publish_cmd == "uv publish"
+
+
+def test_releasing_md_updates_pip_to_uv_pip():
+    """RELEASING.md TestPyPI verification should use uv pip install."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "myproj"\nversion = "0.1.0"\n')
+        result = _create_releasing_doc(root, dry_run=False, owner="testowner")
+        assert result is True
+        content = (root / "RELEASING.md").read_text()
+        assert "uv pip install" in content, "Should use uv pip install for TestPyPI verification"
+        # Should NOT have bare 'pip install' (without 'uv' prefix)
+        for line in content.split("\n"):
+            if "pip install" in line:
+                assert "uv pip install" in line, f"Bare pip install found: {line}"
+
+
+def test_publish_yml_setuptools_also_triggers_update():
+    """publish.yml with 'python -m build' should also be detected as outdated."""
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        old_content = "name: Publish\njobs:\n  build:\n    steps:\n      - run: python -m build\n"
+        (wf_dir / "publish.yml").write_text(old_content)
+        result = _create_publish_workflow(root, dry_run=False, build_cmd="uv build")
+        assert result is True
+        new_content = (wf_dir / "publish.yml").read_text()
+        assert "uv build" in new_content, "Should have uv build after update"
+        assert "python -m build" not in new_content, "Should NOT have python -m build"
+
+
+def test_publish_yml_flit_also_triggers_update():
+    """publish.yml with 'flit build' should also be detected as outdated."""
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        old_content = "name: Publish\njobs:\n  build:\n    steps:\n      - run: flit build\n"
+        (wf_dir / "publish.yml").write_text(old_content)
+        result = _create_publish_workflow(root, dry_run=False, build_cmd="uv build")
+        assert result is True
+        new_content = (wf_dir / "publish.yml").read_text()
+        assert "uv build" in new_content
+        assert "flit build" not in new_content
+
+
+def test_releasing_md_normalizes_dots_and_mixed_case():
+    """PyPI normalizes dots, mixed case: My.Cool.Tool -> my-cool-tool."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "My.Cool.Tool"\nversion = "0.1.0"\n')
+        result = _create_releasing_doc(root, dry_run=False, owner="testowner")
+        assert result is True
+        content = (root / "RELEASING.md").read_text()
+        assert "my-cool-tool" in content, "Should normalize dots, mixed case to hyphens-lowercase"
+
+
+def test_releasing_md_already_normalized_name_unchanged():
+    """Already-normalized project name should pass through unchanged."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "my-project"\nversion = "0.1.0"\n')
+        result = _create_releasing_doc(root, dry_run=False, owner="testowner")
+        assert result is True
+        content = (root / "RELEASING.md").read_text()
+        assert "my-project" in content
+
+
+def test_releasing_md_consecutive_separators():
+    """Consecutive underscores/dots normalize to single hyphen (PEP 503)."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "my__tool"\nversion = "0.1.0"\n')
+        result = _create_releasing_doc(root, dry_run=False, owner="testowner")
+        assert result is True
+        content = (root / "RELEASING.md").read_text()
+        assert "my-tool" in content, "Consecutive underscores should normalize to single hyphen"
+        assert "my--tool" not in content, "Should NOT have double hyphens"
+
+
+def test_releasing_md_updates_twine_to_uv():
+    """RELEASING.md with 'twine upload dist/*' should be updated to 'uv publish'."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "myproj"\nversion = "0.1.0"\n')
+        releasing = root / "RELEASING.md"
+        releasing.write_text("# Releasing\n\n## PyPI Publishing\npython -m build\ntwine upload dist/*\n")
+        result = _create_releasing_doc(root, dry_run=False, build_cmd="uv build", publish_cmd="uv publish")
+        assert result is True
+        content = releasing.read_text()
+        assert "uv build" in content
+        assert "uv publish" in content
+        assert "python -m build" not in content
+        assert "twine upload" not in content
