@@ -985,3 +985,212 @@ def test_existing_license_not_overwritten_by_standalone():
         # No new LICENSE file should be created either
         assert not (project_dir / "LICENSE").exists(), \
             "Should not create LICENSE when License.md already exists"
+
+
+# ─── Gap 0: publish.yml test job ─────────────────────────────
+
+
+def test_publish_yml_has_test_job():
+    """Generated publish.yml should include test: job using ci.yml."""
+    fixture = ProjectFixture(
+        name="publish_test_job",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        publish_yml = project_dir / ".github" / "workflows" / "publish.yml"
+        assert publish_yml.exists(), "publish.yml should be created"
+        content = publish_yml.read_text(encoding="utf-8")
+
+        assert "test:" in content, "publish.yml should have a test: job"
+        assert "uses: ./.github/workflows/ci.yml" in content, "test job should reference ci.yml"
+        assert "needs: test" in content, "build job should depend on test job"
+        assert "shell: bash" in content, "version check should have shell: bash for Windows compat"
+
+
+# ─── Gap 1: workflow_call injection ──────────────────────────
+
+
+def test_workflow_call_injected_into_ci_yml():
+    """When ci.yml exists without workflow_call, it should be injected."""
+    fixture = ProjectFixture(
+        name="wf_call_inject",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # Create a ci.yml without workflow_call
+        workflows_dir = project_dir / ".github" / "workflows"
+        workflows_dir.mkdir(parents=True, exist_ok=True)
+        ci_yml = workflows_dir / "ci.yml"
+        ci_yml.write_text(
+            "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\n"
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n",
+            encoding="utf-8",
+        )
+
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        content = ci_yml.read_text(encoding="utf-8")
+        assert "workflow_call" in content, "workflow_call should be injected into ci.yml"
+        assert "push:" in content, "push trigger should still be present"
+        assert "pull_request:" in content, "pull_request trigger should still be present"
+
+
+def test_workflow_call_already_present_skipped():
+    """When ci.yml already has workflow_call, it should be skipped."""
+    fixture = ProjectFixture(
+        name="wf_call_skip",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        workflows_dir = project_dir / ".github" / "workflows"
+        workflows_dir.mkdir(parents=True, exist_ok=True)
+        ci_yml = workflows_dir / "ci.yml"
+        original = (
+            "name: CI\n\non:\n  push:\n    branches: [main]\n  workflow_call:\n\n"
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        ci_yml.write_text(original, encoding="utf-8")
+
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0
+
+        content = ci_yml.read_text(encoding="utf-8")
+        assert content.count("workflow_call") == 1, "Should not duplicate workflow_call"
+
+
+def test_no_ci_yml_skipped():
+    """When no ci.yml exists, injection should be skipped gracefully."""
+    fixture = ProjectFixture(
+        name="no_ci_yml",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+
+# ─── Gap 2: Changelog URL ────────────────────────────────────
+
+
+def test_changelog_url_in_fresh_project():
+    """Fresh project should get Changelog URL in project.urls."""
+    fixture = ProjectFixture(
+        name="changelog_fresh",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        urls = data.get("project", {}).get("urls", {})
+        assert "Changelog" in urls, "Changelog should be in project.urls"
+        assert "/releases" in urls["Changelog"], "Changelog URL should point to /releases"
+
+
+def test_changelog_added_to_existing_urls():
+    """When urls exist but Changelog is missing, it should be added."""
+    fixture = ProjectFixture(
+        name="changelog_existing",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # First run to create project with urls
+        executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+
+        # Remove Changelog from urls and re-run
+        data = _read_toml(project_dir / "pyproject.toml")
+        if "Changelog" in data.get("project", {}).get("urls", {}):
+            del data["project"]["urls"]["Changelog"]
+        import toml as _toml_writer
+        with open(project_dir / "pyproject.toml", "w") as f:
+            _toml_writer.dump(data, f)
+
+        # Delete publish.yml so --prepare-pypi re-runs fully
+        publish_yml = project_dir / ".github" / "workflows" / "publish.yml"
+        if publish_yml.exists():
+            publish_yml.unlink()
+
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        assert "Changelog" in data["project"]["urls"], "Changelog should be re-added"
+
+
+# ─── Gap 3: RELEASING.md ─────────────────────────────────────
+
+
+def test_releasing_md_created_fresh():
+    """Fresh project should get RELEASING.md."""
+    fixture = ProjectFixture(
+        name="releasing_fresh",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        releasing = project_dir / "RELEASING.md"
+        assert releasing.exists(), "RELEASING.md should be created"
+        content = releasing.read_text(encoding="utf-8")
+        assert "PyPI" in content, "Should contain PyPI publishing section"
+        assert "Trusted Publisher" in content or "testpypi" in content, "Should contain setup instructions"
+
+
+def test_releasing_md_appended_when_exists_without_pypi():
+    """Existing RELEASING.md without PyPI section should get it appended."""
+    fixture = ProjectFixture(
+        name="releasing_append",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        releasing = project_dir / "RELEASING.md"
+        releasing.write_text("# Releasing\n\n## Version bump\n\n1. Bump version\n2. Tag\n3. Push\n", encoding="utf-8")
+
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0
+
+        content = releasing.read_text(encoding="utf-8")
+        assert "Version bump" in content, "Original content should be preserved"
+        assert "PyPI" in content, "PyPI section should be appended"
+
+
+def test_releasing_md_skipped_when_pypi_exists():
+    """RELEASING.md with existing PyPI content should not be modified."""
+    fixture = ProjectFixture(
+        name="releasing_skip",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        releasing = project_dir / "RELEASING.md"
+        original = "# Releasing\n\n## PyPI Publishing\n\nAlready documented.\n"
+        releasing.write_text(original, encoding="utf-8")
+
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0
+
+        content = releasing.read_text(encoding="utf-8")
+        assert content == original, "RELEASING.md should not be modified when PyPI section exists"

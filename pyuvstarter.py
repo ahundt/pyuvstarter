@@ -4956,6 +4956,8 @@ def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool)
     success = _create_license_file(project_root, license_type, dry_run) and success
     success = _create_readme_template(project_root, dry_run) and success
     success = _create_publish_workflow(project_root, dry_run) and success
+    success = _add_workflow_call_trigger(project_root, dry_run) and success
+    success = _create_releasing_doc(project_root, dry_run) and success
 
     if success:
         _log_action(action_name, "SUCCESS", "PyPI metadata setup complete. Review placeholder values in pyproject.toml.")
@@ -5048,7 +5050,12 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
                 "Homepage": f"https://github.com/USERNAME/{name}",
                 "Repository": f"https://github.com/USERNAME/{name}",
                 "Issues": f"https://github.com/USERNAME/{name}/issues",
+                "Changelog": f"https://github.com/USERNAME/{name}/releases",
             }
+            modified = True
+        elif "Changelog" not in project.get("urls", {}):
+            name = project.get("name", project_root.name)
+            project["urls"]["Changelog"] = f"https://github.com/USERNAME/{name}/releases"
             modified = True
 
         if not modified:
@@ -5212,7 +5219,11 @@ on:
     tags: ['v*']
 
 jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -5221,6 +5232,7 @@ jobs:
           python-version: '3.13'
 
       - name: Verify tag matches package version
+        shell: bash
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           PKG_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
@@ -5272,6 +5284,177 @@ jobs:
         return True
     except Exception as e:
         _log_action(action_name, "ERROR", f"Failed to create publish workflow: {e}")
+        return False
+
+
+def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
+    """Add workflow_call trigger to existing ci.yml so publish.yml can reuse it."""
+    action_name = "add_workflow_call_trigger"
+    ci_path = project_root / ".github" / "workflows" / "ci.yml"
+
+    if not ci_path.exists():
+        _log_action(action_name, "INFO", "No .github/workflows/ci.yml found. Skipping workflow_call injection.")
+        return True
+
+    try:
+        content = ci_path.read_text(encoding="utf-8")
+
+        if "workflow_call" in content:
+            _log_action(action_name, "INFO", "ci.yml already has workflow_call trigger. Skipping.")
+            return True
+
+        # Find the on: block — handle both on: and "on":
+        lines = content.splitlines(keepends=True)
+        on_line_idx = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped in ("on:", '"on":', "'on':"):
+                on_line_idx = i
+                break
+
+        if on_line_idx is None:
+            _log_action(action_name, "WARN", "Could not find 'on:' block in ci.yml. Skipping workflow_call injection.")
+            return True
+
+        # Check for compact single-line format like "on: push"
+        stripped_on = lines[on_line_idx].strip()
+        if stripped_on not in ("on:", '"on":', "'on':"):
+            _log_action(action_name, "WARN",
+                       f"ci.yml uses compact on: format ('{stripped_on}'). Cannot safely inject workflow_call. Skipping.")
+            return True
+
+        # Find insertion point: after on: line, skip all indented trigger lines,
+        # then insert workflow_call before the next non-trigger content
+        insert_idx = on_line_idx + 1
+        while insert_idx < len(lines):
+            line = lines[insert_idx]
+            stripped = line.strip()
+            # Continue past indented lines (triggers) and blank lines within on: block
+            if stripped == "" or line[0] in (" ", "\t"):
+                insert_idx += 1
+            else:
+                break
+
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Would add workflow_call trigger to ci.yml")
+            return True
+
+        # Insert workflow_call as the last trigger before the next top-level key
+        workflow_call_line = "  workflow_call:  # Allow publish.yml to reuse this workflow\n"
+        lines.insert(insert_idx, workflow_call_line)
+
+        ci_path.write_text("".join(lines), encoding="utf-8")
+        _log_action(action_name, "SUCCESS", "Added workflow_call trigger to ci.yml for publish.yml reuse.")
+        return True
+
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to add workflow_call to ci.yml: {e}")
+        return False
+
+
+def _create_releasing_doc(project_root: Path, dry_run: bool) -> bool:
+    """Generate or update RELEASING.md with PyPI publishing instructions."""
+    action_name = "create_releasing_doc"
+    releasing_path = project_root / "RELEASING.md"
+    name = project_root.name
+
+    # Try to get project name from pyproject.toml
+    pyproject_path = project_root / "pyproject.toml"
+    if pyproject_path.exists():
+        try:
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:
+                import toml as tomllib
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f) if hasattr(tomllib, 'load') and sys.version_info >= (3, 11) else __import__('toml').load(f)
+            name = data.get("project", {}).get("name", name)
+        except Exception:
+            pass
+
+    pypi_section = f"""
+## PyPI Publishing (automated via GitHub Actions)
+
+After pushing the tag (step above), GitHub Actions will:
+1. Run the full CI test suite (via reusable `ci.yml` workflow)
+2. Verify the tag version matches `pyproject.toml` version
+3. Build wheel + sdist with `uv build`
+4. Publish to TestPyPI (requires `testpypi` environment)
+5. Publish to PyPI (requires `pypi` environment approval if configured)
+
+### First-time setup (one-time)
+
+1. Create accounts on [pypi.org](https://pypi.org/account/register/) and [test.pypi.org](https://test.pypi.org/account/register/)
+2. Enable 2FA on both accounts (required by PyPI)
+3. Configure **Trusted Publishers** on both sites:
+   - PyPI Project Name: `{name}`
+   - Owner: `USERNAME`
+   - Repository: `{name}`
+   - Workflow: `publish.yml`
+   - Environment: `pypi` (or `testpypi`)
+4. Create GitHub Environments in repo Settings → Environments:
+   - `testpypi` (no protection rules needed)
+   - `pypi` (add required reviewers for manual approval gate)
+5. Pin action versions to commit SHAs: `npx pin-github-action .github/workflows/publish.yml`
+
+### First-time TestPyPI verification
+
+```bash
+pip install --index-url https://test.pypi.org/simple/ \\
+    --extra-index-url https://pypi.org/simple/ \\
+    {name}
+```
+
+### Manual publishing (fallback)
+
+```bash
+uv build
+uv publish  # uses Trusted Publisher OIDC if run in GitHub Actions
+```
+"""
+
+    if releasing_path.exists():
+        existing = releasing_path.read_text(encoding="utf-8")
+        if "PyPI" in existing or "Trusted Publisher" in existing:
+            _log_action(action_name, "INFO", "RELEASING.md already contains PyPI publishing info. Skipping.")
+            return True
+
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Would append PyPI publishing section to RELEASING.md")
+            return True
+
+        try:
+            with open(releasing_path, "a", encoding="utf-8") as f:
+                f.write(pypi_section)
+            _log_action(action_name, "SUCCESS", "Appended PyPI publishing section to existing RELEASING.md.")
+            return True
+        except Exception as e:
+            _log_action(action_name, "ERROR", f"Failed to update RELEASING.md: {e}")
+            return False
+
+    # Create new RELEASING.md
+    full_template = f"""# Releasing {name}
+
+## Version bump checklist
+
+1. Update `pyproject.toml` `version = "X.Y.Z"`
+2. Run full tests
+3. Commit: `git commit -m "chore(version): bump to X.Y.Z"`
+4. Tag: `git tag vX.Y.Z`
+5. Push: `git push origin main --tags`
+{pypi_section}"""
+
+    if dry_run:
+        _log_action(action_name, "INFO", "DRY RUN: Would create RELEASING.md")
+        return True
+
+    try:
+        with open(releasing_path, "w", encoding="utf-8") as f:
+            f.write(full_template)
+        _log_action(action_name, "SUCCESS", "Created RELEASING.md with version bump checklist and PyPI publishing docs.")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create RELEASING.md: {e}")
         return False
 
 
@@ -6063,7 +6246,9 @@ class CLICommand(BaseSettings):
                 "uv_final_sync": "Environment Sync",
                 "vscode_config": "VS Code Setup",
                 "license_file": "License File",
-                "pypi_metadata": "PyPI Publishing Setup"
+                "pypi_metadata": "PyPI Publishing Setup",
+                "workflow_call_trigger": "CI Workflow Reuse",
+                "releasing_doc": "Release Documentation"
             }
 
             summary_lines = [
