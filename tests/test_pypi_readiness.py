@@ -1,0 +1,987 @@
+#!/usr/bin/env python3
+"""
+Tests for pyuvstarter --prepare-pypi feature.
+
+Tests that --prepare-pypi correctly generates PyPI publishing metadata:
+- LICENSE file with correct template for each supported license type
+- README.md template when missing
+- pyproject.toml metadata fields (classifiers, keywords, authors, urls, license)
+- .github/workflows/publish.yml with Trusted Publisher OIDC workflow
+- Non-destructive behavior: existing files are not overwritten
+- Idempotent re-runs: running twice produces same result
+- Edge cases: unknown license types, missing pyproject.toml, dry-run mode
+"""
+
+import sys
+import os
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from tests.test_utils import (
+    ProjectFixture, temp_manager, executor
+)
+
+# Helpers for reading TOML in tests
+try:
+    import tomllib
+except ImportError:
+    import toml as tomllib  # type: ignore[no-redef]
+
+
+def _read_toml(path: Path) -> dict:
+    """Read a TOML file, handling both tomllib and toml package APIs."""
+    if hasattr(tomllib, "load") and "rb" in str(tomllib.load.__code__.co_varnames[:1]):
+        # tomllib (stdlib) needs binary mode
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    else:
+        # toml package uses text mode
+        import toml
+        with open(path, "r", encoding="utf-8") as f:
+            return toml.load(f)
+
+
+# ── Fresh project: all files generated ──────────────────────────────
+
+
+def test_prepare_pypi_generates_all_files():
+    """--prepare-pypi on a fresh project should create LICENSE, README.md, publish.yml, and update pyproject.toml."""
+    fixture = ProjectFixture(
+        name="pypi_fresh",
+        files={
+            "main.py": "print('hello')\n",
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, (
+            f"--prepare-pypi failed (exit={result.returncode}).\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+        # All expected files should exist
+        assert (project_dir / "LICENSE").exists(), "LICENSE file should be created"
+        assert (project_dir / "README.md").exists(), "README.md should be created"
+        assert (project_dir / ".github" / "workflows" / "publish.yml").exists(), "publish.yml should be created"
+
+        # pyproject.toml should have PyPI metadata
+        data = _read_toml(project_dir / "pyproject.toml")
+        project = data.get("project", {})
+        assert "license" in project, "license field should be added"
+        assert "classifiers" in project, "classifiers should be added"
+        assert "keywords" in project, "keywords should be added"
+        assert "authors" in project, "authors should be added"
+        assert "readme" in project, "readme field should be added"
+
+
+# ── Existing files are NOT overwritten ──────────────────────────────
+
+
+def test_prepare_pypi_does_not_overwrite_existing_readme():
+    """--prepare-pypi should skip README.md if it already exists."""
+    original_readme = "# My Custom README\n\nDo not overwrite this.\n"
+    fixture = ProjectFixture(
+        name="pypi_existing_readme",
+        files={
+            "main.py": "print('hello')\n",
+            "README.md": original_readme,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        # README should be unchanged
+        actual = (project_dir / "README.md").read_text(encoding="utf-8")
+        assert actual == original_readme, "README.md should not be overwritten"
+
+
+def test_prepare_pypi_does_not_overwrite_existing_license():
+    """--prepare-pypi should skip LICENSE if it already exists."""
+    original_license = "My custom license text\n"
+    fixture = ProjectFixture(
+        name="pypi_existing_license",
+        files={
+            "main.py": "print('hello')\n",
+            "LICENSE": original_license,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        actual = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert actual == original_license, "LICENSE should not be overwritten"
+
+
+def test_prepare_pypi_does_not_overwrite_existing_publish_workflow():
+    """--prepare-pypi should skip publish.yml if it already exists."""
+    original_workflow = "name: My Custom Workflow\non: push\n"
+    fixture = ProjectFixture(
+        name="pypi_existing_workflow",
+        files={
+            "main.py": "print('hello')\n",
+            ".github/workflows/publish.yml": original_workflow,
+        },
+        directories=[".github/workflows"],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        actual = (project_dir / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+        assert actual == original_workflow, "publish.yml should not be overwritten"
+
+
+def test_prepare_pypi_does_not_overwrite_existing_toml_fields():
+    """--prepare-pypi should not overwrite existing PyPI metadata fields in pyproject.toml."""
+    fixture = ProjectFixture(
+        name="pypi_existing_metadata",
+        files={
+            "main.py": "print('hello')\n",
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # After pyuvstarter creates the initial pyproject.toml, manually add some fields
+        # then re-run with --prepare-pypi to verify they're preserved
+        result1 = executor.run_pyuvstarter(
+            project_dir,
+            args=["--verbose"],
+        )
+        assert result1.returncode == 0, f"Initial run failed: {result1.stderr}"
+
+        # Now add a custom license to pyproject.toml
+        import toml
+        pyproject_path = project_dir / "pyproject.toml"
+        data = _read_toml(pyproject_path)
+        data.setdefault("project", {})["license"] = {"text": "Proprietary"}
+        data["project"]["authors"] = [{"name": "Test Author", "email": "test@example.com"}]
+        with open(pyproject_path, "w", encoding="utf-8") as f:
+            toml.dump(data, f)
+
+        # Run --prepare-pypi — should not overwrite license or authors
+        result2 = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result2.returncode == 0, f"--prepare-pypi failed: {result2.stderr}"
+
+        data2 = _read_toml(pyproject_path)
+        project = data2.get("project", {})
+        assert project.get("license") == {"text": "Proprietary"}, "license should not be overwritten"
+        assert project["authors"][0]["name"] == "Test Author", "authors should not be overwritten"
+
+
+# ── License type variants ───────────────────────────────────────────
+
+
+def test_prepare_pypi_apache_license():
+    """--prepare-pypi --license Apache-2.0 should generate Apache license text."""
+    fixture = ProjectFixture(
+        name="pypi_apache",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "Apache-2.0", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "Apache License" in license_text, "Should contain Apache license text"
+        assert "Version 2.0" in license_text, "Should reference Apache 2.0"
+
+
+def test_prepare_pypi_gpl_license():
+    """--prepare-pypi --license GPL-3.0 should generate GPL license text."""
+    fixture = ProjectFixture(
+        name="pypi_gpl",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "GPL-3.0", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "GNU General Public License" in license_text, "Should contain GPL text"
+
+
+def test_prepare_pypi_bsd_license():
+    """--prepare-pypi --license BSD-3-Clause should generate BSD license text."""
+    fixture = ProjectFixture(
+        name="pypi_bsd",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "BSD-3-Clause", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "BSD 3-Clause" in license_text, "Should contain BSD 3-Clause text"
+
+
+def test_prepare_pypi_mit_license_default():
+    """--prepare-pypi with no --license should default to MIT."""
+    fixture = ProjectFixture(
+        name="pypi_mit_default",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "MIT License" in license_text, "Default license should be MIT"
+
+
+# ── Classifiers auto-generation ─────────────────────────────────────
+
+
+def test_prepare_pypi_classifiers_from_python_version():
+    """Classifiers should include Python version derived from requires-python."""
+    fixture = ProjectFixture(
+        name="pypi_classifiers",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        classifiers = data.get("project", {}).get("classifiers", [])
+
+        # Should have base Python 3 classifier
+        assert "Programming Language :: Python :: 3" in classifiers, "Should have Python 3 classifier"
+        # Should have Development Status classifier
+        assert any("Development Status" in c for c in classifiers), "Should have Development Status classifier"
+        # Should have license classifier (MIT by default)
+        assert any("MIT" in c for c in classifiers), "Should have MIT license classifier"
+
+
+def test_prepare_pypi_license_classifier_matches_flag():
+    """License classifier should match the --license flag."""
+    fixture = ProjectFixture(
+        name="pypi_license_classifier",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "Apache-2.0", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        classifiers = data.get("project", {}).get("classifiers", [])
+        assert any("Apache" in c for c in classifiers), f"Should have Apache classifier, got: {classifiers}"
+
+
+# ── publish.yml content validation ──────────────────────────────────
+
+
+def test_prepare_pypi_publish_workflow_content():
+    """Generated publish.yml should have correct structure for Trusted Publisher OIDC."""
+    fixture = ProjectFixture(
+        name="pypi_workflow_content",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        workflow_text = (project_dir / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+
+        # Must have tag trigger
+        assert "tags:" in workflow_text, "Workflow should trigger on tags"
+        assert "'v*'" in workflow_text, "Workflow should trigger on v* tags"
+
+        # Must have id-token: write for OIDC
+        assert "id-token: write" in workflow_text, "Workflow must request id-token: write for OIDC"
+
+        # Must have pypi-publish action
+        assert "pypa/gh-action-pypi-publish" in workflow_text, "Workflow must use pypi-publish action"
+
+        # Must have version check step
+        assert "TAG_VERSION" in workflow_text, "Workflow should verify tag matches package version"
+
+        # Must have both testpypi and pypi jobs
+        assert "testpypi" in workflow_text, "Workflow should publish to TestPyPI"
+        assert "publish-pypi" in workflow_text, "Workflow should publish to PyPI"
+
+        # Must have environment references
+        assert "environment:" in workflow_text, "Workflow should use GitHub environments"
+
+
+# ── Edge cases ──────────────────────────────────────────────────────
+
+
+def test_prepare_pypi_unknown_license_type():
+    """--prepare-pypi --license UNKNOWN should skip LICENSE but not crash."""
+    fixture = ProjectFixture(
+        name="pypi_unknown_license",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "UNKNOWN-LICENSE", "--verbose"],
+        )
+        # Should not crash — may return 0 with a warning about unknown license
+        # The other files should still be generated even if license fails
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        # LICENSE should NOT be created for unknown license
+        assert not (project_dir / "LICENSE").exists(), "LICENSE should not be created for unknown license type"
+
+        # But README and workflow should still be created
+        assert (project_dir / "README.md").exists(), "README.md should still be created"
+        assert (project_dir / ".github" / "workflows" / "publish.yml").exists(), "publish.yml should still be created"
+
+
+def test_prepare_pypi_dry_run():
+    """--prepare-pypi --dry-run should not create any files."""
+    fixture = ProjectFixture(
+        name="pypi_dry_run",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--dry-run", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        # In dry-run, LICENSE and publish.yml should NOT be created
+        # (README.md might exist if pyuvstarter creates it in its non-pypi step)
+        assert not (project_dir / "LICENSE").exists(), "LICENSE should not be created in dry-run"
+        assert not (project_dir / ".github" / "workflows" / "publish.yml").exists(), "publish.yml should not be created in dry-run"
+
+
+def test_prepare_pypi_idempotent():
+    """Running --prepare-pypi twice should produce the same result."""
+    fixture = ProjectFixture(
+        name="pypi_idempotent",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # First run
+        result1 = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result1.returncode == 0, f"First run failed: {result1.stderr}"
+
+        # Capture file contents after first run
+        license1 = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        readme1 = (project_dir / "README.md").read_text(encoding="utf-8")
+        workflow1 = (project_dir / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+        toml1 = _read_toml(project_dir / "pyproject.toml")
+
+        # Second run
+        result2 = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result2.returncode == 0, f"Second run failed: {result2.stderr}"
+
+        # All files should be identical
+        assert (project_dir / "LICENSE").read_text(encoding="utf-8") == license1, "LICENSE changed on re-run"
+        assert (project_dir / "README.md").read_text(encoding="utf-8") == readme1, "README.md changed on re-run"
+        assert (project_dir / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8") == workflow1, "publish.yml changed on re-run"
+
+        # TOML metadata should be identical
+        toml2 = _read_toml(project_dir / "pyproject.toml")
+        assert toml2.get("project", {}).get("license") == toml1.get("project", {}).get("license"), "license changed on re-run"
+        assert toml2.get("project", {}).get("classifiers") == toml1.get("project", {}).get("classifiers"), "classifiers changed on re-run"
+
+
+def test_prepare_pypi_keywords_from_project_name():
+    """Keywords should be generated from the project name by splitting on _ and -."""
+    fixture = ProjectFixture(
+        name="my_awesome_tool",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        keywords = data.get("project", {}).get("keywords", [])
+        assert len(keywords) > 0, "keywords should be generated"
+        # The project name splits on _ so keywords should contain parts of the name
+        assert "my" in keywords or "awesome" in keywords or "tool" in keywords, (
+            f"keywords should contain parts of project name, got: {keywords}"
+        )
+
+
+def test_prepare_pypi_urls_use_placeholder():
+    """Generated URLs should use USERNAME placeholder since pyuvstarter has no git dependency."""
+    fixture = ProjectFixture(
+        name="pypi_urls",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        urls = data.get("project", {}).get("urls", {})
+        assert "USERNAME" in urls.get("Homepage", ""), f"Homepage should have USERNAME placeholder, got: {urls}"
+        assert "/issues" in urls.get("Issues", ""), f"Issues URL should end with /issues, got: {urls}"
+
+
+def test_prepare_pypi_uv_build_succeeds():
+    """After --prepare-pypi, `uv build` should succeed on the generated project."""
+    fixture = ProjectFixture(
+        name="pypi_build_check",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # First set up the project with --prepare-pypi
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"--prepare-pypi failed: {result.stderr}"
+
+        # Then try to build
+        import subprocess
+        build_result = subprocess.run(
+            ["uv", "build"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert build_result.returncode == 0, (
+            f"uv build failed after --prepare-pypi.\n"
+            f"stdout: {build_result.stdout}\nstderr: {build_result.stderr}"
+        )
+
+        # dist/ directory should contain wheel and sdist
+        dist_dir = project_dir / "dist"
+        assert dist_dir.exists(), "dist/ directory should exist after uv build"
+        dist_files = list(dist_dir.iterdir())
+        assert len(dist_files) >= 2, f"Expected wheel + sdist, got: {[f.name for f in dist_files]}"
+
+
+# ── Auto-detection and custom license ───────────────────────────────
+
+
+def test_prepare_pypi_auto_detects_mit_license():
+    """--license auto should detect MIT from an existing LICENSE file."""
+    mit_text = """MIT License
+
+Copyright (c) 2025 Test Author
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction.
+"""
+    fixture = ProjectFixture(
+        name="pypi_auto_mit",
+        files={
+            "main.py": "print('hello')\n",
+            "LICENSE": mit_text,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],  # default is --license auto
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        assert license_val.get("text") == "MIT", f"Should detect MIT license, got: {license_val}"
+
+        # LICENSE file should NOT be overwritten
+        actual = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert actual == mit_text, "Existing LICENSE should not be overwritten"
+
+
+def test_prepare_pypi_auto_detects_apache_license():
+    """--license auto should detect Apache-2.0 from an existing LICENSE file."""
+    apache_text = """Apache License
+Version 2.0, January 2004
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+"""
+    fixture = ProjectFixture(
+        name="pypi_auto_apache",
+        files={
+            "main.py": "print('hello')\n",
+            "LICENSE": apache_text,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        assert license_val.get("text") == "Apache-2.0", f"Should detect Apache-2.0, got: {license_val}"
+
+
+def test_prepare_pypi_auto_detects_license_md():
+    """--license auto should detect license from LICENSE.md (not just LICENSE)."""
+    bsd_text = """BSD 3-Clause License
+
+Copyright (c) 2025, Test Author
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice.
+2. Redistributions in binary form must reproduce the above copyright notice.
+3. Neither the name of the copyright holder nor the names of its contributors.
+"""
+    fixture = ProjectFixture(
+        name="pypi_auto_license_md",
+        files={
+            "main.py": "print('hello')\n",
+            "LICENSE.md": bsd_text,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        assert license_val.get("text") == "BSD-3-Clause", f"Should detect BSD-3-Clause from LICENSE.md, got: {license_val}"
+
+
+def test_prepare_pypi_custom_license_from_unrecognized_file():
+    """--license auto should use 'custom' with file reference for unrecognized LICENSE content."""
+    custom_text = """CUSTOM PROPRIETARY LICENSE
+
+This software is proprietary. All rights reserved.
+No part of this software may be reproduced without permission.
+"""
+    fixture = ProjectFixture(
+        name="pypi_custom_license",
+        files={
+            "main.py": "print('hello')\n",
+            "LICENSE": custom_text,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        # Custom license should use file reference, not text
+        assert license_val.get("file") == "LICENSE", f"Custom license should use file reference, got: {license_val}"
+
+        # LICENSE file should NOT be overwritten
+        actual = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert actual == custom_text, "Custom LICENSE should not be overwritten"
+
+
+def test_prepare_pypi_explicit_license_overrides_auto():
+    """--license MIT should use MIT even if auto-detection would find something else."""
+    apache_text = """Apache License Version 2.0"""
+    fixture = ProjectFixture(
+        name="pypi_explicit_override",
+        files={
+            "main.py": "print('hello')\n",
+            "LICENSE": apache_text,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "MIT", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        # Should use explicit MIT, not auto-detected Apache
+        assert license_val.get("text") == "MIT", f"Explicit --license should override auto-detection, got: {license_val}"
+
+
+def test_prepare_pypi_auto_no_license_file_defaults_mit():
+    """--license auto with no LICENSE file should default to MIT."""
+    fixture = ProjectFixture(
+        name="pypi_auto_no_license",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        assert license_val.get("text") == "MIT", f"No LICENSE file should default to MIT, got: {license_val}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "MIT License" in license_text, "Should generate MIT LICENSE file"
+
+
+# ── Standalone --license (without --prepare-pypi) ───────────────────
+
+
+def test_standalone_license_creates_file():
+    """--license MIT (without --prepare-pypi) should create LICENSE file."""
+    fixture = ProjectFixture(
+        name="standalone_license",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--license", "MIT", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        assert (project_dir / "LICENSE").exists(), "LICENSE file should be created with standalone --license"
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "MIT License" in license_text, "LICENSE should contain MIT text"
+
+
+def test_standalone_license_apache():
+    """--license Apache-2.0 (without --prepare-pypi) should create Apache LICENSE."""
+    fixture = ProjectFixture(
+        name="standalone_apache",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--license", "Apache-2.0", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        assert (project_dir / "LICENSE").exists(), "LICENSE file should be created"
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "Apache License" in license_text, "LICENSE should contain Apache text"
+
+
+def test_standalone_license_does_not_create_pypi_metadata():
+    """--license MIT (without --prepare-pypi) should NOT create publish.yml or modify pyproject.toml metadata."""
+    fixture = ProjectFixture(
+        name="standalone_no_pypi",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--license", "MIT", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        # publish.yml should NOT be created
+        assert not (project_dir / ".github" / "workflows" / "publish.yml").exists(), \
+            "publish.yml should NOT be created without --prepare-pypi"
+
+
+# ── Case-insensitive license file detection ─────────────────────────
+
+
+def test_case_insensitive_license_detection():
+    """Auto-detection should find 'License' (mixed case) files."""
+    mit_text = "MIT License\n\nPermission is hereby granted, free of charge.\n"
+    fixture = ProjectFixture(
+        name="case_insensitive_license",
+        files={
+            "main.py": "print('hello')\n",
+            "License": mit_text,  # Mixed case
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        assert license_val.get("text") == "MIT", f"Should detect MIT from 'License' file, got: {license_val}"
+
+
+def test_case_insensitive_license_txt():
+    """Auto-detection should find 'license.txt' (lowercase) files."""
+    gpl_text = "GNU General Public License\nVersion 3, 29 June 2007\n"
+    fixture = ProjectFixture(
+        name="case_insensitive_license_txt",
+        files={
+            "main.py": "print('hello')\n",
+            "license.txt": gpl_text,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        data = _read_toml(project_dir / "pyproject.toml")
+        license_val = data.get("project", {}).get("license", {})
+        assert license_val.get("text") == "GPL-3.0", f"Should detect GPL-3.0 from 'license.txt', got: {license_val}"
+
+
+def test_apache_license_contains_canonical_text():
+    """Generated Apache-2.0 LICENSE should contain key phrases from the canonical text at apache.org."""
+    fixture = ProjectFixture(
+        name="apache_canonical",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "Apache-2.0", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        # Key phrases from the canonical Apache 2.0 text (https://www.apache.org/licenses/LICENSE-2.0.txt)
+        assert "Version 2.0, January 2004" in license_text, "Should contain version header"
+        assert "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION" in license_text, "Should contain terms header"
+        assert "Grant of Copyright License" in license_text, "Should contain Section 2"
+        assert "Grant of Patent License" in license_text, "Should contain Section 3"
+        assert "Redistribution" in license_text, "Should contain Section 4"
+        assert "Disclaimer of Warranty" in license_text, "Should contain Section 7"
+        assert "Limitation of Liability" in license_text, "Should contain Section 8"
+        assert "END OF TERMS AND CONDITIONS" in license_text, "Should contain end marker"
+        assert "APPENDIX" in license_text, "Should contain the APPENDIX"
+
+
+def test_mit_license_contains_canonical_text():
+    """Generated MIT LICENSE should contain the canonical phrases from opensource.org."""
+    fixture = ProjectFixture(
+        name="mit_canonical",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "MIT", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "MIT License" in license_text, "Should have MIT header"
+        assert "Permission is hereby granted, free of charge" in license_text, "Should have canonical grant"
+        assert "THE SOFTWARE IS PROVIDED" in license_text, "Should have warranty disclaimer"
+        assert "WITHOUT WARRANTY OF ANY KIND" in license_text, "Should disclaim warranties"
+
+
+def test_bsd_license_contains_canonical_text():
+    """Generated BSD-3-Clause LICENSE should contain canonical phrases from opensource.org."""
+    fixture = ProjectFixture(
+        name="bsd_canonical",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "BSD-3-Clause", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "BSD 3-Clause License" in license_text, "Should have BSD header"
+        assert "Redistribution and use in source and binary forms" in license_text, "Should have redistribution clause"
+        assert "Neither the name of the copyright holder" in license_text, "Should have clause 3"
+        assert "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS" in license_text, "Should have disclaimer"
+
+
+def test_gpl_license_contains_canonical_text():
+    """Generated GPL-3.0 LICENSE should contain the standard FSF notice and reference."""
+    fixture = ProjectFixture(
+        name="gpl_canonical",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--prepare-pypi", "--license", "GPL-3.0", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        license_text = (project_dir / "LICENSE").read_text(encoding="utf-8")
+        assert "GNU General Public License" in license_text, "Should reference GPL"
+        assert "either version 3 of the License" in license_text, "Should reference version 3"
+        assert "https://www.gnu.org/licenses/" in license_text, "Should link to full GPL text"
+
+
+def test_existing_license_not_overwritten_by_standalone():
+    """--license MIT should not overwrite an existing license file (case-insensitive)."""
+    original = "My Custom License\n"
+    fixture = ProjectFixture(
+        name="no_overwrite_case",
+        files={
+            "main.py": "print('hello')\n",
+            "License.md": original,
+        },
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--license", "MIT", "--verbose"],
+        )
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        # Original file should be unchanged
+        actual = (project_dir / "License.md").read_text(encoding="utf-8")
+        assert actual == original, "Existing License.md should not be overwritten"
+
+        # No new LICENSE file should be created either
+        assert not (project_dir / "LICENSE").exists(), \
+            "Should not create LICENSE when License.md already exists"

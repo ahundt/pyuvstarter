@@ -4591,6 +4591,690 @@ app = typer.Typer(
     pretty_exceptions_show_locals=True,  # Show local variables for detailed error diagnosis
 )
 
+# --- PyPI Publishing Helpers ---
+
+_LICENSE_TEMPLATES: dict[str, str] = {
+    "MIT": """MIT License
+
+Copyright (c) {year} {author}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+""",
+    # Full canonical text from https://www.apache.org/licenses/LICENSE-2.0.txt
+    # The APPENDIX uses [yyyy] and [name of copyright owner] as placeholders.
+    # _create_license_file substitutes these instead of the usual {{year}}/{{author}}.
+    "Apache-2.0": """
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+""",
+    # Standard GPL-3.0 header per https://www.gnu.org/licenses/gpl-howto.html
+    # The full GPL text (674 lines) is too long to embed. This is the standard
+    # "How to Apply" notice that the FSF recommends placing in each source file.
+    # Users should also include the full GPL text from https://www.gnu.org/licenses/gpl-3.0.txt
+    "GPL-3.0": """Copyright (C) {year} {author}
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+The full text of the GNU General Public License version 3 can be found at:
+https://www.gnu.org/licenses/gpl-3.0.txt
+""",
+    "BSD-3-Clause": """BSD 3-Clause License
+
+Copyright (c) {year}, {author}
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+""",
+}
+
+
+def _find_license_file(project_root: Path) -> Path | None:
+    """Find an existing license file in the project root, case-insensitive.
+
+    Checks common names: LICENSE, LICENCE, LICENSE.md, LICENSE.txt, and case variants.
+    Returns the Path if found, None otherwise.
+    """
+    # Check exact known names first (fast path)
+    for name in ("LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md", "LICENCE.txt"):
+        candidate = project_root / name
+        if candidate.exists():
+            return candidate
+
+    # Case-insensitive fallback: scan directory for license* files
+    try:
+        for entry in project_root.iterdir():
+            if entry.is_file() and entry.name.lower().startswith("licen") and not entry.name.startswith("."):
+                return entry
+    except OSError:
+        pass
+
+    return None
+
+
+def _detect_license_from_file(project_root: Path) -> str | None:
+    """Try to detect the license type from an existing LICENSE or LICENSE.md file.
+
+    Returns an SPDX identifier if detected, or None if no license file or unrecognized.
+    """
+    license_path = _find_license_file(project_root)
+    if license_path is None:
+        return None
+
+    try:
+        content = license_path.read_text(encoding="utf-8", errors="replace")
+        content_lower = content.lower()
+        if "mit license" in content_lower or "permission is hereby granted, free of charge" in content_lower:
+            return "MIT"
+        if "apache license" in content_lower and "version 2.0" in content_lower:
+            return "Apache-2.0"
+        if "gnu general public license" in content_lower and "version 3" in content_lower:
+            return "GPL-3.0"
+        if "bsd 3-clause" in content_lower or ("redistribution and use" in content_lower and "neither the name" in content_lower):
+            return "BSD-3-Clause"
+        if "gnu general public license" in content_lower and "version 2" in content_lower:
+            return "GPL-2.0"
+        # File exists but license type not recognized
+        return "custom"
+    except Exception:
+        return None
+
+
+def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool) -> bool:
+    """Orchestrate PyPI readiness setup: metadata, license, readme, workflow."""
+    action_name = "prepare_pypi_metadata"
+    pyproject_path = project_root / "pyproject.toml"
+
+    if not pyproject_path.exists():
+        _log_action(action_name, "ERROR", "pyproject.toml not found. Run pyuvstarter without --prepare-pypi first.")
+        return False
+
+    # Auto-detect license from existing file if --license is "auto"
+    if license_type == "auto":
+        detected = _detect_license_from_file(project_root)
+        if detected and detected != "custom":
+            _log_action(action_name, "INFO", f"Auto-detected license: {detected}")
+            license_type = detected
+        elif detected == "custom":
+            _log_action(action_name, "INFO", "Found LICENSE file but could not identify type. Using 'custom' — license field in pyproject.toml will use file reference.")
+            license_type = "custom"
+        else:
+            _log_action(action_name, "INFO", "No LICENSE file found. Defaulting to MIT.")
+            license_type = "MIT"
+
+    _log_action(action_name, "INFO", "Adding PyPI publishing metadata...")
+
+    success = True
+    success = _add_pypi_toml_metadata(project_root, license_type, dry_run) and success
+    success = _create_license_file(project_root, license_type, dry_run) and success
+    success = _create_readme_template(project_root, dry_run) and success
+    success = _create_publish_workflow(project_root, dry_run) and success
+
+    if success:
+        _log_action(action_name, "SUCCESS", "PyPI metadata setup complete. Review placeholder values in pyproject.toml.")
+    else:
+        _log_action(action_name, "WARN", "PyPI metadata setup completed with some issues. Check log for details.")
+
+    return success
+
+
+def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool) -> bool:
+    """Add PyPI metadata fields to pyproject.toml. Only adds missing fields."""
+    action_name = "add_pypi_toml_metadata"
+    pyproject_path = project_root / "pyproject.toml"
+
+    try:
+        # Read current content
+        if tomllib is not None:
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+        else:
+            import toml as _toml_reader
+            with open(pyproject_path, "r", encoding="utf-8") as f:
+                data = _toml_reader.load(f)
+
+        project = data.setdefault("project", {})
+        modified = False
+
+        # Only add fields that don't exist yet
+        if "readme" not in project:
+            project["readme"] = "README.md"
+            modified = True
+
+        if "license" not in project:
+            if license_type == "custom":
+                project["license"] = {"file": "LICENSE"}
+            else:
+                project["license"] = {"text": license_type}
+            modified = True
+
+        if "authors" not in project:
+            project["authors"] = [{"name": "Your Name", "email": "your@email.com"}]
+            modified = True
+
+        if "classifiers" not in project:
+            classifiers = [
+                "Development Status :: 3 - Alpha",
+                "Intended Audience :: Developers",
+                "Programming Language :: Python :: 3",
+            ]
+            # Try to extract Python version from requires-python
+            requires_python = project.get("requires-python", "")
+            if requires_python:
+                try:
+                    from packaging.specifiers import SpecifierSet
+                    spec = SpecifierSet(requires_python)
+                    # Extract minimum version from specifiers
+                    for s in spec:
+                        if s.operator in (">=", "~=", "=="):
+                            parts = s.version.split(".")
+                            if len(parts) >= 2:
+                                major_minor = f"{parts[0]}.{parts[1]}"
+                                classifiers.append(f"Programming Language :: Python :: {major_minor}")
+                            break
+                except Exception:
+                    pass
+
+            # Add license classifier
+            license_classifiers = {
+                "MIT": "License :: OSI Approved :: MIT License",
+                "Apache-2.0": "License :: OSI Approved :: Apache Software License",
+                "GPL-3.0": "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+                "BSD-3-Clause": "License :: OSI Approved :: BSD License",
+            }
+            if license_type in license_classifiers:
+                classifiers.append(license_classifiers[license_type])
+
+            project["classifiers"] = classifiers
+            modified = True
+
+        if "keywords" not in project:
+            # Generate keywords from project name
+            name = project.get("name", project_root.name)
+            keywords = [w for w in name.replace("-", "_").split("_") if w]
+            project["keywords"] = keywords
+            modified = True
+
+        if "urls" not in project:
+            name = project.get("name", project_root.name)
+            project["urls"] = {
+                "Homepage": f"https://github.com/USERNAME/{name}",
+                "Repository": f"https://github.com/USERNAME/{name}",
+                "Issues": f"https://github.com/USERNAME/{name}/issues",
+            }
+            modified = True
+
+        if not modified:
+            _log_action(action_name, "INFO", "All PyPI metadata fields already present. No changes needed.")
+            return True
+
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Would add PyPI metadata to pyproject.toml")
+            return True
+
+        # Check for comments in existing file (warning about formatting loss)
+        with open(pyproject_path, "r", encoding="utf-8") as f:
+            raw_content = f.read()
+        if "#" in raw_content:
+            _log_action(action_name, "WARN",
+                       "pyproject.toml contains comments. toml.dump() may not preserve them. "
+                       "Comments can be re-added manually after review.")
+
+        # Write back using toml package
+        import toml as _toml_writer
+        with open(pyproject_path, "w", encoding="utf-8") as f:
+            _toml_writer.dump(data, f)
+
+        _log_action(action_name, "SUCCESS", "Added PyPI metadata to pyproject.toml. Review placeholder values (USERNAME, Your Name, etc.).")
+        return True
+
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to update pyproject.toml: {e}")
+        return False
+
+
+def _create_license_file(project_root: Path, license_type: str, dry_run: bool) -> bool:
+    """Generate a LICENSE file if one doesn't exist (case-insensitive check)."""
+    action_name = "create_license_file"
+    license_path = project_root / "LICENSE"
+
+    existing = _find_license_file(project_root)
+    if existing is not None:
+        _log_action(action_name, "INFO", f"License file already exists ({existing.name}). Skipping.")
+        return True
+
+    if license_type == "custom":
+        _log_action(action_name, "INFO", "Custom license detected. Skipping LICENSE generation — use your own LICENSE file.")
+        return True
+
+    if license_type not in _LICENSE_TEMPLATES:
+        _log_action(action_name, "WARN", f"Unknown license type '{license_type}'. Supported: {', '.join(_LICENSE_TEMPLATES.keys())}, custom. Skipping LICENSE generation.")
+        return False
+
+    if dry_run:
+        _log_action(action_name, "INFO", f"DRY RUN: Would create LICENSE file ({license_type})")
+        return True
+
+    try:
+        import datetime
+        template = _LICENSE_TEMPLATES[license_type]
+        if license_type == "Apache-2.0":
+            # Apache canonical text uses [yyyy] and [name of copyright owner] placeholders
+            content = template.replace("[yyyy]", str(datetime.date.today().year)).replace(
+                "[name of copyright owner]", "[Your Name]"
+            )
+        else:
+            # MIT, BSD, GPL templates use Python {year}/{author} format strings
+            content = template.format(
+                year=datetime.date.today().year,
+                author="[Your Name]"  # Placeholder
+            )
+        with open(license_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _log_action(action_name, "SUCCESS", f"Created LICENSE file ({license_type}). Replace '[Your Name]' with your name.")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create LICENSE: {e}")
+        return False
+
+
+def _create_readme_template(project_root: Path, dry_run: bool) -> bool:
+    """Generate a README.md template if one doesn't exist."""
+    action_name = "create_readme_template"
+    readme_path = project_root / "README.md"
+
+    if readme_path.exists():
+        _log_action(action_name, "INFO", "README.md already exists. Skipping.")
+        return True
+
+    if dry_run:
+        _log_action(action_name, "INFO", "DRY RUN: Would create README.md template")
+        return True
+
+    try:
+        # Read project name from pyproject.toml if available
+        project_name = project_root.name
+        pyproject_path = project_root / "pyproject.toml"
+        if pyproject_path.exists() and tomllib is not None:
+            try:
+                with open(pyproject_path, "rb") as f:
+                    data = tomllib.load(f)
+                project_name = data.get("project", {}).get("name", project_name)
+            except Exception:
+                pass
+
+        import_name = project_name.replace("-", "_")
+
+        content = f"""# {project_name}
+
+Description here.
+
+## Installation
+
+```bash
+pip install {project_name}
+```
+
+## Usage
+
+```python
+import {import_name}
+```
+
+## License
+
+See [LICENSE](LICENSE) file.
+"""
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _log_action(action_name, "SUCCESS", "Created README.md template. Update description and usage examples.")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create README.md: {e}")
+        return False
+
+
+def _create_publish_workflow(project_root: Path, dry_run: bool) -> bool:
+    """Generate .github/workflows/publish.yml for PyPI Trusted Publisher publishing."""
+    action_name = "create_publish_workflow"
+    workflow_dir = project_root / ".github" / "workflows"
+    workflow_path = workflow_dir / "publish.yml"
+
+    if workflow_path.exists():
+        _log_action(action_name, "INFO", ".github/workflows/publish.yml already exists. Skipping.")
+        return True
+
+    if dry_run:
+        _log_action(action_name, "INFO", "DRY RUN: Would create .github/workflows/publish.yml")
+        return True
+
+    try:
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+
+        content = '''# Publish to PyPI using Trusted Publishers (OIDC)
+# IMPORTANT: Configure Trusted Publishers on PyPI BEFORE pushing your first v* tag.
+# See: https://docs.pypi.org/trusted-publishers/
+#
+# Security: Pin action versions to commit SHAs before production use.
+# Run: npx pin-github-action .github/workflows/publish.yml
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.13'
+
+      - name: Verify tag matches package version
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          PKG_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "ERROR: Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
+            exit 1
+          fi
+
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: testpypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+'''
+        with open(workflow_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _log_action(action_name, "SUCCESS",
+                   "Created .github/workflows/publish.yml. "
+                   "Configure Trusted Publishers on PyPI before pushing a v* tag. "
+                   "Pin action SHAs before production use: npx pin-github-action .github/workflows/publish.yml")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create publish workflow: {e}")
+        return False
+
+
 # CLICOMMAND: new functionality to repair and keep
 class CLICommand(BaseSettings):
     """The Pydantic model defining the application's configuration schema.
@@ -4738,6 +5422,25 @@ class CLICommand(BaseSettings):
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning clean progress output is preferred.
+
+    prepare_pypi: Annotated[
+        bool,
+        typer.Option(
+            "--prepare-pypi",
+            help="Add PyPI publishing metadata: license, classifiers, authors, README, publish workflow.",
+            is_flag=True,
+            rich_help_panel="PyPI Publishing"
+        )
+    ] = False
+
+    license_type: Annotated[
+        str,
+        typer.Option(
+            "--license",
+            help="License type for PyPI metadata (auto, MIT, Apache-2.0, GPL-3.0, BSD-3-Clause, custom). 'auto' detects from existing LICENSE file.",
+            rich_help_panel="PyPI Publishing"
+        )
+    ] = "auto"
 
     @property
     def use_gitignore(self) -> bool:
@@ -4942,7 +5645,7 @@ class CLICommand(BaseSettings):
 
             # Step 4: Create or verify the virtual environment using uv.
             _log_action("create_or_verify_venv", "INFO", f"Creating/ensuring virtual environment '{self.venv_name}'.")
-            _run_command(["uv", "venv", self.venv_name], "create_or_verify_venv_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
+            _run_command(["uv", "venv", "--allow-existing", self.venv_name], "create_or_verify_venv_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
             venv_python_executable = self.project_dir / self.venv_name / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 
             # Critical check: ensure the venv Python executable exists after creation (if not dry run).
@@ -5324,6 +6027,18 @@ class CLICommand(BaseSettings):
             vscode_launch_status = "SUCCESS"
             major_action_results.append(("vscode_config", "SUCCESS"))
 
+            # Step 12a: If --license was explicitly set (not "auto"), create LICENSE file even without --prepare-pypi.
+            if not self.prepare_pypi and self.license_type != "auto":
+                license_ok = _create_license_file(self.project_dir, self.license_type, self.dry_run)
+                if license_ok:
+                    major_action_results.append(("license_file", "SUCCESS"))
+
+            # Step 12b: If --prepare-pypi was requested, add full PyPI publishing metadata.
+            if self.prepare_pypi:
+                _log_action("prepare_pypi_start", "INFO", "Adding PyPI publishing metadata (--prepare-pypi).")
+                pypi_success = _prepare_pypi_metadata(self.project_dir, self.license_type, self.dry_run)
+                major_action_results.append(("pypi_metadata", "SUCCESS" if pypi_success else "FAILED"))
+
             # --- Final Status and Summary ---
             _log_action("script_end", "SUCCESS", "🎉 Automated project setup script completed successfully!")
 
@@ -5346,7 +6061,9 @@ class CLICommand(BaseSettings):
                 "dependency_management": "Package Installation",
                 "notebook_exec_support": "Notebook Support",
                 "uv_final_sync": "Environment Sync",
-                "vscode_config": "VS Code Setup"
+                "vscode_config": "VS Code Setup",
+                "license_file": "License File",
+                "pypi_metadata": "PyPI Publishing Setup"
             }
 
             summary_lines = [
@@ -5504,6 +6221,8 @@ def main(
     no_gitignore: Annotated[bool, typer.Option("--no-gitignore", help="Disable all .gitignore operations.")] = False,
     ignore_patterns: Annotated[List[str], typer.Option("--ignore-pattern", "-i", help="Additional gitignore patterns.")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed technical output for debugging and learning.")] = False,
+    prepare_pypi: Annotated[bool, typer.Option("--prepare-pypi", help="Add PyPI publishing metadata: license, classifiers, authors, README, publish workflow.")] = False,
+    license_type: Annotated[str, typer.Option("--license", help="License type for PyPI metadata (auto, MIT, Apache-2.0, GPL-3.0, BSD-3-Clause, custom). 'auto' detects from existing LICENSE file.")] = "auto",
 ):
     """The main entry point for pyuvstarter.
 
@@ -5537,6 +6256,8 @@ def main(
             'no_gitignore': no_gitignore,
             'ignore_patterns': ignore_patterns or [],
             'verbose': verbose,
+            'prepare_pypi': prepare_pypi,
+            'license_type': license_type,
         }
 
     # Create CLICommand instance - this will trigger model_post_init

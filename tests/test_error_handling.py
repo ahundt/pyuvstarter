@@ -414,6 +414,116 @@ def main():
         # Should handle large files without issues
         assert result.returncode == 0 or "large" in result.stderr.lower() or "memory" in result.stderr.lower()
 
+def test_pre_existing_venv():
+    """Test that pyuvstarter succeeds when a .venv already exists.
+
+    Root cause: When pyuvstarter is invoked via `uv run`, uv creates a .venv
+    before pyuvstarter starts. Without --allow-existing, `uv venv .venv` fails
+    with exit status 2: "A virtual environment already exists at `.venv`."
+
+    This test verifies idempotent venv handling by pre-creating a .venv and
+    confirming pyuvstarter succeeds rather than crashing with a CRITICAL ERROR.
+    """
+
+    fixture = ProjectFixture(
+        name="pre_existing_venv",
+        files={
+            "main.py": "import sys\nprint('Hello')\n",
+        },
+        directories=[],
+        expected_packages=[]
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # Pre-create a .venv to simulate the condition that caused failures
+        import subprocess as _subprocess
+        pre_result = _subprocess.run(
+            ["uv", "venv", ".venv"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        assert pre_result.returncode == 0, f"Failed to pre-create .venv: {pre_result.stderr}"
+        venv_dir = project_dir / ".venv"
+        assert venv_dir.exists(), ".venv should exist before running pyuvstarter"
+
+        # Run pyuvstarter — this must succeed despite the pre-existing .venv
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--verbose"]
+        )
+
+        # Verify pyuvstarter did not crash with "CRITICAL ERROR: ... 'uv venv .venv'"
+        combined_output = (result.stdout or "") + (result.stderr or "")
+        assert "CRITICAL ERROR" not in combined_output, (
+            f"pyuvstarter crashed with CRITICAL ERROR on pre-existing .venv.\n"
+            f"This indicates `uv venv` was called without --allow-existing.\n"
+            f"stderr: {result.stderr}"
+        )
+        assert result.returncode == 0, (
+            f"pyuvstarter failed (exit={result.returncode}) with pre-existing .venv.\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+        # Verify the venv still works after pyuvstarter ran
+        assert venv_dir.exists(), ".venv should still exist after pyuvstarter"
+        python_bin = "python.exe" if sys.platform == "win32" else "python"
+        venv_python = venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / python_bin
+        assert venv_python.exists(), f"venv Python executable should exist at {venv_python}"
+
+
+def test_pre_existing_venv_with_packages():
+    """Test that pyuvstarter preserves packages in a pre-existing .venv.
+
+    When --allow-existing is used, uv should keep packages already installed
+    in the venv. This tests that pyuvstarter doesn't accidentally wipe a
+    user's existing environment.
+    """
+
+    fixture = ProjectFixture(
+        name="pre_existing_venv_with_pkgs",
+        files={
+            "main.py": "import requests\nprint('Hello')\n",
+            "requirements.txt": "requests"
+        },
+        directories=[],
+        expected_packages=["requests"]
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # Pre-create a .venv and install a package into it
+        import subprocess as _subprocess
+        _subprocess.run(
+            ["uv", "venv", ".venv"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        _subprocess.run(
+            ["uv", "pip", "install", "six", "--python", str(project_dir / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"))],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        # Run pyuvstarter
+        result = executor.run_pyuvstarter(
+            project_dir,
+            args=["--verbose"]
+        )
+
+        assert result.returncode == 0, (
+            f"pyuvstarter failed (exit={result.returncode}) with pre-existing venv containing packages.\n"
+            f"stderr: {result.stderr}"
+        )
+        assert "CRITICAL ERROR" not in (result.stdout or "") + (result.stderr or ""), (
+            "pyuvstarter should not crash when venv has pre-installed packages"
+        )
+
+
 def main():
     """Run all error handling tests."""
 
@@ -428,6 +538,8 @@ def main():
         ("circular_imports", test_circular_imports),
         ("very_deep_directory_structure", test_very_deep_directory_structure),
         ("extremely_large_file", test_extremely_large_file),
+        ("pre_existing_venv", test_pre_existing_venv),
+        ("pre_existing_venv_with_packages", test_pre_existing_venv_with_packages),
     ]
 
     passed = 0

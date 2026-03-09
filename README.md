@@ -198,6 +198,14 @@ pyuvstarter [project_dir] [options]
 -   `--ignore-pattern <pattern>, -i <pattern>`
     Additional gitignore patterns to add (can be specified multiple times)
 
+#### PyPI Publishing
+
+-   `--prepare-pypi`
+    Add PyPI publishing metadata to the project: license file, classifiers, authors, README template, and a GitHub Actions publish workflow using Trusted Publishers (OIDC).
+
+-   `--license {auto,MIT,Apache-2.0,GPL-3.0,BSD-3-Clause,custom}`
+    License type for the project. Default is `auto`, which detects the license from an existing LICENSE file (case-insensitive). If no license file exists, defaults to MIT. Can be used standalone (without `--prepare-pypi`) to just create a LICENSE file. License texts are sourced from canonical locations (apache.org, opensource.org, gnu.org).
+
 #### Examples
 
 ```bash
@@ -221,6 +229,15 @@ pyuvstarter --ignore-pattern "*.tmp" --ignore-pattern "cache/"
 
 # Completely replace existing .gitignore
 pyuvstarter --full-gitignore-overwrite
+
+# Prepare for PyPI publishing (adds metadata, LICENSE, README, publish workflow)
+pyuvstarter --prepare-pypi
+
+# Prepare for PyPI with Apache 2.0 license
+pyuvstarter --prepare-pypi --license Apache-2.0
+
+# Just create a LICENSE file without full PyPI setup
+pyuvstarter --license MIT
 ```
 
 ## Expected Outcome: A Ready-to-Use Development Environment
