@@ -208,7 +208,7 @@ Design Philosophy:
                Here are your options to modernize your project:
 
                1. Use a newer Python version (recommended):
-                  Run: python3.11 -m pyuvstarter
+                  Run: uv run --python 3.11 python -m pyuvstarter
                   This gives you latest features and best performance.
                   Note: You may need to update code that uses deprecated APIs.
 
@@ -287,14 +287,14 @@ def check_python_version():
         print("   source .venv/bin/activate")
         print("   uv sync")
         print("   # Run pyuvstarter:")
-        print("   python3 pyuvstarter.py")
+        print("   uv run python pyuvstarter.py")
         print()
-        print("2. Use python3 explicitly:")
-        print("   python3 pyuvstarter.py")
+        print("2. Use uv run explicitly:")
+        print("   uv run python pyuvstarter.py")
         print()
         print("3. Activate your UV virtual environment:")
         print("   source .venv/bin/activate")
-        print("   python3 pyuvstarter.py")
+        print("   uv run python pyuvstarter.py")
         print()
         print("4. Update your system default (if you have admin rights):")
         print("   ln -sf /usr/bin/python3 /usr/local/bin/python")
@@ -317,12 +317,12 @@ def check_python_version():
         print("   uv venv --python 3.11")
         print("   source .venv/bin/activate")
         print("   uv sync")
-        print("   python3 pyuvstarter.py")
+        print("   uv run python pyuvstarter.py")
         print()
         print("2. Install Python 3.11+ and activate virtual environment:")
-        print("   python3.11 -m venv .venv")
+        print("   uv venv --python 3.11")
         print("   source .venv/bin/activate")
-        print("   python3 pyuvstarter.py")
+        print("   uv run python pyuvstarter.py")
         print()
         print("=" * 70)
 
@@ -5005,14 +5005,10 @@ def _detect_build_backend(project_root: Path) -> Tuple[str, str]:
             with open(pyproject_path, "rb") as f:
                 data = tomllib.load(f) if hasattr(tomllib, 'load') and sys.version_info >= (3, 11) else __import__('toml').load(f)
             backend = data.get("build-system", {}).get("build-backend", "")
-            if "hatchling" in backend or "hatch" in backend:
-                return ("hatch build", "hatch publish")
-            elif "poetry" in backend:
+            if "poetry" in backend:
                 return ("poetry build", "poetry publish")
-            elif "flit" in backend:
-                return ("flit build", "flit publish")
-            elif "setuptools" in backend:
-                return ("python -m build", "twine upload dist/*")
+            # uv build works with any PEP 517 backend (hatchling, setuptools, flit, etc.)
+            # and is always available in CI via setup-uv
     except Exception:
         pass
     # Default: uv (modern, works with any PEP 517 backend)
@@ -5379,8 +5375,19 @@ def _create_publish_workflow(project_root: Path, dry_run: bool, python_version: 
     ci_path = workflow_dir / "ci.yml"
 
     if workflow_path.exists():
-        _log_action(action_name, "INFO", ".github/workflows/publish.yml already exists. Skipping.")
-        return True
+        existing = workflow_path.read_text(encoding="utf-8")
+        # Check for outdated build commands that won't work in CI (setup-uv doesn't install hatch/flit/build)
+        outdated_cmds = ["hatch build", "python -m build", "flit build"]
+        needs_update = any(cmd in existing and cmd != build_cmd for cmd in outdated_cmds)
+        if not needs_update:
+            _log_action(action_name, "INFO", ".github/workflows/publish.yml already exists and is up to date. Skipping.")
+            return True
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Would update publish.yml build command to: " + build_cmd)
+            return True
+        _log_action(action_name, "WARN",
+                     f"publish.yml uses outdated build command. Regenerating with '{build_cmd}'.")
+        # Fall through to regenerate the file
 
     if dry_run:
         _log_action(action_name, "INFO", "DRY RUN: Would create .github/workflows/publish.yml")
@@ -5432,7 +5439,7 @@ jobs:{test_section}
         shell: bash
         run: |
           TAG_VERSION=${{GITHUB_REF#refs/tags/v}}
-          PKG_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          PKG_VERSION=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "ERROR: Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
             exit 1
@@ -5571,6 +5578,10 @@ def _create_releasing_doc(project_root: Path, dry_run: bool, owner: str = "USERN
         except Exception:
             pass
 
+    # PyPI normalizes project names: underscores/dots → hyphens, lowercase (PEP 503)
+    import re as _re
+    pypi_name = _re.sub(r'[-_.]+', '-', name).lower()
+
     pypi_section = f"""
 ## PyPI Publishing (automated via GitHub Actions)
 
@@ -5586,7 +5597,7 @@ After pushing the tag (step above), GitHub Actions will:
 1. Create accounts on [pypi.org](https://pypi.org/account/register/) and [test.pypi.org](https://test.pypi.org/account/register/)
 2. Enable 2FA on both accounts (required by PyPI)
 3. Configure **Trusted Publishers** on both sites:
-   - PyPI Project Name: `{name}`
+   - PyPI Project Name: `{pypi_name}`
    - Owner: `{owner}`
    - Repository: `{name}`
    - Workflow: `publish.yml`
@@ -5615,8 +5626,34 @@ pip install --index-url https://test.pypi.org/simple/ \\
     if releasing_path.exists():
         existing = releasing_path.read_text(encoding="utf-8")
         if "PyPI" in existing or "Trusted Publisher" in existing:
-            _log_action(action_name, "INFO", "RELEASING.md already contains PyPI publishing info. Skipping.")
-            return True
+            # Check for outdated build commands
+            outdated_replacements = {
+                "hatch build": build_cmd,
+                "hatch publish": publish_cmd,
+                "python -m build": build_cmd,
+                "twine upload dist/*": publish_cmd,
+                "flit build": build_cmd,
+                "flit publish": publish_cmd,
+            }
+            updated = existing
+            needs_update = False
+            for old_cmd, new_cmd in outdated_replacements.items():
+                if old_cmd in updated and old_cmd != new_cmd:
+                    updated = updated.replace(old_cmd, new_cmd)
+                    needs_update = True
+            if not needs_update:
+                _log_action(action_name, "INFO", "RELEASING.md already contains up-to-date PyPI publishing info. Skipping.")
+                return True
+            if dry_run:
+                _log_action(action_name, "INFO", "DRY RUN: Would update RELEASING.md build commands.")
+                return True
+            try:
+                releasing_path.write_text(updated, encoding="utf-8")
+                _log_action(action_name, "SUCCESS", "Updated RELEASING.md build commands to use: " + build_cmd)
+                return True
+            except Exception as e:
+                _log_action(action_name, "ERROR", f"Failed to update RELEASING.md: {e}")
+                return False
 
         if dry_run:
             _log_action(action_name, "INFO", "DRY RUN: Would append PyPI publishing section to RELEASING.md")
@@ -6350,7 +6387,7 @@ class CLICommand(BaseSettings):
                     error_message += "\nWe tried 3 strategies: exact versions, flexible ranges, and no versions.\n"
                     error_message += "All failed. Here are your options:\n"
                     error_message += "\n1. Use a newer Python version (recommended):\n"
-                    error_message += "   Run: python3.11 -m pyuvstarter\n"
+                    error_message += "   Run: uv run --python 3.11 python -m pyuvstarter\n"
                     error_message += "   This gives you latest features and best performance.\n"
                     error_message += "   Note: You may need to update code that uses deprecated APIs.\n"
                     error_message += "\n2. Update your project's Python requirement:\n"

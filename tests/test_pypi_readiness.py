@@ -1286,7 +1286,7 @@ def test_detect_default_branch_fallback():
 
 
 def test_detect_build_backend_hatchling():
-    """Detect hatchling build backend."""
+    """Hatchling backend should use uv build/publish (uv handles any PEP 517 backend)."""
     from pyuvstarter import _detect_build_backend
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -1294,8 +1294,8 @@ def test_detect_build_backend_hatchling():
             '[build-system]\nbuild-backend = "hatchling.build"\n'
         )
         build_cmd, publish_cmd = _detect_build_backend(root)
-        assert build_cmd == "hatch build"
-        assert publish_cmd == "hatch publish"
+        assert build_cmd == "uv build"
+        assert publish_cmd == "uv publish"
 
 
 def test_detect_build_backend_poetry():
@@ -1312,7 +1312,7 @@ def test_detect_build_backend_poetry():
 
 
 def test_detect_build_backend_setuptools():
-    """Detect setuptools build backend."""
+    """Setuptools backend should use uv build/publish (uv handles any PEP 517 backend)."""
     from pyuvstarter import _detect_build_backend
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -1320,8 +1320,8 @@ def test_detect_build_backend_setuptools():
             '[build-system]\nbuild-backend = "setuptools.build_meta"\n'
         )
         build_cmd, publish_cmd = _detect_build_backend(root)
-        assert build_cmd == "python -m build"
-        assert publish_cmd == "twine upload dist/*"
+        assert build_cmd == "uv build"
+        assert publish_cmd == "uv publish"
 
 
 def test_detect_build_backend_default_uv():
@@ -1442,14 +1442,13 @@ def test_releasing_md_uses_detected_build_backend():
             '[project]\nname = "test_backend"\nversion = "0.1.0"\n'
             '\n[build-system]\nbuild-backend = "hatchling.build"\nrequires = ["hatchling"]\n'
         )
-        result = _create_releasing_doc(root, dry_run=False, build_cmd="hatch build", publish_cmd="hatch publish")
+        result = _create_releasing_doc(root, dry_run=False, build_cmd="uv build", publish_cmd="uv publish")
         assert result is True
         releasing = root / "RELEASING.md"
         assert releasing.exists()
         content = releasing.read_text()
-        assert "hatch build" in content, "Should use hatch build"
-        assert "hatch publish" in content, "Should use hatch publish"
-        assert "uv build" not in content, "Should NOT use uv build"
+        assert "uv build" in content, "Should use uv build"
+        assert "uv publish" in content, "Should use uv publish"
 
 
 def test_publish_yml_uses_detected_python_version():
@@ -1664,3 +1663,146 @@ def test_find_toml_section_range():
     start, end = _find_toml_section_range(lines, "[missing]")
     assert start == -1
     assert end == -1
+
+
+# ── Step 1d: flit backend uses uv ──────────────────────────────────────────────
+
+
+def test_detect_build_backend_flit_uses_uv():
+    """Flit backend should also use uv build/publish."""
+    from pyuvstarter import _detect_build_backend
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[build-system]\nbuild-backend = "flit_core.buildapi"\n'
+        )
+        build_cmd, publish_cmd = _detect_build_backend(root)
+        assert build_cmd == "uv build"
+        assert publish_cmd == "uv publish"
+
+
+# ── Step 3: publish.yml uses python3, not uv run python ───────────────────────
+
+
+def test_publish_yml_uses_uv_run_no_project():
+    """publish.yml version check should use 'uv run --no-project python' to avoid dependency resolution."""
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".github" / "workflows").mkdir(parents=True)
+        result = _create_publish_workflow(root, dry_run=False)
+        assert result is True
+        content = (root / ".github" / "workflows" / "publish.yml").read_text()
+        assert "uv run --no-project python -c" in content, "Should use uv run --no-project python"
+        # Must NOT use bare 'uv run python' (would trigger dependency resolution)
+        assert "uv run python -c" not in content.replace("uv run --no-project python -c", ""), "Should NOT use bare uv run python"
+
+
+# ── Step 5: publish.yml update capability ──────────────────────────────────────
+
+
+def test_publish_yml_updates_hatch_to_uv():
+    """Re-running should update publish.yml from hatch build to uv build."""
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        old_content = "name: Publish\njobs:\n  build:\n    steps:\n      - run: hatch build\n"
+        (wf_dir / "publish.yml").write_text(old_content)
+        result = _create_publish_workflow(root, dry_run=False, build_cmd="uv build")
+        assert result is True
+        new_content = (wf_dir / "publish.yml").read_text()
+        assert "uv build" in new_content, "Should have uv build after update"
+        assert "hatch build" not in new_content, "Should NOT have hatch build after update"
+
+
+def test_publish_yml_skip_if_already_correct():
+    """If publish.yml already uses uv build, skip without changes."""
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        correct_content = "name: Publish\njobs:\n  build:\n    steps:\n      - run: uv build\n"
+        (wf_dir / "publish.yml").write_text(correct_content)
+        result = _create_publish_workflow(root, dry_run=False, build_cmd="uv build")
+        assert result is True
+        assert (wf_dir / "publish.yml").read_text() == correct_content, "Should not modify correct file"
+
+
+def test_publish_yml_respects_dry_run_on_update():
+    """Dry run should not modify existing publish.yml even if outdated."""
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        old_content = "name: Publish\njobs:\n  build:\n    steps:\n      - run: hatch build\n"
+        (wf_dir / "publish.yml").write_text(old_content)
+        result = _create_publish_workflow(root, dry_run=True, build_cmd="uv build")
+        assert result is True
+        assert (wf_dir / "publish.yml").read_text() == old_content, "Dry run should not modify"
+
+
+# ── Step 7: RELEASING.md update capability ─────────────────────────────────────
+
+
+def test_releasing_md_updates_hatch_to_uv():
+    """Re-running should update RELEASING.md from hatch to uv commands."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "myproj"\nversion = "0.1.0"\n')
+        releasing = root / "RELEASING.md"
+        releasing.write_text("# Releasing\n\n## PyPI Publishing\nhatch build\nhatch publish\n")
+        result = _create_releasing_doc(root, dry_run=False, build_cmd="uv build", publish_cmd="uv publish")
+        assert result is True
+        content = releasing.read_text()
+        assert "uv build" in content
+        assert "uv publish" in content
+        assert "hatch build" not in content
+        assert "hatch publish" not in content
+
+
+def test_releasing_md_skip_if_already_uv():
+    """RELEASING.md with uv commands should not be modified."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "myproj"\nversion = "0.1.0"\n')
+        releasing = root / "RELEASING.md"
+        original = "# Releasing\n\n## PyPI Publishing\nuv build\nuv publish\n"
+        releasing.write_text(original)
+        result = _create_releasing_doc(root, dry_run=False, build_cmd="uv build", publish_cmd="uv publish")
+        assert result is True
+        assert releasing.read_text() == original, "Should not modify"
+
+
+def test_releasing_md_respects_dry_run_on_update():
+    """Dry run should not modify existing RELEASING.md even if outdated."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "myproj"\nversion = "0.1.0"\n')
+        releasing = root / "RELEASING.md"
+        old_content = "# Releasing\n\n## PyPI Publishing\nhatch build\nhatch publish\n"
+        releasing.write_text(old_content)
+        result = _create_releasing_doc(root, dry_run=True, build_cmd="uv build", publish_cmd="uv publish")
+        assert result is True
+        assert releasing.read_text() == old_content, "Dry run should not modify"
+
+
+# ── Step 9: PyPI project name normalization ────────────────────────────────────
+
+
+def test_releasing_md_normalizes_project_name():
+    """RELEASING.md should show PyPI-normalized project name (underscores -> hyphens)."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "my_cool_tool"\nversion = "0.1.0"\n')
+        result = _create_releasing_doc(root, dry_run=False, owner="testowner")
+        assert result is True
+        content = (root / "RELEASING.md").read_text()
+        assert "my-cool-tool" in content, "Should show PyPI-normalized name"
