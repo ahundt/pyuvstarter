@@ -14,6 +14,7 @@ Tests that --prepare-pypi correctly generates PyPI publishing metadata:
 
 import sys
 import os
+import textwrap
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -1495,3 +1496,171 @@ def test_releasing_md_uses_detected_owner():
         content = releasing.read_text()
         assert "testowner" in content, "Should use detected owner"
         assert "USERNAME" not in content, "Should NOT have USERNAME placeholder"
+
+
+# ── Format-preserving TOML insertion tests ─────────────────────────
+
+
+def test_add_pypi_toml_metadata_preserves_formatting():
+    """_add_pypi_toml_metadata should not reformat existing pyproject.toml content."""
+    from pyuvstarter import _add_pypi_toml_metadata
+
+    fixture = ProjectFixture(
+        name="toml_format_preserve",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # Write a carefully formatted pyproject.toml with comments and multi-line arrays
+        original_content = textwrap.dedent("""\
+            [build-system]
+            requires = ["hatchling"]
+            build-backend = "hatchling.build"
+
+            [project]
+            name = "test-project"
+            version = "0.1.0"
+            description = "A test project"
+            readme = "README.md"
+            requires-python = ">=3.12"
+            license = {text = "MIT"}
+            authors = [
+                {name = "Test Author", email = "test@example.com"}
+            ]
+            keywords = ["test", "project"]
+            classifiers = [
+                "Development Status :: 3 - Alpha",
+                "Intended Audience :: Developers",
+            ]
+            # This is an important comment
+            dependencies = [
+                "click>=8.0",
+                "rich>=13.0",
+            ]
+
+            [project.urls]
+            Homepage = "https://github.com/test/test-project"
+            Repository = "https://github.com/test/test-project"
+            Issues = "https://github.com/test/test-project/issues"
+
+            [tool.ruff]
+            line-length = 120
+            # Keep this comment too
+            target-version = "py312"
+        """)
+        pyproject_path = project_dir / "pyproject.toml"
+        pyproject_path.write_text(original_content, encoding="utf-8")
+
+        # Run _add_pypi_toml_metadata — should only add Changelog URL
+        result = _add_pypi_toml_metadata(project_dir, "MIT", dry_run=False, owner="testowner")
+        assert result is True
+
+        modified = pyproject_path.read_text(encoding="utf-8")
+
+        # Comments must be preserved
+        assert "# This is an important comment" in modified
+        assert "# Keep this comment too" in modified
+
+        # Multi-line arrays must NOT be collapsed to single lines
+        assert '    "click>=8.0",' in modified
+        assert '    "rich>=13.0",' in modified
+
+        # Inline tables must be preserved
+        assert '{text = "MIT"}' in modified
+
+        # Section order must be preserved (build-system before project before tool)
+        build_pos = modified.index("[build-system]")
+        project_pos = modified.index("[project]")
+        ruff_pos = modified.index("[tool.ruff]")
+        assert build_pos < project_pos < ruff_pos
+
+        # The only addition should be the Changelog URL
+        assert 'Changelog = "https://github.com/testowner/test-project/releases"' in modified
+
+
+def test_add_pypi_toml_metadata_adds_missing_fields():
+    """_add_pypi_toml_metadata should insert missing fields without disrupting existing content."""
+    from pyuvstarter import _add_pypi_toml_metadata
+
+    fixture = ProjectFixture(
+        name="toml_add_fields",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # Minimal pyproject.toml — missing most PyPI fields
+        original = textwrap.dedent("""\
+            [build-system]
+            requires = ["hatchling"]
+            build-backend = "hatchling.build"
+
+            [project]
+            name = "my-tool"
+            version = "0.1.0"
+            # keep this comment
+            dependencies = ["click"]
+        """)
+        pyproject_path = project_dir / "pyproject.toml"
+        pyproject_path.write_text(original, encoding="utf-8")
+
+        result = _add_pypi_toml_metadata(project_dir, "Apache-2.0", dry_run=False, owner="jdoe")
+        assert result is True
+
+        modified = pyproject_path.read_text(encoding="utf-8")
+
+        # Comment preserved
+        assert "# keep this comment" in modified
+
+        # Missing fields were added
+        assert 'readme = "README.md"' in modified
+        assert "Apache-2.0" in modified
+        assert "authors" in modified
+        assert "classifiers" in modified
+        assert "keywords" in modified
+
+        # URLs section created with all 4 keys
+        assert "[project.urls]" in modified
+        assert 'Homepage = "https://github.com/jdoe/my-tool"' in modified
+        assert 'Changelog = "https://github.com/jdoe/my-tool/releases"' in modified
+
+        # Original content still present
+        assert 'dependencies = ["click"]' in modified
+
+
+def test_find_toml_section_range():
+    """_find_toml_section_range should correctly identify section boundaries."""
+    from pyuvstarter import _find_toml_section_range
+
+    lines = [
+        "[build-system]\n",
+        'requires = ["hatchling"]\n',
+        "\n",
+        "[project]\n",
+        'name = "test"\n',
+        'version = "0.1.0"\n',
+        "\n",
+        "[project.urls]\n",
+        'Homepage = "https://example.com"\n',
+        "\n",
+        "[tool.ruff]\n",
+        "line-length = 120\n",
+    ]
+
+    # [project] section includes sub-tables like [project.urls], so it spans 3-8
+    start, end = _find_toml_section_range(lines, "[project]")
+    assert start == 3
+    assert end == 9  # after Homepage line (includes [project.urls] sub-table)
+
+    # [project.urls] section: lines 7-8, insert at 9
+    start, end = _find_toml_section_range(lines, "[project.urls]")
+    assert start == 7
+    assert end == 9
+
+    # Non-existent section
+    start, end = _find_toml_section_range(lines, "[missing]")
+    assert start == -1
+    assert end == -1

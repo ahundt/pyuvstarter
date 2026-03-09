@@ -5103,13 +5103,46 @@ def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool)
     return success
 
 
+def _find_toml_section_range(lines: list, section_header: str) -> Tuple[int, int]:
+    """Find the start and end line indices of a TOML section.
+
+    Returns (start, end) where start is the header line index and end is the
+    index of the last content line + 1 (i.e. the insert position for new keys).
+    Returns (-1, -1) if the section is not found.
+    """
+    in_section = False
+    start = -1
+    last_content = -1
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == section_header:
+            in_section = True
+            start = i
+            last_content = i
+            continue
+        if in_section:
+            # A new section header that is NOT a sub-table of ours
+            if stripped.startswith("[") and not stripped.startswith(section_header.rstrip("]") + "."):
+                return (start, last_content + 1)
+            if stripped and not stripped.startswith("#"):
+                last_content = i
+    if in_section:
+        return (start, last_content + 1)
+    return (-1, -1)
+
+
 def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool, owner: str = "USERNAME") -> bool:
-    """Add PyPI metadata fields to pyproject.toml. Only adds missing fields."""
+    """Add PyPI metadata fields to pyproject.toml using format-preserving insertion.
+
+    Reads with tomllib to detect which fields are missing, then inserts TOML
+    snippets into the raw text at the correct positions.  This preserves
+    formatting, comments, and section ordering.
+    """
     action_name = "add_pypi_toml_metadata"
     pyproject_path = project_root / "pyproject.toml"
 
     try:
-        # Read current content
+        # Parse to detect missing fields
         if tomllib is not None:
             with open(pyproject_path, "rb") as f:
                 data = tomllib.load(f)
@@ -5118,24 +5151,23 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
             with open(pyproject_path, "r", encoding="utf-8") as f:
                 data = _toml_reader.load(f)
 
-        project = data.setdefault("project", {})
-        modified = False
+        project = data.get("project", {})
+        name = project.get("name", project_root.name)
 
-        # Only add fields that don't exist yet
+        # Collect TOML snippets to insert under [project]
+        project_inserts: list = []
+
         if "readme" not in project:
-            project["readme"] = "README.md"
-            modified = True
+            project_inserts.append('readme = "README.md"')
 
         if "license" not in project:
             if license_type == "custom":
-                project["license"] = {"file": "LICENSE"}
+                project_inserts.append('license = {file = "LICENSE"}')
             else:
-                project["license"] = {"text": license_type}
-            modified = True
+                project_inserts.append(f'license = {{text = "{license_type}"}}')
 
         if "authors" not in project:
-            project["authors"] = [{"name": "Your Name", "email": "your@email.com"}]
-            modified = True
+            project_inserts.append('authors = [{name = "Your Name", email = "your@email.com"}]')
 
         if "classifiers" not in project:
             classifiers = [
@@ -5143,24 +5175,19 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
                 "Intended Audience :: Developers",
                 "Programming Language :: Python :: 3",
             ]
-            # Try to extract Python version from requires-python
             requires_python = project.get("requires-python", "")
             if requires_python:
                 try:
                     from packaging.specifiers import SpecifierSet
                     spec = SpecifierSet(requires_python)
-                    # Extract minimum version from specifiers
                     for s in spec:
                         if s.operator in (">=", "~=", "=="):
                             parts = s.version.split(".")
                             if len(parts) >= 2:
-                                major_minor = f"{parts[0]}.{parts[1]}"
-                                classifiers.append(f"Programming Language :: Python :: {major_minor}")
+                                classifiers.append(f"Programming Language :: Python :: {parts[0]}.{parts[1]}")
                             break
                 except Exception:
                     pass
-
-            # Add license classifier
             license_classifiers = {
                 "MIT": "License :: OSI Approved :: MIT License",
                 "Apache-2.0": "License :: OSI Approved :: Apache Software License",
@@ -5169,32 +5196,31 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
             }
             if license_type in license_classifiers:
                 classifiers.append(license_classifiers[license_type])
-
-            project["classifiers"] = classifiers
-            modified = True
+            items = ",\n    ".join(f'"{c}"' for c in classifiers)
+            project_inserts.append(f"classifiers = [\n    {items},\n]")
 
         if "keywords" not in project:
-            # Generate keywords from project name
-            name = project.get("name", project_root.name)
             keywords = [w for w in name.replace("-", "_").split("_") if w]
-            project["keywords"] = keywords
-            modified = True
+            items = ", ".join(f'"{k}"' for k in keywords)
+            project_inserts.append(f"keywords = [{items}]")
 
+        # Determine what to do with [project.urls]
+        urls_insert_lines: list = []
+        needs_new_urls_section = False
         if "urls" not in project:
-            name = project.get("name", project_root.name)
-            project["urls"] = {
-                "Homepage": f"https://github.com/{owner}/{name}",
-                "Repository": f"https://github.com/{owner}/{name}",
-                "Issues": f"https://github.com/{owner}/{name}/issues",
-                "Changelog": f"https://github.com/{owner}/{name}/releases",
-            }
-            modified = True
+            needs_new_urls_section = True
+            urls_insert_lines = [
+                f'Homepage = "https://github.com/{owner}/{name}"',
+                f'Repository = "https://github.com/{owner}/{name}"',
+                f'Issues = "https://github.com/{owner}/{name}/issues"',
+                f'Changelog = "https://github.com/{owner}/{name}/releases"',
+            ]
         elif "Changelog" not in project.get("urls", {}):
-            name = project.get("name", project_root.name)
-            project["urls"]["Changelog"] = f"https://github.com/{owner}/{name}/releases"
-            modified = True
+            urls_insert_lines = [
+                f'Changelog = "https://github.com/{owner}/{name}/releases"',
+            ]
 
-        if not modified:
+        if not project_inserts and not urls_insert_lines:
             _log_action(action_name, "INFO", "All PyPI metadata fields already present. No changes needed.")
             return True
 
@@ -5202,18 +5228,39 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
             _log_action(action_name, "INFO", "DRY RUN: Would add PyPI metadata to pyproject.toml")
             return True
 
-        # Check for comments in existing file (warning about formatting loss)
+        # Read raw text for format-preserving insertion
         with open(pyproject_path, "r", encoding="utf-8") as f:
-            raw_content = f.read()
-        if "#" in raw_content:
-            _log_action(action_name, "WARN",
-                       "pyproject.toml contains comments. toml.dump() may not preserve them. "
-                       "Comments can be re-added manually after review.")
+            lines = f.readlines()
 
-        # Write back using toml package
-        import toml as _toml_writer
+        # Insert fields under [project] section
+        if project_inserts:
+            _start, insert_at = _find_toml_section_range(lines, "[project]")
+            if insert_at < 0:
+                _log_action(action_name, "ERROR", "Could not find [project] section in pyproject.toml")
+                return False
+            snippet = "\n".join(project_inserts) + "\n"
+            lines.insert(insert_at, snippet)
+
+        # Insert [project.urls] section or add key to existing one
+        if urls_insert_lines:
+            if needs_new_urls_section:
+                # Find end of [project] section (re-scan after potential insert above)
+                _start, insert_at = _find_toml_section_range(lines, "[project]")
+                if insert_at < 0:
+                    insert_at = len(lines)
+                section_text = "\n[project.urls]\n" + "\n".join(urls_insert_lines) + "\n"
+                lines.insert(insert_at, section_text)
+            else:
+                # Add key(s) to existing [project.urls]
+                _start, insert_at = _find_toml_section_range(lines, "[project.urls]")
+                if insert_at < 0:
+                    _log_action(action_name, "WARN", "Could not find [project.urls] section; appending to end of file.")
+                    insert_at = len(lines)
+                snippet = "\n".join(urls_insert_lines) + "\n"
+                lines.insert(insert_at, snippet)
+
         with open(pyproject_path, "w", encoding="utf-8") as f:
-            _toml_writer.dump(data, f)
+            f.writelines(lines)
 
         _log_action(action_name, "SUCCESS", "Added PyPI metadata to pyproject.toml. Review placeholder values (USERNAME, Your Name, etc.).")
         return True
