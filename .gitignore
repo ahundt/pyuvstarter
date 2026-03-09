@@ -99,3 +99,6 @@ build/
 
 # Git cleanup logs
 git-cleanup-*.log
+
+# Release notes (used for GitHub release body, not committed)
+notes/
