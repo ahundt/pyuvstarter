@@ -990,10 +990,37 @@ def test_existing_license_not_overwritten_by_standalone():
 # ─── Gap 0: publish.yml test job ─────────────────────────────
 
 
-def test_publish_yml_has_test_job():
-    """Generated publish.yml should include test: job using ci.yml."""
+def test_publish_yml_has_test_job_when_ci_exists():
+    """Generated publish.yml should include test: job when ci.yml exists."""
     fixture = ProjectFixture(
         name="publish_test_job",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # Create ci.yml so publish.yml will include test job
+        ci_dir = project_dir / ".github" / "workflows"
+        ci_dir.mkdir(parents=True, exist_ok=True)
+        (ci_dir / "ci.yml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        publish_yml = project_dir / ".github" / "workflows" / "publish.yml"
+        assert publish_yml.exists(), "publish.yml should be created"
+        content = publish_yml.read_text(encoding="utf-8")
+
+        assert "test:" in content, "publish.yml should have a test: job"
+        assert "uses: ./.github/workflows/ci.yml" in content, "test job should reference ci.yml"
+        assert "needs: test" in content, "build job should depend on test job"
+        assert "shell: bash" in content, "version check should have shell: bash for Windows compat"
+
+
+def test_publish_yml_no_test_job_without_ci():
+    """Generated publish.yml should omit test: job when ci.yml doesn't exist."""
+    fixture = ProjectFixture(
+        name="publish_no_ci",
         files={"main.py": "print('hello')\n"},
         directories=[],
         expected_packages=[],
@@ -1006,10 +1033,9 @@ def test_publish_yml_has_test_job():
         assert publish_yml.exists(), "publish.yml should be created"
         content = publish_yml.read_text(encoding="utf-8")
 
-        assert "test:" in content, "publish.yml should have a test: job"
-        assert "uses: ./.github/workflows/ci.yml" in content, "test job should reference ci.yml"
-        assert "needs: test" in content, "build job should depend on test job"
-        assert "shell: bash" in content, "version check should have shell: bash for Windows compat"
+        assert "test:" not in content, "publish.yml should NOT have test: job without ci.yml"
+        assert "uses: ./.github/workflows/ci.yml" not in content
+        assert "shell: bash" in content, "version check should still have shell: bash"
 
 
 # ─── Gap 1: workflow_call injection ──────────────────────────
@@ -1194,3 +1220,278 @@ def test_releasing_md_skipped_when_pypi_exists():
 
         content = releasing.read_text(encoding="utf-8")
         assert content == original, "RELEASING.md should not be modified when PyPI section exists"
+
+
+# ─── Unit tests for detection helpers ──────────────────────────
+
+import subprocess
+import tempfile
+
+
+def test_detect_github_owner_repo_ssh():
+    """Detect owner/repo from SSH git remote URL."""
+    from pyuvstarter import _detect_github_owner_repo
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subprocess.run(["git", "init", str(root)], capture_output=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                        "git@github.com:testuser/testrepo.git"], capture_output=True)
+        owner, repo = _detect_github_owner_repo(root)
+        assert owner == "testuser"
+        assert repo == "testrepo"
+
+
+def test_detect_github_owner_repo_https():
+    """Detect owner/repo from HTTPS git remote URL."""
+    from pyuvstarter import _detect_github_owner_repo
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subprocess.run(["git", "init", str(root)], capture_output=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                        "https://github.com/myorg/myproject.git"], capture_output=True)
+        owner, repo = _detect_github_owner_repo(root)
+        assert owner == "myorg"
+        assert repo == "myproject"
+
+
+def test_detect_github_owner_repo_no_remote():
+    """Return (None, None) when no git remote exists."""
+    from pyuvstarter import _detect_github_owner_repo
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subprocess.run(["git", "init", str(root)], capture_output=True)
+        owner, repo = _detect_github_owner_repo(root)
+        assert owner is None
+        assert repo is None
+
+
+def test_detect_github_owner_repo_not_git_dir():
+    """Return (None, None) when directory is not a git repo."""
+    from pyuvstarter import _detect_github_owner_repo
+    with tempfile.TemporaryDirectory() as td:
+        owner, repo = _detect_github_owner_repo(Path(td))
+        assert owner is None
+        assert repo is None
+
+
+def test_detect_default_branch_fallback():
+    """Return 'main' when no remote HEAD is set."""
+    from pyuvstarter import _detect_default_branch
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subprocess.run(["git", "init", str(root)], capture_output=True)
+        branch = _detect_default_branch(root)
+        assert branch == "main"
+
+
+def test_detect_build_backend_hatchling():
+    """Detect hatchling build backend."""
+    from pyuvstarter import _detect_build_backend
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[build-system]\nbuild-backend = "hatchling.build"\n'
+        )
+        build_cmd, publish_cmd = _detect_build_backend(root)
+        assert build_cmd == "hatch build"
+        assert publish_cmd == "hatch publish"
+
+
+def test_detect_build_backend_poetry():
+    """Detect poetry build backend."""
+    from pyuvstarter import _detect_build_backend
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[build-system]\nbuild-backend = "poetry.core.masonry.api"\n'
+        )
+        build_cmd, publish_cmd = _detect_build_backend(root)
+        assert build_cmd == "poetry build"
+        assert publish_cmd == "poetry publish"
+
+
+def test_detect_build_backend_setuptools():
+    """Detect setuptools build backend."""
+    from pyuvstarter import _detect_build_backend
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[build-system]\nbuild-backend = "setuptools.build_meta"\n'
+        )
+        build_cmd, publish_cmd = _detect_build_backend(root)
+        assert build_cmd == "python -m build"
+        assert publish_cmd == "twine upload dist/*"
+
+
+def test_detect_build_backend_default_uv():
+    """Default to uv when no build backend is specified."""
+    from pyuvstarter import _detect_build_backend
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "test"\n')
+        build_cmd, publish_cmd = _detect_build_backend(root)
+        assert build_cmd == "uv build"
+        assert publish_cmd == "uv publish"
+
+
+def test_detect_build_backend_no_pyproject():
+    """Default to uv when pyproject.toml doesn't exist."""
+    from pyuvstarter import _detect_build_backend
+    with tempfile.TemporaryDirectory() as td:
+        build_cmd, publish_cmd = _detect_build_backend(Path(td))
+        assert build_cmd == "uv build"
+        assert publish_cmd == "uv publish"
+
+
+def test_detect_python_version_from_requires_python():
+    """Detect Python version from requires-python field."""
+    from pyuvstarter import _detect_python_version
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "test"\nrequires-python = ">=3.10"\n'
+        )
+        version = _detect_python_version(root)
+        assert version == "3.10"
+
+
+def test_detect_python_version_complex_specifier():
+    """Detect Python version from complex requires-python like >=3.11,<4."""
+    from pyuvstarter import _detect_python_version
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "test"\nrequires-python = ">=3.11,<4"\n'
+        )
+        version = _detect_python_version(root)
+        assert version == "3.11"
+
+
+def test_detect_python_version_fallback():
+    """Fallback to 3.12 when requires-python is not set."""
+    from pyuvstarter import _detect_python_version
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text('[project]\nname = "test"\n')
+        version = _detect_python_version(root)
+        assert version == "3.12"
+
+
+# ─── GitIgnore is_ignored consistency tests ──────────────────────
+
+
+def test_gitignore_is_ignored_correct_semantics():
+    """is_ignored should return True for files matching gitignore patterns."""
+    from pyuvstarter import GitIgnore
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".gitignore").write_text("*.pyc\n__pycache__/\n")
+        (root / "hello.py").write_text("x\n")
+        (root / "hello.pyc").write_text("x\n")
+        (root / ".gitignore").resolve()  # ensure exists
+
+        gi = GitIgnore(root)
+        assert not gi.is_ignored(root / "hello.py"), "hello.py should NOT be ignored"
+        assert gi.is_ignored(root / "hello.pyc"), "hello.pyc SHOULD be ignored"
+        assert not gi.is_ignored(root / ".gitignore"), ".gitignore should NOT be ignored"
+
+
+def test_gitignore_is_ignored_consistent_with_get_methods():
+    """is_ignored results must be consistent with get_unignored/ignored_files."""
+    from pyuvstarter import GitIgnore
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".gitignore").write_text("*.log\nbuild/\n")
+        (root / "app.py").write_text("x\n")
+        (root / "debug.log").write_text("x\n")
+
+        gi = GitIgnore(root)
+        for f in gi.get_unignored_files():
+            assert not gi.is_ignored(f), f"is_ignored inconsistent for unignored {f.name}"
+        for f in gi.get_ignored_files():
+            assert gi.is_ignored(f), f"is_ignored inconsistent for ignored {f.name}"
+
+
+def test_gitignore_super_init_no_crash():
+    """GitIgnore should not crash with newer pathspec versions (super().__init__ fix)."""
+    from pyuvstarter import GitIgnore
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".gitignore").write_text("*.tmp\n")
+        (root / "test.py").write_text("x\n")
+        (root / "test.tmp").write_text("x\n")
+
+        gi = GitIgnore(root)
+        # These methods use inherited pathspec methods that need proper init
+        assert isinstance(gi.match_file("test.tmp"), bool)
+        assert isinstance(list(gi.match_tree_files(root)), list)
+        unignored = gi.get_unignored_files()
+        assert any(f.name == "test.py" for f in unignored)
+
+
+# ─── RELEASING.md adaptive build commands ──────────────────────
+
+
+def test_releasing_md_uses_detected_build_backend():
+    """RELEASING.md should use detected build commands via _create_releasing_doc."""
+    from pyuvstarter import _create_releasing_doc
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "test_backend"\nversion = "0.1.0"\n'
+            '\n[build-system]\nbuild-backend = "hatchling.build"\nrequires = ["hatchling"]\n'
+        )
+        result = _create_releasing_doc(root, dry_run=False, build_cmd="hatch build", publish_cmd="hatch publish")
+        assert result is True
+        releasing = root / "RELEASING.md"
+        assert releasing.exists()
+        content = releasing.read_text()
+        assert "hatch build" in content, "Should use hatch build"
+        assert "hatch publish" in content, "Should use hatch publish"
+        assert "uv build" not in content, "Should NOT use uv build"
+
+
+def test_publish_yml_uses_detected_python_version():
+    """publish.yml should use detected Python version from requires-python."""
+    fixture = ProjectFixture(
+        name="publish_pyver",
+        files={
+            "main.py": "print('hello')\n",
+            "pyproject.toml": '[project]\nname = "publish_pyver"\nversion = "0.1.0"\nrequires-python = ">=3.10"\n',
+        },
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        publish_yml = project_dir / ".github" / "workflows" / "publish.yml"
+        assert publish_yml.exists()
+        yml_content = publish_yml.read_text()
+        assert "3.10" in yml_content, "Should use detected Python 3.10"
+        assert "3.13" not in yml_content, "Should NOT hardcode 3.13"
+
+
+def test_releasing_md_uses_detected_owner():
+    """RELEASING.md should use detected git owner, not USERNAME placeholder."""
+    fixture = ProjectFixture(
+        name="releasing_owner",
+        files={"main.py": "print('hello')\n"},
+        directories=[],
+        expected_packages=[],
+    )
+    with temp_manager.create_temp_project(fixture) as project_dir:
+        # Set up git remote
+        subprocess.run(["git", "init", str(project_dir)], capture_output=True)
+        subprocess.run(["git", "-C", str(project_dir), "remote", "add", "origin",
+                        "git@github.com:testowner/releasing_owner.git"], capture_output=True)
+
+        result = executor.run_pyuvstarter(project_dir, args=["--prepare-pypi", "--verbose"])
+        assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
+
+        releasing = project_dir / "RELEASING.md"
+        assert releasing.exists()
+        content = releasing.read_text()
+        assert "testowner" in content, "Should use detected owner"
+        assert "USERNAME" not in content, "Should NOT have USERNAME placeholder"

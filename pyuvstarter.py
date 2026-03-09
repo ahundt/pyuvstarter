@@ -753,6 +753,13 @@ class GitIgnore(GitIgnoreSpec):
             raise NotADirectoryError(f"The specified root_dir is not a directory: {self.root_dir}")
         self._manual_patterns = manual_patterns or []
         self.read_gitignore_files = read_gitignore_files
+        # Initialize parent PathSpec/GitIgnoreSpec with empty patterns so that
+        # internal state (e.g. _backend in newer pathspec versions) is properly set.
+        # Then remove the 'patterns' dict entry so our @cached_property can
+        # provide lazy-loaded patterns on first access instead.
+        super().__init__([])
+        if 'patterns' in self.__dict__:
+            del self.__dict__['patterns']
 
     @functools.cached_property
     def patterns(self) -> List:
@@ -847,20 +854,18 @@ class GitIgnore(GitIgnoreSpec):
             # The path is not within the project root, so it is not subject to these rules.
             return False
 
-        # This loop correctly implements the parent directory exclusion rule:
-        # "It is not possible to re-include a file if a parent directory of that file is excluded."
+        # Parent directory exclusion rule: "It is not possible to re-include
+        # a file if a parent directory of that file is excluded."
+        # match_file() returns True when a path matches a gitignore pattern
+        # (i.e., the path IS ignored).
         current_parent = Path(path_rel_to_root).parent
         while current_parent and str(current_parent) != '.':
-            # `self.match_file()` is inherited and returns True if a path is
-            # *included* (i.e., NOT ignored). If any parent is not included,
-            # this path is definitively ignored.
-            if not self.match_file(str(current_parent)):
+            if self.match_file(str(current_parent)):
                 return True
             current_parent = current_parent.parent
 
-        # If no parents were ignored, check the file itself. The result is the
-        # logical opposite of inclusion.
-        return not self.match_file(path_rel_to_root)
+        # Check the file itself — match_file returns True if ignored.
+        return self.match_file(path_rel_to_root)
 
     def get_ignored_files(self) -> List[Path]:
         """Scans the project and returns a list of all IGNORED files using
@@ -4927,6 +4932,118 @@ def _detect_license_from_file(project_root: Path) -> str | None:
         return None
 
 
+def _detect_github_owner_repo(project_root: Path) -> Tuple[Optional[str], Optional[str]]:
+    """Detect GitHub owner and repo name from git remote origin URL.
+
+    Parses both SSH (git@github.com:owner/repo.git) and HTTPS
+    (https://github.com/owner/repo) formats.
+
+    Returns:
+        (owner, repo) tuple, or (None, None) if detection fails.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return (None, None)
+
+        url = result.stdout.strip()
+        # SSH format: git@github.com:owner/repo.git
+        if ":" in url and url.startswith("git@"):
+            path_part = url.split(":")[-1]
+            path_part = path_part.removesuffix(".git")
+            parts = path_part.split("/")
+            if len(parts) >= 2:
+                return (parts[-2], parts[-1])
+        # HTTPS format: https://github.com/owner/repo or https://github.com/owner/repo.git
+        elif "/" in url:
+            path_part = url.rstrip("/")
+            path_part = path_part.removesuffix(".git")
+            parts = path_part.split("/")
+            if len(parts) >= 2:
+                return (parts[-2], parts[-1])
+    except Exception:
+        pass
+    return (None, None)
+
+
+def _detect_default_branch(project_root: Path) -> str:
+    """Detect the default branch name from git remote HEAD.
+
+    Returns:
+        Branch name (e.g., 'main', 'master'), or 'main' as fallback.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            # Output: refs/remotes/origin/main
+            ref = result.stdout.strip()
+            return ref.split("/")[-1]
+    except Exception:
+        pass
+    return "main"
+
+
+def _detect_build_backend(project_root: Path) -> Tuple[str, str]:
+    """Detect build backend from pyproject.toml [build-system].
+
+    Returns:
+        (build_cmd, publish_cmd) tuple for use in templates.
+    """
+    pyproject_path = project_root / "pyproject.toml"
+    try:
+        if pyproject_path.exists():
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:
+                import toml as tomllib
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f) if hasattr(tomllib, 'load') and sys.version_info >= (3, 11) else __import__('toml').load(f)
+            backend = data.get("build-system", {}).get("build-backend", "")
+            if "hatchling" in backend or "hatch" in backend:
+                return ("hatch build", "hatch publish")
+            elif "poetry" in backend:
+                return ("poetry build", "poetry publish")
+            elif "flit" in backend:
+                return ("flit build", "flit publish")
+            elif "setuptools" in backend:
+                return ("python -m build", "twine upload dist/*")
+    except Exception:
+        pass
+    # Default: uv (modern, works with any PEP 517 backend)
+    return ("uv build", "uv publish")
+
+
+def _detect_python_version(project_root: Path) -> str:
+    """Detect minimum Python version from pyproject.toml requires-python.
+
+    Returns:
+        Version string like '3.10', or '3.12' as fallback.
+    """
+    import re
+    pyproject_path = project_root / "pyproject.toml"
+    try:
+        if pyproject_path.exists():
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:
+                import toml as tomllib
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f) if hasattr(tomllib, 'load') and sys.version_info >= (3, 11) else __import__('toml').load(f)
+            requires_python = data.get("project", {}).get("requires-python", "")
+            match = re.search(r'>=\s*3\.(\d+)', requires_python)
+            if match:
+                return f"3.{match.group(1)}"
+    except Exception:
+        pass
+    return "3.12"
+
+
 def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool) -> bool:
     """Orchestrate PyPI readiness setup: metadata, license, readme, workflow."""
     action_name = "prepare_pypi_metadata"
@@ -4951,13 +5068,32 @@ def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool)
 
     _log_action(action_name, "INFO", "Adding PyPI publishing metadata...")
 
+    # Detect project context for templates
+    owner, repo = _detect_github_owner_repo(project_root)
+    if owner:
+        _log_action(action_name, "INFO", f"Detected GitHub owner/repo: {owner}/{repo}")
+    else:
+        _log_action(action_name, "WARN", "Could not detect GitHub owner/repo from git remote. URLs will use placeholder 'USERNAME'.")
+        owner = "USERNAME"
+    default_branch = _detect_default_branch(project_root)
+    build_cmd, publish_cmd = _detect_build_backend(project_root)
+    python_version = _detect_python_version(project_root)
+
     success = True
-    success = _add_pypi_toml_metadata(project_root, license_type, dry_run) and success
+    success = _add_pypi_toml_metadata(project_root, license_type, dry_run, owner=owner) and success
     success = _create_license_file(project_root, license_type, dry_run) and success
     success = _create_readme_template(project_root, dry_run) and success
-    success = _create_publish_workflow(project_root, dry_run) and success
+    success = _create_publish_workflow(project_root, dry_run, python_version=python_version, build_cmd=build_cmd) and success
     success = _add_workflow_call_trigger(project_root, dry_run) and success
-    success = _create_releasing_doc(project_root, dry_run) and success
+    success = _create_releasing_doc(project_root, dry_run, owner=owner, default_branch=default_branch, build_cmd=build_cmd, publish_cmd=publish_cmd) and success
+
+    # Warn if publish.yml was created with test job but ci.yml doesn't exist
+    ci_path = project_root / ".github" / "workflows" / "ci.yml"
+    publish_path = project_root / ".github" / "workflows" / "publish.yml"
+    if publish_path.exists() and not ci_path.exists():
+        _log_action(action_name, "WARN",
+                     "publish.yml was created but no ci.yml exists. "
+                     "Consider adding a CI workflow so publish.yml can run tests before publishing.")
 
     if success:
         _log_action(action_name, "SUCCESS", "PyPI metadata setup complete. Review placeholder values in pyproject.toml.")
@@ -4967,7 +5103,7 @@ def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool)
     return success
 
 
-def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool) -> bool:
+def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool, owner: str = "USERNAME") -> bool:
     """Add PyPI metadata fields to pyproject.toml. Only adds missing fields."""
     action_name = "add_pypi_toml_metadata"
     pyproject_path = project_root / "pyproject.toml"
@@ -5047,15 +5183,15 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
         if "urls" not in project:
             name = project.get("name", project_root.name)
             project["urls"] = {
-                "Homepage": f"https://github.com/USERNAME/{name}",
-                "Repository": f"https://github.com/USERNAME/{name}",
-                "Issues": f"https://github.com/USERNAME/{name}/issues",
-                "Changelog": f"https://github.com/USERNAME/{name}/releases",
+                "Homepage": f"https://github.com/{owner}/{name}",
+                "Repository": f"https://github.com/{owner}/{name}",
+                "Issues": f"https://github.com/{owner}/{name}/issues",
+                "Changelog": f"https://github.com/{owner}/{name}/releases",
             }
             modified = True
         elif "Changelog" not in project.get("urls", {}):
             name = project.get("name", project_root.name)
-            project["urls"]["Changelog"] = f"https://github.com/USERNAME/{name}/releases"
+            project["urls"]["Changelog"] = f"https://github.com/{owner}/{name}/releases"
             modified = True
 
         if not modified:
@@ -5188,11 +5324,12 @@ See [LICENSE](LICENSE) file.
         return False
 
 
-def _create_publish_workflow(project_root: Path, dry_run: bool) -> bool:
+def _create_publish_workflow(project_root: Path, dry_run: bool, python_version: str = "3.12", build_cmd: str = "uv build") -> bool:
     """Generate .github/workflows/publish.yml for PyPI Trusted Publisher publishing."""
     action_name = "create_publish_workflow"
     workflow_dir = project_root / ".github" / "workflows"
     workflow_path = workflow_dir / "publish.yml"
+    ci_path = workflow_dir / "ci.yml"
 
     if workflow_path.exists():
         _log_action(action_name, "INFO", ".github/workflows/publish.yml already exists. Skipping.")
@@ -5202,10 +5339,28 @@ def _create_publish_workflow(project_root: Path, dry_run: bool) -> bool:
         _log_action(action_name, "INFO", "DRY RUN: Would create .github/workflows/publish.yml")
         return True
 
+    has_ci = ci_path.exists()
+    if not has_ci:
+        _log_action(action_name, "WARN",
+                     "No ci.yml found. publish.yml will NOT run tests before publishing. "
+                     "Consider adding a CI workflow.")
+
     try:
         workflow_dir.mkdir(parents=True, exist_ok=True)
 
-        content = '''# Publish to PyPI using Trusted Publishers (OIDC)
+        # Build the test job section conditionally
+        if has_ci:
+            test_section = """
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: test"""
+        else:
+            test_section = """
+  build:"""
+
+        content = f'''# Publish to PyPI using Trusted Publishers (OIDC)
 # IMPORTANT: Configure Trusted Publishers on PyPI BEFORE pushing your first v* tag.
 # See: https://docs.pypi.org/trusted-publishers/
 #
@@ -5218,30 +5373,25 @@ on:
   push:
     tags: ['v*']
 
-jobs:
-  test:
-    uses: ./.github/workflows/ci.yml
-
-  build:
-    needs: test
+jobs:{test_section}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: '3.13'
+          python-version: '{python_version}'
 
       - name: Verify tag matches package version
         shell: bash
         run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          TAG_VERSION=${{GITHUB_REF#refs/tags/v}}
           PKG_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "ERROR: Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
             exit 1
           fi
 
-      - run: uv build
+      - run: {build_cmd}
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -5352,7 +5502,9 @@ def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
         return False
 
 
-def _create_releasing_doc(project_root: Path, dry_run: bool) -> bool:
+def _create_releasing_doc(project_root: Path, dry_run: bool, owner: str = "USERNAME",
+                          default_branch: str = "main", build_cmd: str = "uv build",
+                          publish_cmd: str = "uv publish") -> bool:
     """Generate or update RELEASING.md with PyPI publishing instructions."""
     action_name = "create_releasing_doc"
     releasing_path = project_root / "RELEASING.md"
@@ -5378,7 +5530,7 @@ def _create_releasing_doc(project_root: Path, dry_run: bool) -> bool:
 After pushing the tag (step above), GitHub Actions will:
 1. Run the full CI test suite (via reusable `ci.yml` workflow)
 2. Verify the tag version matches `pyproject.toml` version
-3. Build wheel + sdist with `uv build`
+3. Build wheel + sdist with `{build_cmd}`
 4. Publish to TestPyPI (requires `testpypi` environment)
 5. Publish to PyPI (requires `pypi` environment approval if configured)
 
@@ -5388,7 +5540,7 @@ After pushing the tag (step above), GitHub Actions will:
 2. Enable 2FA on both accounts (required by PyPI)
 3. Configure **Trusted Publishers** on both sites:
    - PyPI Project Name: `{name}`
-   - Owner: `USERNAME`
+   - Owner: `{owner}`
    - Repository: `{name}`
    - Workflow: `publish.yml`
    - Environment: `pypi` (or `testpypi`)
@@ -5408,8 +5560,8 @@ pip install --index-url https://test.pypi.org/simple/ \\
 ### Manual publishing (fallback)
 
 ```bash
-uv build
-uv publish  # uses Trusted Publisher OIDC if run in GitHub Actions
+{build_cmd}
+{publish_cmd}  # uses Trusted Publisher OIDC if run in GitHub Actions
 ```
 """
 
@@ -5441,7 +5593,7 @@ uv publish  # uses Trusted Publisher OIDC if run in GitHub Actions
 2. Run full tests
 3. Commit: `git commit -m "chore(version): bump to X.Y.Z"`
 4. Tag: `git tag vX.Y.Z`
-5. Push: `git push origin main --tags`
+5. Push: `git push origin {default_branch} --tags`
 {pypi_section}"""
 
     if dry_run:
@@ -5552,7 +5704,7 @@ class CLICommand(BaseSettings):
             "--dry-run",
             "-d",
             help="Preview actions without making any file system changes.",
-            is_flag=True, # Treat as a boolean flag.
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning changes will be made.
@@ -5562,7 +5714,7 @@ class CLICommand(BaseSettings):
         typer.Option(
             "--full-gitignore-overwrite",
             help="If an existing .gitignore is found, overwrite it completely instead of appending.",
-            is_flag=True,
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning intelligent appending is preferred.
@@ -5572,7 +5724,7 @@ class CLICommand(BaseSettings):
         typer.Option(
             "--no-gitignore",
             help="Disable all .gitignore creation, updates, and parsing.",
-            is_flag=True,
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning gitignore handling is enabled.
@@ -5601,7 +5753,7 @@ class CLICommand(BaseSettings):
             "--verbose",
             "-v",
             help="Show detailed technical output for debugging and learning.",
-            is_flag=True,
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning clean progress output is preferred.
@@ -5611,7 +5763,7 @@ class CLICommand(BaseSettings):
         typer.Option(
             "--prepare-pypi",
             help="Add PyPI publishing metadata: license, classifiers, authors, README, publish workflow.",
-            is_flag=True,
+
             rich_help_panel="PyPI Publishing"
         )
     ] = False
@@ -5800,6 +5952,37 @@ class CLICommand(BaseSettings):
                 raise SystemExit(error_msg)
             _log_action("ensure_project_initialized_with_pyproject", "SUCCESS", "Project structure and pyproject.toml initialized successfully.")
             major_action_results.append(("project_initialized", "SUCCESS"))
+
+            # Early-exit for --prepare-pypi: only needs pyproject.toml + file I/O,
+            # not gitignore/venv/dependency discovery/ruff/VS Code setup.
+            if self.prepare_pypi:
+                _log_action("prepare_pypi_start", "INFO", "Adding PyPI publishing metadata (--prepare-pypi).")
+                pypi_success = _prepare_pypi_metadata(self.project_dir, self.license_type, self.dry_run)
+                major_action_results.append(("pypi_metadata", "SUCCESS" if pypi_success else "FAILED"))
+                if pypi_success:
+                    _log_action("script_end", "SUCCESS", "PyPI metadata setup complete.")
+                    _log_data_global["overall_status"] = "SUCCESS"
+                else:
+                    _log_action("script_end", "WARN", "PyPI metadata setup completed with some issues. Check log for details.")
+                    _log_data_global["overall_status"] = "WARNINGS"
+
+                # Print summary table and exit — skip all remaining steps
+                step_display_names_pypi = {
+                    "project_initialized": "Project Structure",
+                    "pypi_metadata": "PyPI Publishing Setup",
+                }
+                summary_lines = [
+                    "\n--- PyPI Publishing Setup Summary ---",
+                    "Step                         | Status",
+                    "-----------------------------|----------",
+                ]
+                for step, status in major_action_results:
+                    display_name = step_display_names_pypi.get(step, step)
+                    summary_lines.append(f"{display_name.ljust(29)}| {status}")
+                summary_lines.append(f"\nSee '{log_file_path.name}' for full details.")
+                _log_action("final_summary_table", "INFO", "\n".join(summary_lines))
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)
+                return  # Skip gitignore/venv/deps/ruff/VS Code
 
             # Step 3: Instantiate GitIgnore manager and setup .gitignore.
             ignore_manager: Optional[GitIgnore] = None
@@ -6215,12 +6398,6 @@ class CLICommand(BaseSettings):
                 license_ok = _create_license_file(self.project_dir, self.license_type, self.dry_run)
                 if license_ok:
                     major_action_results.append(("license_file", "SUCCESS"))
-
-            # Step 12b: If --prepare-pypi was requested, add full PyPI publishing metadata.
-            if self.prepare_pypi:
-                _log_action("prepare_pypi_start", "INFO", "Adding PyPI publishing metadata (--prepare-pypi).")
-                pypi_success = _prepare_pypi_metadata(self.project_dir, self.license_type, self.dry_run)
-                major_action_results.append(("pypi_metadata", "SUCCESS" if pypi_success else "FAILED"))
 
             # --- Final Status and Summary ---
             _log_action("script_end", "SUCCESS", "🎉 Automated project setup script completed successfully!")
