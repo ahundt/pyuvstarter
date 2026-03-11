@@ -24,6 +24,12 @@ dependencies = [
 ]
 
 
+[dependency-groups]
+dev = [
+    "pytest>=7.0",  # test runner
+    "pyyaml>=6.0",  # YAML parsing in tests (validates generated workflow files)
+]
+
 # This section defines the command-line script.
 [project.scripts]
 pyuvstarter = "pyuvstarter:app" # Creates `pyuvstarter` command from Typer app

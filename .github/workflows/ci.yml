@@ -184,38 +184,10 @@ jobs:
         chmod +x create_demo.sh create_demo2.sh
 
         echo ""
-        echo "🧪 Running Python unit tests..."
-        echo "==================================="
-        TESTS_PASSED=true
-        TEST_COUNT=0
-        for test_file in tests/test_*.py; do
-          # Check if glob matched any files (if not, test_file will be literal "tests/test_*.py")
-          if [ ! -f "$test_file" ]; then
-            echo "No Python test files found matching tests/test_*.py"
-            break
-          fi
-          TEST_COUNT=$((TEST_COUNT + 1))
-          echo "Running: $test_file"
-          # Use uv run to execute test file (respects UV_PYTHON env var)
-          if uv run "$test_file"; then
-            echo "✅ $test_file PASSED"
-          else
-            echo "❌ $test_file FAILED"
-            TESTS_PASSED=false
-          fi
-          echo ""
-        done
-
-        if [ $TEST_COUNT -eq 0 ]; then
-          echo "⚠️  No Python unit tests found - skipping"
-          PYTEST_EXIT_CODE=0
-        elif [ "$TESTS_PASSED" = false ]; then
-          echo "❌ Python unit tests failed"
-          PYTEST_EXIT_CODE=1
-        else
-          echo "✅ All Python unit tests passed ($TEST_COUNT tests)"
-          PYTEST_EXIT_CODE=0
-        fi
+        echo "Running Python unit tests (pytest)..."
+        echo "======================================="
+        uv run python -m pytest tests/ --junitxml=test_results_pytest.xml --tb=short
+        PYTEST_EXIT_CODE=$?
 
         # Run the demo script tests
         echo ""
