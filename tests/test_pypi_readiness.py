@@ -17,6 +17,8 @@ import os
 import textwrap
 from pathlib import Path
 
+import pytest
+
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -2311,3 +2313,459 @@ def test_add_workflow_call_trigger_dry_run_log_uses_ci_filename(tmp_path):
             f"DRY RUN log must use ci_filename='test.yml', got: {dry_run_msg}"
         assert "ci.yml" not in dry_run_msg, \
             f"DRY RUN log must not hardcode 'ci.yml', got: {dry_run_msg}"
+
+
+# ─── _is_publish_workflow: additional Tier 3 variants ─────────────────────────
+
+
+def test_is_publish_workflow_detects_python3_m_twine_upload():
+    """Tier 3: python3 -m twine upload is detected (whole-word 'twine' and 'upload' present)."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: python3 -m twine upload dist/*\n") is True
+
+
+def test_is_publish_workflow_detects_uv_run_twine_upload():
+    """Tier 3: uv run twine upload is detected (whole-word 'twine' and 'upload' present)."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: uv run twine upload dist/*\n") is True
+
+
+def test_is_publish_workflow_detects_twine_upload_with_flags():
+    """Tier 3: twine upload with extra flags is detected."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: twine upload --skip-existing dist/*\n") is True
+    assert _is_publish_workflow(
+        "      - run: twine upload --repository testpypi dist/*.whl\n"
+    ) is True
+
+
+def test_is_publish_workflow_twine_check_does_not_match():
+    """Tier 3: 'run: twine check' is NOT a publish tell (no 'upload' word)."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: twine check dist/*\n") is False
+
+
+def test_is_publish_workflow_detects_compound_uv_build_and_publish():
+    """Tier 3: compound command 'uv build && uv publish' on one run: line is detected."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: uv build && uv publish\n") is True
+
+
+def test_is_publish_workflow_multiline_run_block_not_caught_by_tier3():
+    """Tier 3 limitation: multi-line run: | block with twine on next line is NOT detected.
+
+    This is the documented design trade-off: scoping to the run: line avoids
+    comment false-positives. Such workflows are still caught by Tier 1 (pypa action)
+    or Tier 2 (environment: pypi) if present.
+    """
+    from pyuvstarter import _is_publish_workflow
+    multiline_run_content = (
+        "jobs:\n  publish:\n    steps:\n"
+        "      - name: Upload to PyPI\n"
+        "        run: |\n"
+        "          twine upload dist/*\n"
+    )
+    # Tier 3 does NOT catch multi-line run blocks — this is expected behavior.
+    # (The workflow would still be caught by Tier 1 or Tier 2 in a real publish workflow.)
+    assert _is_publish_workflow(multiline_run_content) is False
+
+
+def test_is_publish_workflow_multiline_run_caught_by_tier1():
+    """When multi-line run: block is the only Tier-3 tell, Tier 1 must catch it."""
+    from pyuvstarter import _is_publish_workflow
+    content = (
+        "jobs:\n  publish:\n    steps:\n"
+        "      - name: Upload to PyPI\n"
+        "        run: |\n"
+        "          twine upload dist/*\n"
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n"
+    )
+    assert _is_publish_workflow(content) is True
+
+
+def test_is_publish_workflow_uv_publish_with_env_vars():
+    """Tier 3: uv publish with env var prefix on same run: line is detected."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow(
+        "      - run: UV_PUBLISH_TOKEN=${{ secrets.PYPI_TOKEN }} uv publish\n"
+    ) is True
+
+
+def test_is_publish_workflow_complete_realistic_publish_yaml():
+    """Full realistic publish workflow YAML must be detected (all tiers present)."""
+    from pyuvstarter import _is_publish_workflow
+    content = (
+        "name: Publish to PyPI\n"
+        "on:\n  push:\n    tags: ['v*']\n"
+        "jobs:\n"
+        "  publish:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    permissions:\n"
+        "      id-token: write\n"
+        "    environment: pypi\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: astral-sh/setup-uv@v4\n"
+        "      - run: uv build\n"
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n"
+    )
+    assert _is_publish_workflow(content) is True
+
+
+def test_is_publish_workflow_complete_realistic_ci_yaml():
+    """Full realistic CI workflow YAML must NOT be detected as a publish workflow."""
+    from pyuvstarter import _is_publish_workflow
+    content = (
+        "name: CI\n"
+        "on:\n  push:\n  pull_request:\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - name: Install deps\n"
+        "        run: pip install pytest\n"
+        "      - name: Run tests\n"
+        "        run: pytest tests/ -v\n"
+        "      - name: Build docs\n"
+        "        run: uv build --wheel\n"
+    )
+    assert _is_publish_workflow(content) is False
+
+
+def test_is_publish_workflow_tier2a_crlf_line_endings():
+    """Tier 2a: environment: pypi with CRLF line endings (Windows-created files) is detected."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("    environment: pypi\r\n") is True
+    assert _is_publish_workflow("    environment: testpypi\r\n") is True
+
+
+def test_is_publish_workflow_tier2b_crlf_line_endings():
+    """Tier 2b: name: pypi dict-form with CRLF line endings is detected."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("    environment:\r\n      name: pypi\r\n") is True
+
+
+def test_is_publish_workflow_pypi_in_workflow_name_does_not_match():
+    """Workflow name mentioning 'pypi' in a job display name must NOT trigger Tier 2b."""
+    from pyuvstarter import _is_publish_workflow
+    # "name: Run pypi tests" — job display name, not environment name
+    assert _is_publish_workflow("    name: Run pypi tests\n") is False
+    # "name: pypi-tests" — partial match guard (EOL anchor)
+    assert _is_publish_workflow("    name: pypi-tests\n") is False
+
+
+# ─── _detect_ci_workflow_name: additional candidate and edge case tests ────────
+
+
+def test_detect_ci_workflow_name_falls_back_to_tests_yml():
+    """Falls back to tests.yml (plural) when no higher-priority file exists."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "tests.yml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+        assert _detect_ci_workflow_name(wf_dir) == "tests.yml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_python_app_yml():
+    """Falls back to python-app.yml (GitHub Python Application starter template)."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "python-app.yml").write_text("on:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n")
+        assert _detect_ci_workflow_name(wf_dir) == "python-app.yml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_python_package_yml():
+    """Falls back to python-package.yml (GitHub Python Package starter template)."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        # python-package.yml template may include a publish step — must confirm it
+        # is NOT detected as a publish workflow when it lacks publish tells
+        (wf_dir / "python-package.yml").write_text(
+            "on:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: pip install pytest\n      - run: pytest\n"
+        )
+        assert _detect_ci_workflow_name(wf_dir) == "python-package.yml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_ci_yaml():
+    """Falls back to ci.yaml (.yaml extension) when no .yml variants exist."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "ci.yaml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+        assert _detect_ci_workflow_name(wf_dir) == "ci.yaml"
+
+
+def test_detect_ci_workflow_name_yml_takes_priority_over_yaml():
+    """ci.yml takes priority over ci.yaml when both exist."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "ci.yml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+        (wf_dir / "ci.yaml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+        assert _detect_ci_workflow_name(wf_dir) == "ci.yml"
+
+
+def test_detect_ci_workflow_name_all_candidates_are_publish_workflows():
+    """When every matching candidate file is a publish workflow, returns None."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        publish_content = (
+            "on:\n  push:\n    tags: ['v*']\n"
+            "jobs:\n  publish:\n    steps:\n"
+            "      - uses: pypa/gh-action-pypi-publish@release/v1\n"
+        )
+        # Only ci.yml and test.yml exist, both are publish workflows
+        (wf_dir / "ci.yml").write_text(publish_content)
+        (wf_dir / "test.yml").write_text(publish_content)
+        result = _detect_ci_workflow_name(wf_dir)
+        assert result is None, (
+            f"All candidates are publish workflows; must return None, got: {result!r}"
+        )
+
+
+def test_detect_ci_workflow_name_ci_yml_is_publish_falls_back_to_test_yml():
+    """ci.yml is a publish workflow → skipped; test.yml is the CI workflow → returned."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "ci.yml").write_text(
+            "on:\n  push:\n    tags: ['v*']\n"
+            "jobs:\n  publish:\n    environment: pypi\n"
+            "    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n"
+        )
+        (wf_dir / "test.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        result = _detect_ci_workflow_name(wf_dir)
+        assert result == "test.yml", (
+            f"ci.yml is a publish workflow and must be skipped; "
+            f"test.yml should be returned, got: {result!r}"
+        )
+
+
+def test_detect_ci_workflow_name_nonexistent_directory_returns_none():
+    """When the workflow directory does not exist, returns None without error."""
+    from pyuvstarter import _detect_ci_workflow_name
+    result = _detect_ci_workflow_name(Path("/tmp/nonexistent_wfdir_pyuvstarter_test"))
+    assert result is None
+
+
+def test_detect_ci_workflow_name_skips_unreadable_file(tmp_path):
+    """OSError on read (unreadable file) is silently skipped; next candidate is tried."""
+    from unittest.mock import patch, mock_open
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    # ci.yml exists but is "unreadable" (OSError on read); test.yml is readable CI
+    (wf_dir / "ci.yml").write_text("on: push\n")
+    (wf_dir / "test.yml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+
+    original_read_text = Path.read_text
+
+    def mock_read(self, *args, **kwargs):
+        if self.name == "ci.yml":
+            raise OSError("Permission denied")
+        return original_read_text(self, *args, **kwargs)
+
+    with patch.object(Path, "read_text", mock_read):
+        result = _detect_ci_workflow_name(wf_dir)
+
+    assert result == "test.yml", (
+        f"Unreadable ci.yml must be skipped; test.yml should be returned, got: {result!r}"
+    )
+
+
+# ─── _add_workflow_call_trigger: edge cases ────────────────────────────────────
+
+
+def test_add_workflow_call_trigger_skips_when_already_present(tmp_path):
+    """workflow_call already in CI file → returns True, file unchanged."""
+    from pyuvstarter import _add_workflow_call_trigger
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    already_has = (
+        "on:\n  push:\n  workflow_call:  # Allow publish.yml to reuse this workflow\n"
+        "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
+    )
+    (wf_dir / "ci.yml").write_text(already_has)
+    result = _add_workflow_call_trigger(tmp_path, dry_run=False)
+    assert result is True
+    assert (wf_dir / "ci.yml").read_text() == already_has, \
+        "File must be unchanged when workflow_call already present"
+
+
+def test_add_workflow_call_trigger_warns_when_no_on_block(tmp_path):
+    """CI file without an 'on:' block → returns True with WARN, file unchanged."""
+    from unittest.mock import patch
+    from pyuvstarter import _add_workflow_call_trigger
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    no_on_block = "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest\n"
+    (wf_dir / "ci.yml").write_text(no_on_block)
+    with patch("pyuvstarter._log_action") as mock_log:
+        result = _add_workflow_call_trigger(tmp_path, dry_run=False)
+        warn_calls = [c for c in mock_log.call_args_list if "WARN" in str(c)]
+        assert warn_calls, "Expected a WARN log when 'on:' block is missing"
+    assert result is True
+    assert (wf_dir / "ci.yml").read_text() == no_on_block, \
+        "File must be unchanged when 'on:' block is missing"
+
+
+def test_add_workflow_call_trigger_warns_on_compact_on_format(tmp_path):
+    """Compact 'on: push' format → returns True with WARN, file unchanged."""
+    from unittest.mock import patch
+    from pyuvstarter import _add_workflow_call_trigger
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    compact_on = "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+    (wf_dir / "ci.yml").write_text(compact_on)
+    with patch("pyuvstarter._log_action") as mock_log:
+        result = _add_workflow_call_trigger(tmp_path, dry_run=False)
+        warn_calls = [c for c in mock_log.call_args_list if "WARN" in str(c)]
+        assert warn_calls, "Expected a WARN log for compact 'on: push' format"
+    assert result is True
+    assert (wf_dir / "ci.yml").read_text() == compact_on, \
+        "File must be unchanged for compact on: format"
+
+
+def test_add_workflow_call_trigger_handles_quoted_on_block(tmp_path):
+    """'\"on\":' (double-quoted form) is handled correctly — workflow_call is injected."""
+    from pyuvstarter import _add_workflow_call_trigger
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    quoted_on = '"on":\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n'
+    (wf_dir / "ci.yml").write_text(quoted_on)
+    result = _add_workflow_call_trigger(tmp_path, dry_run=False)
+    assert result is True
+    content = (wf_dir / "ci.yml").read_text()
+    assert "workflow_call" in content, \
+        "workflow_call must be injected into workflow with double-quoted 'on': form"
+
+
+def test_add_workflow_call_trigger_returns_true_when_no_ci_found(tmp_path):
+    """No CI workflow found → returns True (graceful no-op), no error."""
+    from pyuvstarter import _add_workflow_call_trigger
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    # No CI workflow files, only a publish.yml (not in candidates)
+    (wf_dir / "publish.yml").write_text("on:\n  push:\n    tags: ['v*']\n")
+    result = _add_workflow_call_trigger(tmp_path, dry_run=False)
+    assert result is True
+
+
+# ─── _create_publish_workflow: SHA pins and structural checks ──────────────────
+
+
+def test_publish_yml_contains_sha_pinned_actions(tmp_path):
+    """Generated publish.yml uses SHA-pinned action refs, not mutable tags."""
+    from pyuvstarter import _create_publish_workflow
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+    result = _create_publish_workflow(tmp_path, dry_run=False)
+    assert result is True
+    content = (wf_dir / "publish.yml").read_text()
+    # Verify each expected SHA pin is present (not mutable tags like @v4)
+    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in content, \
+        "actions/checkout must use SHA pin, not @v4"
+    assert "astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098" in content, \
+        "astral-sh/setup-uv must use SHA pin, not @v7"
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in content, \
+        "actions/upload-artifact must use SHA pin, not @v4"
+    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in content, \
+        "actions/download-artifact must use SHA pin, not @v4"
+    assert "pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e" in content, \
+        "pypa/gh-action-pypi-publish must use SHA pin, not @release/v1"
+    # Verify mutable tags are NOT present as standalone references
+    assert "actions/checkout@v4" not in content
+    assert "astral-sh/setup-uv@v7" not in content
+    assert "actions/upload-artifact@v4" not in content
+    assert "actions/download-artifact@v4" not in content
+    assert "pypa/gh-action-pypi-publish@release/v1" not in content
+
+
+def test_publish_yml_structural_validity_with_ci(tmp_path):
+    """Generated publish.yml has all required top-level sections (with CI workflow)."""
+    from pyuvstarter import _create_publish_workflow
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+    _create_publish_workflow(tmp_path, dry_run=False)
+    content = (wf_dir / "publish.yml").read_text()
+    # Top-level YAML structure checks (no external parser required)
+    assert content.startswith("# Publish to PyPI"), "Must start with header comment"
+    assert "\nname: Publish to PyPI\n" in content, "Must have name: key"
+    assert "\non:\n" in content, "Must have on: trigger block"
+    assert "\njobs:\n" in content, "Must have jobs: block"
+    assert "\n  build:\n" in content, "Must have build: job"
+    assert "\n  publish-testpypi:\n" in content, "Must have publish-testpypi: job"
+    assert "\n  publish-pypi:\n" in content, "Must have publish-pypi: job"
+    assert "\n  test:\n" in content, "Must have test: job when CI exists"
+    # Verify no mismatched braces or obvious template errors (f-string interpolation check)
+    assert "${" not in content or "GITHUB_REF" in content, \
+        "Only expected ${GITHUB_REF} template var; no other unresolved f-string placeholders"
+
+
+def test_publish_yml_structural_validity_without_ci(tmp_path):
+    """Generated publish.yml (no CI) has required sections, omits test: job."""
+    from pyuvstarter import _create_publish_workflow
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    # No CI workflow files at all
+    _create_publish_workflow(tmp_path, dry_run=False)
+    content = (wf_dir / "publish.yml").read_text()
+    assert "\njobs:\n" in content, "Must have jobs: block"
+    assert "\n  build:\n" in content, "Must have build: job"
+    assert "\n  publish-testpypi:\n" in content, "Must have publish-testpypi: job"
+    assert "\n  publish-pypi:\n" in content, "Must have publish-pypi: job"
+    # No test: job when CI does not exist
+    assert "uses: ./.github/workflows/" not in content, \
+        "Must NOT have a uses: CI reference when no CI workflow exists"
+
+
+def test_publish_yml_valid_yaml_with_pyyaml(tmp_path):
+    """Generated publish.yml is parseable by PyYAML when available (skips if not installed)."""
+    yaml = pytest.importorskip("yaml", reason="pyyaml not installed; structural checks cover this")
+    from pyuvstarter import _create_publish_workflow
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text("on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+    _create_publish_workflow(tmp_path, dry_run=False)
+    content = (wf_dir / "publish.yml").read_text()
+    parsed = yaml.safe_load(content)
+    assert parsed is not None and "jobs" in parsed
+
+
+def test_publish_yml_uses_custom_python_version(tmp_path):
+    """Generated publish.yml contains the specified python_version."""
+    from pyuvstarter import _create_publish_workflow
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    _create_publish_workflow(tmp_path, dry_run=False, python_version="3.11")
+    content = (wf_dir / "publish.yml").read_text()
+    assert "python-version: '3.11'" in content, \
+        "Generated publish.yml must embed the requested python_version"
+    assert "python-version: '3.12'" not in content
+
+
+def test_publish_yml_uses_custom_build_cmd(tmp_path):
+    """Generated publish.yml contains the specified build_cmd."""
+    from pyuvstarter import _create_publish_workflow
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    _create_publish_workflow(tmp_path, dry_run=False, build_cmd="hatch build")
+    content = (wf_dir / "publish.yml").read_text()
+    assert "run: hatch build" in content, \
+        "Generated publish.yml must embed the requested build_cmd"
