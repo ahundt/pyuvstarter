@@ -2129,3 +2129,185 @@ def test_publish_yml_references_workflow_yml_when_detected():
             "publish.yml must reference workflow.yml when that is the detected CI workflow"
         assert "uses: ./.github/workflows/ci.yml" not in content, \
             "publish.yml must NOT hardcode ci.yml when the CI file is workflow.yml"
+
+
+# ─── _is_publish_workflow detection ───────────────────────────────────────────
+
+
+def test_is_publish_workflow_detects_pypa_action():
+    """Tier 1: pypa/gh-action-pypi-publish is the definitive publish workflow tell."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - uses: pypa/gh-action-pypi-publish@release/v1\n") is True
+
+
+def test_is_publish_workflow_detects_pypa_action_sha_pinned():
+    """Tier 1: SHA-pinned pypa action is also detected (substring match)."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow(
+        "      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1\n"
+    ) is True
+
+
+def test_is_publish_workflow_detects_pypi_environment_single_value():
+    """Tier 2a: environment: pypi (single-value) is a strong publish tell."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("    environment: pypi\n") is True
+    assert _is_publish_workflow("    environment: testpypi\n") is True
+
+
+def test_is_publish_workflow_detects_pypi_environment_with_inline_comment():
+    """Tier 2a: environment: pypi # comment (inline comment) still matches."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("    environment: pypi # OIDC trusted publisher\n") is True
+    assert _is_publish_workflow("    environment: testpypi # test only\n") is True
+
+
+def test_is_publish_workflow_does_not_match_pypi_staging():
+    """Tier 2a: environment: pypi-staging must NOT match (partial name)."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("    environment: pypi-staging\n") is False
+
+
+def test_is_publish_workflow_detects_dict_form_environment():
+    """Tier 2b: environment:\\n  name: pypi (dict form) is detected."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("    environment:\n      name: pypi\n") is True
+    assert _is_publish_workflow("    environment:\n      name: testpypi\n") is True
+
+
+def test_is_publish_workflow_dict_form_does_not_match_job_display_name():
+    """Tier 2b: 'name: pypi tests' (job display name) must NOT match (EOL anchor)."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("    name: pypi tests and checks\n") is False
+
+
+def test_is_publish_workflow_detects_twine_upload_in_run_step():
+    """Tier 3: run: step with twine upload is a publish tell."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: twine upload dist/*\n") is True
+
+
+def test_is_publish_workflow_detects_python_m_twine_upload():
+    """Tier 3: run: python -m twine upload is also detected."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: python -m twine upload dist/*\n") is True
+
+
+def test_is_publish_workflow_twine_in_comment_does_not_match():
+    """Tier 3: twine in a comment line (no run: prefix) must NOT match."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("        # TODO: twine upload dist/*\n") is False
+
+
+def test_is_publish_workflow_detects_uv_publish_in_run_step():
+    """Tier 3: run: uv publish is a publish tell."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: uv publish\n") is True
+    assert _is_publish_workflow("      - run: uv publish --index-url https://test.pypi.org/\n") is True
+
+
+def test_is_publish_workflow_uv_publish_in_comment_does_not_match():
+    """Tier 3: uv publish in a comment must NOT match."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("        # Alternative: uv publish --dry-run\n") is False
+
+
+def test_is_publish_workflow_uv_build_does_not_match():
+    """'uv build' alone is NOT a publish tell (only uv publish triggers detection)."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("      - run: uv build\n") is False
+
+
+def test_is_publish_workflow_returns_false_for_ci_content():
+    """Normal CI workflow content must return False."""
+    from pyuvstarter import _is_publish_workflow
+    ci_content = (
+        "on:\n  push:\n  pull_request:\n"
+        "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - run: pytest\n"
+    )
+    assert _is_publish_workflow(ci_content) is False
+
+
+def test_is_publish_workflow_empty_content_returns_false():
+    """Empty file content returns False."""
+    from pyuvstarter import _is_publish_workflow
+    assert _is_publish_workflow("") is False
+
+
+def test_detect_ci_workflow_name_skips_publish_workflow_named_build():
+    """build.yml containing pypa/gh-action-pypi-publish must be skipped; test.yml is returned."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        # build.yml is a publish workflow (contains pypi action)
+        (wf_dir / "build.yml").write_text(
+            "on:\n  push:\n    tags: ['v*']\n"
+            "jobs:\n  publish:\n"
+            "    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n"
+        )
+        # test.yml is the real CI workflow
+        (wf_dir / "test.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        result = _detect_ci_workflow_name(wf_dir)
+        assert result == "test.yml", (
+            f"build.yml containing pypa/gh-action-pypi-publish must be skipped; "
+            f"test.yml should be returned as CI workflow, got: {result!r}"
+        )
+
+
+def test_detect_ci_workflow_name_skips_workflow_with_uv_publish():
+    """workflow.yml containing 'run: uv publish' is skipped; ci.yml is returned."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "workflow.yml").write_text(
+            "on:\n  push:\n    tags: ['v*']\n"
+            "jobs:\n  release:\n    steps:\n      - run: uv publish\n"
+        )
+        (wf_dir / "ci.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        result = _detect_ci_workflow_name(wf_dir)
+        assert result == "ci.yml", (
+            f"workflow.yml with uv publish must be skipped; ci.yml should be returned, got: {result!r}"
+        )
+
+
+# ─── DRY RUN log uses detected CI filename (C5) ───────────────────────────────
+
+
+def test_add_workflow_call_trigger_dry_run_does_not_modify_file(tmp_path):
+    """DRY RUN must not modify the CI file — only reports what would happen."""
+    from pyuvstarter import _add_workflow_call_trigger
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    original = "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+    (wf_dir / "test.yml").write_text(original)
+    result = _add_workflow_call_trigger(tmp_path, dry_run=True)
+    assert result is True
+    assert (wf_dir / "test.yml").read_text() == original, \
+        "DRY RUN must not modify any files"
+
+
+def test_add_workflow_call_trigger_dry_run_log_uses_ci_filename(tmp_path):
+    """DRY RUN log must reference the detected CI filename, not hardcoded 'ci.yml'."""
+    from unittest.mock import patch
+    from pyuvstarter import _add_workflow_call_trigger
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "test.yml").write_text(
+        "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+    )
+    with patch("pyuvstarter._log_action") as mock_log:
+        _add_workflow_call_trigger(tmp_path, dry_run=True)
+        dry_run_calls = [c for c in mock_log.call_args_list if "DRY RUN" in str(c)]
+        assert dry_run_calls, "Expected at least one DRY RUN _log_action call"
+        dry_run_msg = str(dry_run_calls[0])
+        assert "test.yml" in dry_run_msg, \
+            f"DRY RUN log must use ci_filename='test.yml', got: {dry_run_msg}"
+        assert "ci.yml" not in dry_run_msg, \
+            f"DRY RUN log must not hardcode 'ci.yml', got: {dry_run_msg}"

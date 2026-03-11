@@ -5367,18 +5367,76 @@ See [LICENSE](LICENSE) file.
         return False
 
 
+# Ordered by priority: more specific names first, then common GitHub starter names.
+# python-app.yml and python-package.yml are GitHub's official Python starter templates.
+_CI_WORKFLOW_CANDIDATES = (
+    "ci.yml", "test.yml", "tests.yml", "build.yml", "main.yml",
+    "workflow.yml", "workflows.yml", "python.yml",
+    "python-app.yml", "python-package.yml",
+    "ci.yaml", "test.yaml", "workflow.yaml",
+)
+# Pre-joined string used in WARN messages — computed once to avoid repeated joins.
+_CI_CANDIDATES_STR = ", ".join(_CI_WORKFLOW_CANDIDATES)
+
+
+def _is_publish_workflow(content: str) -> bool:
+    """Return True if workflow content indicates a PyPI publish/release workflow.
+
+    Used to exclude publish workflows from CI detection — injecting workflow_call
+    into a publish workflow or referencing it as CI would break existing releases.
+
+    Checks three tiers of evidence:
+    1. Definitive: pypa/gh-action-pypi-publish action (OIDC standard action)
+    2. Strong: environment: pypi or testpypi declaration (single-value or dict form)
+    3. Moderate: run: step containing twine upload or uv publish CLI commands
+       (scoped to run: lines to avoid comment false-positives)
+
+    Known limitation: Tier 1 uses substring match — a commented-out pypa action
+    reference still matches. This is intentional: the comment signals publish intent.
+    """
+    import re as _re
+    # Tier 1: Definitive tell — PyPI publish action (OIDC standard).
+    # No CI-only workflow uses this action; any occurrence means this is a publish workflow.
+    if "pypa/gh-action-pypi-publish" in content:
+        return True
+    # Tier 2a: environment: pypi/testpypi (single-value, allows inline comment).
+    # EOL anchor + optional comment prevents matching "environment: pypi-staging".
+    if _re.search(r'environment:\s*(pypi|testpypi)(\s*$|\s+#)', content, _re.MULTILINE):
+        return True
+    # Tier 2b: dict form — environment:\n  name: pypi (EOL anchor prevents "name: pypi tests").
+    if _re.search(r'name:\s*(pypi|testpypi)\s*$', content, _re.MULTILINE):
+        return True
+    # Tier 3: publish CLI in a run: step.
+    # Matches both YAML step forms:
+    #   "      - run: twine upload dist/*"  (single-key step with leading dash)
+    #   "        run: twine upload dist/*"  (multi-key step property, no dash)
+    # Covers: "twine upload", "python -m twine upload", "uv publish", "uv publish --index ..."
+    # Scoped to run: lines to avoid matching comments (e.g., "# TODO: twine upload").
+    if _re.search(r'^\s*(?:-\s+)?run:\s.*\b(twine\b.*\bupload\b|uv\s+publish)\b', content, _re.MULTILINE):
+        return True
+    return False
+
+
 def _detect_ci_workflow_name(workflow_dir: Path) -> str | None:
     """Detect the CI workflow filename, trying common names in priority order.
 
     Returns the filename (e.g. 'ci.yml') or None if no CI workflow found.
     Many projects use test.yml, tests.yml, build.yml, workflow.yml, or
     python.yml (GitHub's Python starter template) instead of ci.yml.
+
+    Skips files whose content identifies them as publish/release workflows
+    (e.g. build.yml containing pypa/gh-action-pypi-publish) to avoid breaking
+    existing release automation when injecting workflow_call triggers.
     """
-    for candidate in ("ci.yml", "test.yml", "tests.yml", "build.yml", "main.yml",
-                      "workflow.yml", "workflows.yml", "python.yml",
-                      "ci.yaml", "test.yaml", "workflow.yaml"):
-        if (workflow_dir / candidate).exists():
-            return candidate
+    for candidate in _CI_WORKFLOW_CANDIDATES:
+        candidate_path = workflow_dir / candidate
+        if candidate_path.exists():
+            try:
+                content = candidate_path.read_text(encoding="utf-8")
+                if not _is_publish_workflow(content):
+                    return candidate
+            except OSError:
+                pass  # Skip unreadable files; try next candidate
     return None
 
 
@@ -5425,7 +5483,7 @@ def _create_publish_workflow(project_root: Path, dry_run: bool, python_version: 
     has_ci = ci_filename is not None
     if not has_ci:
         _log_action(action_name, "WARN",
-                     "No CI workflow found (checked: ci.yml, test.yml, tests.yml, build.yml, main.yml). "
+                     f"No CI workflow found (checked: {_CI_CANDIDATES_STR}). "
                      "publish.yml will NOT run tests before publishing. Consider adding a CI workflow.")
 
     try:
@@ -5464,8 +5522,8 @@ on:
 jobs:{test_section}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098 # v7
         with:
           python-version: '{python_version}'
 
@@ -5480,7 +5538,7 @@ jobs:{test_section}
           fi
 
       - run: {build_cmd}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
@@ -5492,11 +5550,11 @@ jobs:{test_section}
       id-token: write
     environment: testpypi
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
 
@@ -5507,11 +5565,11 @@ jobs:{test_section}
       id-token: write
     environment: pypi
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
 '''
         with open(workflow_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -5533,7 +5591,7 @@ def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
 
     if ci_filename is None:
         _log_action(action_name, "INFO",
-                    "No CI workflow found (checked: ci.yml, test.yml, tests.yml, build.yml, main.yml). "
+                    f"No CI workflow found (checked: {_CI_CANDIDATES_STR}). "
                     "Skipping workflow_call injection.")
         return True
 
@@ -5585,7 +5643,7 @@ def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
                 break
 
         if dry_run:
-            _log_action(action_name, "INFO", "DRY RUN: Would add workflow_call trigger to ci.yml")
+            _log_action(action_name, "INFO", f"DRY RUN: Would add workflow_call trigger to {ci_filename}")
             return True
 
         # Insert workflow_call as the last trigger before the next top-level key
