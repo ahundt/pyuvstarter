@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_call:  # Allow publish.yml to reuse this workflow
 
 permissions:
   contents: read
@@ -34,10 +35,11 @@ jobs:
       UV_PYTHON: ${{ matrix.python-version }}
       PYUVSTARTER_TEST_OS: ${{ matrix.os }}
       PYUVSTARTER_TEST_PYTHON: ${{ matrix.python-version }}
+      NO_COLOR: "1"  # Suppress Rich ANSI codes for stable test output assertions
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -282,21 +284,24 @@ jobs:
         ls -la test_results*.xml || echo "No test_results*.xml files found for publishing"
 
     - name: Publish Test Results
-      if: always() && runner.os == 'Linux'
-      uses: EnricoMi/publish-unit-test-result-action@v2
+      uses: dorny/test-reporter@d61b558e8df85cb60d09ca3e5b09653b4477cea7 # v1
+      if: always()
       with:
-        files: test_results*.xml
-        check_name: "PyUVStarter Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
-        comment_title: "PyUVStarter Test Results (${{ matrix.os }}, py${{ matrix.python-version }})"
-        github_token: ${{ secrets.GITHUB_TOKEN }}
+        name: "pyuvstarter Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
+        path: test_results*.xml
+        reporter: java-junit
+        fail-on-error: false
 
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
       run: |
-        Write-Host "🧪 WINDOWS UNIT TEST: Basic project creation"
-        Write-Host "==========================================="
+        Write-Host "🧪 WINDOWS UNIT TEST: Python unit tests + basic project creation"
+        Write-Host "================================================================"
         $TEST_FAILED = 0
-        # Windows doesn't support the bash demo script, so run pyuvstarter directly
+        # Run Python unit tests with JUnit XML output for dorny/test-reporter
+        uv run python -m pytest tests/ --junitxml=test_results_pytest_windows.xml --tb=short
+        if ($LASTEXITCODE -ne 0) { $TEST_FAILED++ }
+        # Windows doesn't support the bash demo script, so also run pyuvstarter directly
         uv run pyuvstarter --help
         mkdir test_windows
         cd test_windows

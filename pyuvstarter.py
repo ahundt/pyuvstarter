@@ -5367,18 +5367,46 @@ See [LICENSE](LICENSE) file.
         return False
 
 
+def _detect_ci_workflow_name(workflow_dir: Path) -> str | None:
+    """Detect the CI workflow filename, trying common names in priority order.
+
+    Returns the filename (e.g. 'ci.yml') or None if no CI workflow found.
+    Many projects use test.yml, tests.yml, build.yml, workflow.yml, or
+    python.yml (GitHub's Python starter template) instead of ci.yml.
+    """
+    for candidate in ("ci.yml", "test.yml", "tests.yml", "build.yml", "main.yml",
+                      "workflow.yml", "workflows.yml", "python.yml",
+                      "ci.yaml", "test.yaml", "workflow.yaml"):
+        if (workflow_dir / candidate).exists():
+            return candidate
+    return None
+
+
 def _create_publish_workflow(project_root: Path, dry_run: bool, python_version: str = "3.12", build_cmd: str = "uv build") -> bool:
     """Generate .github/workflows/publish.yml for PyPI Trusted Publisher publishing."""
     action_name = "create_publish_workflow"
     workflow_dir = project_root / ".github" / "workflows"
     workflow_path = workflow_dir / "publish.yml"
-    ci_path = workflow_dir / "ci.yml"
+    ci_filename = _detect_ci_workflow_name(workflow_dir)
 
     if workflow_path.exists():
         existing = workflow_path.read_text(encoding="utf-8")
         # Check for outdated build commands that won't work in CI (setup-uv doesn't install hatch/flit/build)
         outdated_cmds = ["hatch build", "python -m build", "flit build"]
         needs_update = any(cmd in existing and cmd != build_cmd for cmd in outdated_cmds)
+        # Also update if test job calls a CI workflow but is missing the required permissions block
+        # (missing permissions causes GitHub startup_failure at workflow launch)
+        ci_uses_pattern = f"uses: ./.github/workflows/{ci_filename}" if ci_filename else "uses: ./.github/workflows/ci.yml"
+        if not needs_update and ci_uses_pattern in existing:
+            import re as _re
+            ci_ref_idx = existing.find(ci_uses_pattern)
+            after_ci_ref = existing[ci_ref_idx:ci_ref_idx + 300]
+            # Find end of this job: next line starting with exactly 2 spaces + non-space
+            # (i.e., the next job-level key). This avoids splitting on any "build:" substring.
+            next_job = _re.search(r'\n  [a-z][\w-]*:', after_ci_ref)
+            job_section = after_ci_ref[:next_job.start()] if next_job else after_ci_ref
+            if "permissions:" not in job_section:
+                needs_update = True
         if not needs_update:
             _log_action(action_name, "INFO", ".github/workflows/publish.yml already exists and is up to date. Skipping.")
             return True
@@ -5386,27 +5414,33 @@ def _create_publish_workflow(project_root: Path, dry_run: bool, python_version: 
             _log_action(action_name, "INFO", "DRY RUN: Would update publish.yml build command to: " + build_cmd)
             return True
         _log_action(action_name, "WARN",
-                     f"publish.yml uses outdated build command. Regenerating with '{build_cmd}'.")
+                     f"publish.yml is outdated (missing permissions block or outdated build command). "
+                     f"Regenerating with '{build_cmd}'. If you have custom jobs in publish.yml, re-add them after this run.")
         # Fall through to regenerate the file
 
     if dry_run:
         _log_action(action_name, "INFO", "DRY RUN: Would create .github/workflows/publish.yml")
         return True
 
-    has_ci = ci_path.exists()
+    has_ci = ci_filename is not None
     if not has_ci:
         _log_action(action_name, "WARN",
-                     "No ci.yml found. publish.yml will NOT run tests before publishing. "
-                     "Consider adding a CI workflow.")
+                     "No CI workflow found (checked: ci.yml, test.yml, tests.yml, build.yml, main.yml). "
+                     "publish.yml will NOT run tests before publishing. Consider adding a CI workflow.")
 
     try:
         workflow_dir.mkdir(parents=True, exist_ok=True)
 
         # Build the test job section conditionally
         if has_ci:
-            test_section = """
+            test_section = f"""
   test:
-    uses: ./.github/workflows/ci.yml
+    uses: ./.github/workflows/{ci_filename}
+    permissions:
+      contents: read
+      checks: write        # needed by test reporter in ci.yml
+      pull-requests: write # needed by test reporter in ci.yml
+      issues: read
 
   build:
     needs: test"""
@@ -5492,19 +5526,24 @@ jobs:{test_section}
 
 
 def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
-    """Add workflow_call trigger to existing ci.yml so publish.yml can reuse it."""
+    """Add workflow_call trigger to the detected CI workflow so publish.yml can reuse it."""
     action_name = "add_workflow_call_trigger"
-    ci_path = project_root / ".github" / "workflows" / "ci.yml"
+    workflow_dir = project_root / ".github" / "workflows"
+    ci_filename = _detect_ci_workflow_name(workflow_dir)
 
-    if not ci_path.exists():
-        _log_action(action_name, "INFO", "No .github/workflows/ci.yml found. Skipping workflow_call injection.")
+    if ci_filename is None:
+        _log_action(action_name, "INFO",
+                    "No CI workflow found (checked: ci.yml, test.yml, tests.yml, build.yml, main.yml). "
+                    "Skipping workflow_call injection.")
         return True
+
+    ci_path = workflow_dir / ci_filename
 
     try:
         content = ci_path.read_text(encoding="utf-8")
 
         if "workflow_call" in content:
-            _log_action(action_name, "INFO", "ci.yml already has workflow_call trigger. Skipping.")
+            _log_action(action_name, "INFO", f"{ci_filename} already has workflow_call trigger. Skipping.")
             return True
 
         # Find the on: block — handle both on: and "on":
@@ -5517,14 +5556,20 @@ def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
                 break
 
         if on_line_idx is None:
-            _log_action(action_name, "WARN", "Could not find 'on:' block in ci.yml. Skipping workflow_call injection.")
+            _log_action(action_name, "WARN",
+                        f"Could not find 'on:' block in {ci_filename}. Skipping workflow_call injection. "
+                        f"Manually add 'workflow_call:' under the 'on:' key in {ci_filename} so publish.yml can reuse it.")
             return True
 
         # Check for compact single-line format like "on: push"
         stripped_on = lines[on_line_idx].strip()
         if stripped_on not in ("on:", '"on":', "'on':"):
             _log_action(action_name, "WARN",
-                       f"ci.yml uses compact on: format ('{stripped_on}'). Cannot safely inject workflow_call. Skipping.")
+                        f"{ci_filename} uses compact on: format ('{stripped_on}'). Cannot safely inject workflow_call. "
+                        f"To fix manually, replace that line with:\n"
+                        f"  on:\n"
+                        f"    push:\n"
+                        f"    workflow_call:  # Allow publish.yml to reuse this workflow")
             return True
 
         # Find insertion point: after on: line, skip all indented trigger lines,
@@ -5548,7 +5593,7 @@ def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
         lines.insert(insert_idx, workflow_call_line)
 
         ci_path.write_text("".join(lines), encoding="utf-8")
-        _log_action(action_name, "SUCCESS", "Added workflow_call trigger to ci.yml for publish.yml reuse.")
+        _log_action(action_name, "SUCCESS", f"Added workflow_call trigger to {ci_filename} for publish.yml reuse.")
         return True
 
     except Exception as e:

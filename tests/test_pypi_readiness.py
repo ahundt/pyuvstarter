@@ -1016,6 +1016,13 @@ def test_publish_yml_has_test_job_when_ci_exists():
         assert "uses: ./.github/workflows/ci.yml" in content, "test job should reference ci.yml"
         assert "needs: test" in content, "build job should depend on test job"
         assert "shell: bash" in content, "version check should have shell: bash for Windows compat"
+        # Verify permissions block preventing startup_failure is present after uses: line
+        ci_ref_idx = content.find("uses: ./.github/workflows/ci.yml")
+        build_idx = content.find("build:", ci_ref_idx)
+        between = content[ci_ref_idx:build_idx]
+        assert "permissions:" in between, "permissions: block required after uses: line to prevent GitHub startup_failure"
+        assert "checks: write" in between, "checks: write required for test reporter"
+        assert "pull-requests: write" in between, "pull-requests: write required for test reporter"
 
 
 def test_publish_yml_no_test_job_without_ci():
@@ -1924,3 +1931,201 @@ def test_releasing_md_updates_twine_to_uv():
         assert "uv publish" in content
         assert "python -m build" not in content
         assert "twine upload" not in content
+
+
+def test_publish_yml_test_job_has_permissions_block():
+    """Generated publish.yml test job must have permissions block (prevents startup_failure).
+
+    Without permissions on the test: job that calls ci.yml via workflow_call,
+    GitHub fails the entire workflow at launch with startup_failure.
+    Reference: ~/.claude/ai_session_tools/.github/workflows/publish.yml:17-21
+    """
+    import tempfile
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "ci.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        result = _create_publish_workflow(root, dry_run=False)
+        assert result is True
+        content = (wf_dir / "publish.yml").read_text()
+        assert "uses: ./.github/workflows/ci.yml" in content
+        # permissions block must appear AFTER the uses: line and BEFORE build:
+        ci_ref_idx = content.find("uses: ./.github/workflows/ci.yml")
+        build_idx = content.find("build:", ci_ref_idx)
+        between = content[ci_ref_idx:build_idx]
+        assert "permissions:" in between, (
+            "permissions: block must appear between test: uses: line and build: job"
+        )
+        assert "checks: write" in between
+        assert "pull-requests: write" in between
+
+
+def test_publish_yml_updates_missing_permissions_block():
+    """Re-running should add permissions block to existing publish.yml that lacks it (startup_failure fix)."""
+    import tempfile
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        # Simulate old publish.yml without permissions block (ci.yml must exist for test: job to appear)
+        (wf_dir / "ci.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        old_content = (
+            "name: Publish\njobs:\n"
+            "  test:\n    uses: ./.github/workflows/ci.yml\n"
+            "  build:\n    needs: test\n    steps:\n      - run: uv build\n"
+        )
+        (wf_dir / "publish.yml").write_text(old_content)
+        result = _create_publish_workflow(root, dry_run=False)
+        assert result is True
+        new_content = (wf_dir / "publish.yml").read_text()
+        ci_ref_idx = new_content.find("uses: ./.github/workflows/ci.yml")
+        build_idx = new_content.find("build:", ci_ref_idx)
+        between = new_content[ci_ref_idx:build_idx]
+        assert "permissions:" in between, "permissions block should be added on update"
+
+
+# ─── CI filename detection ────────────────────────────────────────────────────
+
+
+def test_detect_ci_workflow_name_returns_ci_yml_first():
+    """ci.yml takes priority over test.yml when both exist."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "ci.yml").write_text("on: push\n")
+        (wf_dir / "test.yml").write_text("on: push\n")
+        assert _detect_ci_workflow_name(wf_dir) == "ci.yml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_test_yml():
+    """Falls back to test.yml when ci.yml is absent."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "test.yml").write_text("on: push\n")
+        assert _detect_ci_workflow_name(wf_dir) == "test.yml"
+
+
+def test_detect_ci_workflow_name_returns_none_when_absent():
+    """Returns None when no known CI workflow file exists."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        assert _detect_ci_workflow_name(Path(td)) is None
+
+
+def test_publish_yml_references_detected_ci_filename():
+    """publish.yml test: job references test.yml when that is the CI file (not hardcoded ci.yml)."""
+    import tempfile
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "test.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        result = _create_publish_workflow(root, dry_run=False)
+        assert result is True
+        content = (wf_dir / "publish.yml").read_text()
+        assert "uses: ./.github/workflows/test.yml" in content, \
+            "publish.yml must reference test.yml when that is the detected CI workflow"
+        assert "uses: ./.github/workflows/ci.yml" not in content, \
+            "publish.yml must NOT hardcode ci.yml when the CI file is test.yml"
+
+
+def test_add_workflow_call_trigger_injects_into_test_yml():
+    """workflow_call trigger is injected into test.yml when that is the detected CI workflow."""
+    import tempfile
+    from pyuvstarter import _add_workflow_call_trigger
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "test.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        result = _add_workflow_call_trigger(root, dry_run=False)
+        assert result is True
+        content = (wf_dir / "test.yml").read_text()
+        assert "workflow_call" in content, \
+            "workflow_call trigger should be injected into test.yml, not ci.yml"
+
+
+def test_publish_yml_permissions_detection_not_fooled_by_build_docs_job():
+    """Permissions detection uses regex job-boundary, not split('build:') which breaks on 'build-docs:'."""
+    import tempfile
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "ci.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        # Simulate old publish.yml where 'build-docs:' appears before 'build:'
+        # Old split("build:")[0] approach would split at 'build-docs:' and find nothing → no update
+        old_content = (
+            "name: Publish\njobs:\n"
+            "  test:\n    uses: ./.github/workflows/ci.yml\n"
+            "  build-docs:\n    needs: test\n"
+            "  build:\n    needs: test\n    steps:\n      - run: uv build\n"
+        )
+        (wf_dir / "publish.yml").write_text(old_content)
+        result = _create_publish_workflow(root, dry_run=False)
+        assert result is True
+        new_content = (wf_dir / "publish.yml").read_text()
+        ci_ref_idx = new_content.find("uses: ./.github/workflows/ci.yml")
+        next_build_idx = new_content.find("\n  build", ci_ref_idx)
+        between = new_content[ci_ref_idx:next_build_idx]
+        assert "permissions:" in between, \
+            "Regex-based job-boundary detection must correctly regenerate permissions block"
+
+
+def test_detect_ci_workflow_name_falls_back_to_workflow_yml():
+    """Falls back to workflow.yml when no higher-priority CI file exists (GitHub UI default name)."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "workflow.yml").write_text("on: push\n")
+        assert _detect_ci_workflow_name(wf_dir) == "workflow.yml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_python_yml():
+    """Falls back to python.yml (GitHub's Python starter workflow template name)."""
+    import tempfile
+    from pyuvstarter import _detect_ci_workflow_name
+    with tempfile.TemporaryDirectory() as td:
+        wf_dir = Path(td)
+        (wf_dir / "python.yml").write_text("on: push\n")
+        assert _detect_ci_workflow_name(wf_dir) == "python.yml"
+
+
+def test_publish_yml_references_workflow_yml_when_detected():
+    """publish.yml test: job references workflow.yml when that is the only CI file found."""
+    import tempfile
+    from pyuvstarter import _create_publish_workflow
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        wf_dir = root / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "workflow.yml").write_text(
+            "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        result = _create_publish_workflow(root, dry_run=False)
+        assert result is True
+        content = (wf_dir / "publish.yml").read_text()
+        assert "uses: ./.github/workflows/workflow.yml" in content, \
+            "publish.yml must reference workflow.yml when that is the detected CI workflow"
+        assert "uses: ./.github/workflows/ci.yml" not in content, \
+            "publish.yml must NOT hardcode ci.yml when the CI file is workflow.yml"
