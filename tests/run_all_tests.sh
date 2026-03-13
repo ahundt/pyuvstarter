@@ -252,9 +252,13 @@ INTEGRATION_TESTS=(
     "test_legacy_migration.sh"
 )
 
-# Run Python unit tests
-PYTHON_TESTS=(
+# Script-mode tests (no pytest, run as plain Python scripts with main() block)
+SCRIPT_TESTS=(
     "test_extraction_fix.py"
+)
+
+# Run Python unit tests (pytest-based)
+PYTHON_TESTS=(
     "test_import_fixing.py"
     "test_dependency_migration.py"
     "test_jupyter_pipeline.py"
@@ -284,6 +288,15 @@ for test in "${PYTHON_TESTS[@]}"; do
     # Use uv run python -m pytest to properly invoke pytest (not script mode, which collects 0 tests)
     run_single_test "$test" "(cd '$ORIGINAL_DIR' && uv run python -m pytest 'tests/$test' -v)"
 
+    echo ""
+done
+
+# Run script-mode tests (legacy tests with main() block, not pytest-based)
+cd "$ORIGINAL_DIR"
+for test in "${SCRIPT_TESTS[@]}"; do
+    echo "Running: $test (script mode)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    run_single_test "$test" "(cd '$ORIGINAL_DIR' && uv run python 'tests/$test')"
     echo ""
 done
 
