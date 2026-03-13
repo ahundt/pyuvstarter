@@ -102,3 +102,6 @@ git-cleanup-*.log
 
 # Release notes (used for GitHub release body, not committed)
 notes/
+
+# Claude Code local project settings (user-specific, not shared)
+.claude/settings.local.json
