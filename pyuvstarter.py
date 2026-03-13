@@ -5081,14 +5081,14 @@ def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool)
     success = _create_readme_template(project_root, dry_run) and success
     success = _create_publish_workflow(project_root, dry_run, python_version=python_version, build_cmd=build_cmd) and success
     success = _add_workflow_call_trigger(project_root, dry_run) and success
-    success = _create_releasing_doc(project_root, dry_run, owner=owner, default_branch=default_branch, build_cmd=build_cmd, publish_cmd=publish_cmd) and success
+    detected_ci = _detect_ci_workflow_name(project_root / ".github" / "workflows")
+    success = _create_releasing_doc(project_root, dry_run, owner=owner, default_branch=default_branch, build_cmd=build_cmd, publish_cmd=publish_cmd, ci_filename=detected_ci or "ci.yml") and success
 
-    # Warn if publish.yml was created with test job but ci.yml doesn't exist
-    ci_path = project_root / ".github" / "workflows" / "ci.yml"
+    # Warn if publish.yml was created with no CI workflow found at all
     publish_path = project_root / ".github" / "workflows" / "publish.yml"
-    if publish_path.exists() and not ci_path.exists():
+    if publish_path.exists() and _detect_ci_workflow_name(project_root / ".github" / "workflows") is None:
         _log_action(action_name, "WARN",
-                     "publish.yml was created but no ci.yml exists. "
+                     f"publish.yml was created but no CI workflow found (checked: {_CI_CANDIDATES_STR}). "
                      "Consider adding a CI workflow so publish.yml can run tests before publishing.")
 
     if success:
@@ -5147,6 +5147,15 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
             with open(pyproject_path, "r", encoding="utf-8") as f:
                 data = _toml_reader.load(f)
 
+        # Detect Poetry format — it uses [tool.poetry] not [project] (PEP 621)
+        if "project" not in data and "poetry" in data.get("tool", {}):
+            _log_action(action_name, "WARN",
+                        "pyproject.toml uses [tool.poetry] format. "
+                        "--prepare-pypi currently supports [project] (PEP 621) format only. "
+                        "Skipping pyproject.toml metadata update. "
+                        "To use --prepare-pypi, migrate to [project] format (PEP 621).")
+            return True
+
         project = data.get("project", {})
         name = project.get("name", project_root.name)
 
@@ -5156,7 +5165,7 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
         if "readme" not in project:
             project_inserts.append('readme = "README.md"')
 
-        if "license" not in project:
+        if "license" not in project and "license-files" not in project:
             if license_type == "custom":
                 project_inserts.append('license = {file = "LICENSE"}')
             else:
@@ -5180,7 +5189,12 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
                         if s.operator in (">=", "~=", "=="):
                             parts = s.version.split(".")
                             if len(parts) >= 2:
-                                classifiers.append(f"Programming Language :: Python :: {parts[0]}.{parts[1]}")
+                                major, minor = int(parts[0]), int(parts[1])
+                                # Generate classifiers for all actively supported versions from min to latest known
+                                _KNOWN_PYTHON_VERSIONS = [(3, 11), (3, 12), (3, 13), (3, 14)]
+                                for vmaj, vmin in _KNOWN_PYTHON_VERSIONS:
+                                    if vmaj > major or (vmaj == major and vmin >= minor):
+                                        classifiers.append(f"Programming Language :: Python :: {vmaj}.{vmin}")
                             break
                 except Exception:
                     pass
@@ -5196,9 +5210,9 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
             project_inserts.append(f"classifiers = [\n    {items},\n]")
 
         if "keywords" not in project:
-            keywords = [w for w in name.replace("-", "_").split("_") if w]
-            items = ", ".join(f'"{k}"' for k in keywords)
-            project_inserts.append(f"keywords = [{items}]")
+            # Leave keywords empty for user to fill in — splitting the project name
+            # into word fragments produces unhelpful PyPI search terms.
+            project_inserts.append('keywords = []  # TODO: Add search keywords for PyPI discovery')
 
         # Determine what to do with [project.urls]
         urls_insert_lines: list = []
@@ -5373,7 +5387,9 @@ _CI_WORKFLOW_CANDIDATES = (
     "ci.yml", "test.yml", "tests.yml", "build.yml", "main.yml",
     "workflow.yml", "workflows.yml", "python.yml",
     "python-app.yml", "python-package.yml",
-    "ci.yaml", "test.yaml", "workflow.yaml",
+    "ci.yaml", "test.yaml", "tests.yaml", "build.yaml", "main.yaml",
+    "workflow.yaml", "workflows.yaml", "python.yaml",
+    "python-app.yaml", "python-package.yaml",
 )
 # Pre-joined string used in WARN messages — computed once to avoid repeated joins.
 _CI_CANDIDATES_STR = ", ".join(_CI_WORKFLOW_CANDIDATES)
@@ -5403,8 +5419,9 @@ def _is_publish_workflow(content: str) -> bool:
     # EOL anchor + optional comment prevents matching "environment: pypi-staging".
     if _re.search(r'environment:\s*(pypi|testpypi)(\s*$|\s+#)', content, _re.MULTILINE):
         return True
-    # Tier 2b: dict form — environment:\n  name: pypi (EOL anchor prevents "name: pypi tests").
-    if _re.search(r'name:\s*(pypi|testpypi)\s*$', content, _re.MULTILINE):
+    # Tier 2b: dict form — environment:\n    name: pypi (must be indented ≥2 spaces).
+    # Unindented "name: pypi" is the workflow's display name — not a publish tell.
+    if _re.search(r'^ {2,}name:\s*(pypi|testpypi)\s*$', content, _re.MULTILINE):
         return True
     # Tier 3: publish CLI in a run: step.
     # Matches both YAML step forms:
@@ -5454,26 +5471,43 @@ def _create_publish_workflow(project_root: Path, dry_run: bool, python_version: 
         needs_update = any(cmd in existing and cmd != build_cmd for cmd in outdated_cmds)
         # Also update if test job calls a CI workflow but is missing the required permissions block
         # (missing permissions causes GitHub startup_failure at workflow launch)
-        ci_uses_pattern = f"uses: ./.github/workflows/{ci_filename}" if ci_filename else "uses: ./.github/workflows/ci.yml"
-        if not needs_update and ci_uses_pattern in existing:
-            import re as _re
-            ci_ref_idx = existing.find(ci_uses_pattern)
-            after_ci_ref = existing[ci_ref_idx:ci_ref_idx + 300]
-            # Find end of this job: next line starting with exactly 2 spaces + non-space
-            # (i.e., the next job-level key). This avoids splitting on any "build:" substring.
-            next_job = _re.search(r'\n  [a-z][\w-]*:', after_ci_ref)
-            job_section = after_ci_ref[:next_job.start()] if next_job else after_ci_ref
-            if "permissions:" not in job_section:
+        import re as _re
+        if ci_filename is not None:
+            ci_uses_pattern = f"uses: ./.github/workflows/{ci_filename}"
+            if not needs_update and ci_uses_pattern in existing:
+                ci_ref_idx = existing.find(ci_uses_pattern)
+                after_ci_ref = existing[ci_ref_idx:ci_ref_idx + 300]
+                # Find end of this job: next line starting with exactly 2 spaces + non-space
+                # (i.e., the next job-level key). This avoids splitting on any "build:" substring.
+                next_job = _re.search(r'\n  [a-z][\w-]*:', after_ci_ref)
+                job_section = after_ci_ref[:next_job.start()] if next_job else after_ci_ref
+                if "permissions:" not in job_section:
+                    needs_update = True
+        elif not needs_update:
+            # No CI workflow detected. If existing publish.yml references any CI workflow,
+            # mark as needing update to regenerate without the test: job (stale reference).
+            if _re.search(r'uses:\s+\./.github/workflows/\S+\.ya?ml', existing):
                 needs_update = True
+                _log_action(action_name, "WARN",
+                            "publish.yml references a CI workflow that no longer exists. "
+                            f"Regenerating without test: job. Checked: {_CI_CANDIDATES_STR}")
         if not needs_update:
             _log_action(action_name, "INFO", ".github/workflows/publish.yml already exists and is up to date. Skipping.")
             return True
         if dry_run:
             _log_action(action_name, "INFO", "DRY RUN: Would update publish.yml build command to: " + build_cmd)
             return True
+        # Back up existing publish.yml before regeneration so user can recover custom jobs
+        import shutil as _shutil, datetime as _datetime
+        _backup_name = f"publish.yml.bak_{_datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            _shutil.copy2(workflow_path, workflow_dir / _backup_name)
+            _log_action(action_name, "INFO", f"Backed up existing publish.yml to {_backup_name}")
+        except Exception as _e:
+            _log_action(action_name, "WARN", f"Could not back up publish.yml: {_e}")
         _log_action(action_name, "WARN",
                      f"publish.yml is outdated (missing permissions block or outdated build command). "
-                     f"Regenerating with '{build_cmd}'. If you have custom jobs in publish.yml, re-add them after this run.")
+                     f"Regenerating with '{build_cmd}'. Custom jobs were backed up to {_backup_name}; re-add them if needed.")
         # Fall through to regenerate the file
 
     if dry_run:
@@ -5661,7 +5695,7 @@ def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
 
 def _create_releasing_doc(project_root: Path, dry_run: bool, owner: str = "USERNAME",
                           default_branch: str = "main", build_cmd: str = "uv build",
-                          publish_cmd: str = "uv publish") -> bool:
+                          publish_cmd: str = "uv publish", ci_filename: str = "ci.yml") -> bool:
     """Generate or update RELEASING.md with PyPI publishing instructions."""
     action_name = "create_releasing_doc"
     releasing_path = project_root / "RELEASING.md"
@@ -5685,11 +5719,12 @@ def _create_releasing_doc(project_root: Path, dry_run: bool, owner: str = "USERN
     import re as _re
     pypi_name = _re.sub(r'[-_.]+', '-', name).lower()
 
+    ci_ref = f"`{ci_filename}` workflow" if ci_filename else "CI workflow"
     pypi_section = f"""
 ## PyPI Publishing (automated via GitHub Actions)
 
 After pushing the tag (step above), GitHub Actions will:
-1. Run the full CI test suite (via reusable `ci.yml` workflow)
+1. Run the full CI test suite (via reusable {ci_ref})
 2. Verify the tag version matches `pyproject.toml` version
 3. Build wheel + sdist with `{build_cmd}`
 4. Publish to TestPyPI (requires `testpypi` environment)
@@ -5715,7 +5750,7 @@ After pushing the tag (step above), GitHub Actions will:
 ```bash
 uv pip install --index-url https://test.pypi.org/simple/ \\
     --extra-index-url https://pypi.org/simple/ \\
-    {name}
+    {pypi_name}
 ```
 
 ### Manual publishing (fallback)

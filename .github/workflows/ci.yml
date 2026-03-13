@@ -16,11 +16,16 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          # Python 3.14 is prerelease; allow it to fail without blocking the build
+          - python-version: "3.14"
+            experimental: true
         exclude:
           # macOS runners are expensive, so only test on latest Python
           - os: macos-latest
@@ -30,6 +35,7 @@ jobs:
           # Windows can be flaky with older Python
           - os: windows-latest
             python-version: "3.11"
+    continue-on-error: ${{ matrix.experimental == true }}
 
     env:
       UV_PYTHON: ${{ matrix.python-version }}
@@ -42,9 +48,10 @@ jobs:
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: ${{ matrix.python-version }}
+        allow-prereleases: true
 
     - name: Install uv using official installer (Unix)
       if: runner.os != 'Windows'
@@ -221,8 +228,8 @@ jobs:
         echo ""
         echo "🧪 Running comprehensive test suite..."
         echo "===================================="
-        if [ -x "tests/run_all_tests.sh" ]; then
-          chmod +x tests/run_all_tests.sh
+        chmod +x tests/run_all_tests.sh 2>/dev/null || true
+        if [ -f "tests/run_all_tests.sh" ]; then
           ./tests/run_all_tests.sh
           COMPREHENSIVE_EXIT_CODE=$?
 

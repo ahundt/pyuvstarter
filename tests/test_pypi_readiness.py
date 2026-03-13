@@ -472,8 +472,8 @@ def test_prepare_pypi_idempotent():
         assert toml2.get("project", {}).get("classifiers") == toml1.get("project", {}).get("classifiers"), "classifiers changed on re-run"
 
 
-def test_prepare_pypi_keywords_from_project_name():
-    """Keywords should be generated from the project name by splitting on _ and -."""
+def test_prepare_pypi_keywords_placeholder():
+    """Keywords should be an empty list with a TODO comment for the user to fill in."""
     fixture = ProjectFixture(
         name="my_awesome_tool",
         files={"main.py": "print('hello')\n"},
@@ -488,12 +488,18 @@ def test_prepare_pypi_keywords_from_project_name():
         )
         assert result.returncode == 0, f"exit={result.returncode}\nstderr: {result.stderr}"
 
+        # keywords should be an empty list (user fills in their own keywords)
         data = _read_toml(project_dir / "pyproject.toml")
-        keywords = data.get("project", {}).get("keywords", [])
-        assert len(keywords) > 0, "keywords should be generated"
-        # The project name splits on _ so keywords should contain parts of the name
-        assert "my" in keywords or "awesome" in keywords or "tool" in keywords, (
-            f"keywords should contain parts of project name, got: {keywords}"
+        keywords = data.get("project", {}).get("keywords", None)
+        assert keywords is not None, "keywords key should be present in [project]"
+        assert isinstance(keywords, list), f"keywords must be a list, got: {type(keywords)}"
+        assert keywords == [], (
+            f"keywords should be empty list (user fills in their own), got: {keywords}"
+        )
+        # The raw file should contain a TODO comment so the user knows to fill it in
+        raw = (project_dir / "pyproject.toml").read_text()
+        assert "TODO" in raw and "keywords" in raw, (
+            "pyproject.toml must contain a TODO comment on the keywords line"
         )
 
 
@@ -2769,3 +2775,193 @@ def test_publish_yml_uses_custom_build_cmd(tmp_path):
     content = (wf_dir / "publish.yml").read_text()
     assert "run: hatch build" in content, \
         "Generated publish.yml must embed the requested build_cmd"
+
+
+# ---------------------------------------------------------------------------
+# M6: No spurious ci.yml warning when test.yml is the CI workflow
+# ---------------------------------------------------------------------------
+
+def test_prepare_pypi_no_spurious_ci_warning_with_test_yml(tmp_path):
+    """_prepare_pypi_metadata must NOT warn 'no ci.yml' when test.yml is the CI workflow."""
+    import sys
+    import importlib
+    from unittest.mock import patch, call
+    import pyuvstarter
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myproj"\nversion = "0.1.0"\n'
+    )
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    # test.yml is the CI workflow (no ci.yml present)
+    (wf_dir / "test.yml").write_text(
+        "name: CI\non:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps: []\n"
+    )
+
+    logged_calls = []
+
+    original_log = pyuvstarter._log_action
+
+    def capturing_log(action, status, msg, *args, **kwargs):
+        logged_calls.append((action, status, msg))
+        return original_log(action, status, msg, *args, **kwargs)
+
+    with patch.object(pyuvstarter, "_log_action", side_effect=capturing_log):
+        pyuvstarter._prepare_pypi_metadata(tmp_path, "MIT", dry_run=False)
+
+    spurious = [
+        (a, s, m) for (a, s, m) in logged_calls
+        if s == "WARN" and "no ci" in m.lower() and "ci.yml" in m.lower()
+    ]
+    assert not spurious, (
+        "Must NOT warn about missing ci.yml when test.yml exists as CI workflow. "
+        f"Got spurious WARN calls: {spurious}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# M7: Tier 2b _is_publish_workflow top-level name: pypi false-positive
+# ---------------------------------------------------------------------------
+
+def test_is_publish_workflow_top_level_workflow_name_pypi_does_not_match():
+    """Workflow named 'name: pypi' at column 0 must NOT be classified as publish workflow."""
+    from pyuvstarter import _is_publish_workflow
+    # Top-level workflow name at column 0 — must NOT trigger Tier 2b
+    content = "name: pypi\non:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+    assert _is_publish_workflow(content) is False, (
+        "A workflow whose top-level name is 'pypi' must not be classified as a publish workflow"
+    )
+
+
+def test_is_publish_workflow_indented_environment_name_pypi_matches():
+    """Indented 'name: pypi' (environment dict form, ≥2 spaces) must still be detected."""
+    from pyuvstarter import _is_publish_workflow
+    # 6-space indentation — environment dict form inside a job step
+    content = "jobs:\n  publish:\n    environment:\n      name: pypi\n"
+    assert _is_publish_workflow(content) is True, (
+        "Indented 'name: pypi' (environment dict form) must be classified as a publish workflow"
+    )
+
+
+def test_is_publish_workflow_two_space_indented_name_pypi_matches():
+    """Two-space indented 'name: pypi' must be classified as a publish workflow."""
+    from pyuvstarter import _is_publish_workflow
+    content = "  name: pypi\n"
+    assert _is_publish_workflow(content) is True, (
+        "Two-space indented 'name: pypi' must trigger Tier 2b detection"
+    )
+
+
+# ---------------------------------------------------------------------------
+# M8: PEP 639 license-files — must not insert duplicate license key
+# ---------------------------------------------------------------------------
+
+def test_add_pypi_toml_metadata_skips_license_when_license_files_present(tmp_path):
+    """If license-files is already present, must not also insert license key."""
+    from pyuvstarter import _add_pypi_toml_metadata
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myproj"\nversion = "0.1.0"\nlicense-files = ["LICENSE"]\n'
+    )
+    result = _add_pypi_toml_metadata(tmp_path, "MIT", dry_run=False)
+    assert result is True
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert "license-files" in content
+    # Must NOT also insert a redundant license = {text = "MIT"}
+    assert 'license = {text' not in content, (
+        "Must not insert duplicate license field when license-files already present"
+    )
+
+
+# ---------------------------------------------------------------------------
+# M9: Poetry format — graceful WARN, no crash, return True
+# ---------------------------------------------------------------------------
+
+def test_add_pypi_toml_metadata_handles_poetry_format_gracefully(tmp_path):
+    """Poetry [tool.poetry] format should log WARN and return True (not crash)."""
+    import pyuvstarter
+    from unittest.mock import patch
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.poetry]\nname = "myproj"\nversion = "0.1.0"\n'
+        '[build-system]\nrequires = ["poetry-core"]\nbuild-backend = "poetry.core.masonry.api"\n'
+    )
+
+    logged_calls = []
+    original_log = pyuvstarter._log_action
+
+    def capturing_log(action, status, msg, *args, **kwargs):
+        logged_calls.append((action, status, msg))
+        return original_log(action, status, msg, *args, **kwargs)
+
+    with patch.object(pyuvstarter, "_log_action", side_effect=capturing_log):
+        result = pyuvstarter._add_pypi_toml_metadata(tmp_path, "MIT", dry_run=False)
+
+    assert result is True, "Poetry format should not cause failure — must return True"
+    warn_calls = [(a, s, m) for (a, s, m) in logged_calls if s == "WARN"]
+    assert warn_calls, "Should log at least one WARN about unsupported format"
+    assert any("poetry" in m.lower() for (a, s, m) in warn_calls), (
+        "WARN message must mention 'poetry' to be actionable"
+    )
+
+
+# ---------------------------------------------------------------------------
+# M10: New .yaml extension candidates in _detect_ci_workflow_name
+# ---------------------------------------------------------------------------
+
+def _make_ci_wf_dir(tmp_path, filename):
+    """Helper: create a workflow dir with a single non-publish CI workflow file."""
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / filename).write_text(
+        "name: CI\non:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+    )
+    return wf_dir
+
+
+def test_detect_ci_workflow_name_falls_back_to_tests_yaml(tmp_path):
+    """`tests.yaml` is detected as a CI workflow."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "tests.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "tests.yaml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_build_yaml(tmp_path):
+    """`build.yaml` is detected as a CI workflow."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "build.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "build.yaml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_main_yaml(tmp_path):
+    """`main.yaml` is detected as a CI workflow."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "main.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "main.yaml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_workflows_yaml(tmp_path):
+    """`workflows.yaml` is detected as a CI workflow."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "workflows.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "workflows.yaml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_python_yaml(tmp_path):
+    """`python.yaml` is detected as a CI workflow."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "python.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "python.yaml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_python_app_yaml(tmp_path):
+    """`python-app.yaml` is detected as a CI workflow."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "python-app.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "python-app.yaml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_python_package_yaml(tmp_path):
+    """`python-package.yaml` is detected as a CI workflow."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "python-package.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "python-package.yaml"
