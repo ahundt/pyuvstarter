@@ -2997,3 +2997,179 @@ def test_detect_ci_workflow_name_falls_back_to_workflow_yaml(tmp_path):
     from pyuvstarter import _detect_ci_workflow_name
     wf_dir = _make_ci_wf_dir(tmp_path, "workflow.yaml")
     assert _detect_ci_workflow_name(wf_dir) == "workflow.yaml"
+
+
+# ---------------------------------------------------------------------------
+# P1: tqdm disable=not _is_tty + dynamic_ncols tests
+# ---------------------------------------------------------------------------
+
+def test_tqdm_disabled_when_stderr_not_tty():
+    """init_progress_bar must disable tqdm when stderr is not a TTY (AST-based check)."""
+    import ast
+    import re
+
+    source = open("pyuvstarter.py").read()
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "init_progress_bar":
+            func_src = ast.get_source_segment(source, node)
+            assert func_src is not None, "Could not extract init_progress_bar source"
+            assert "isatty" in func_src, \
+                "init_progress_bar must check sys.stderr.isatty() to detect non-TTY environments"
+            assert "disable" in func_src, \
+                "init_progress_bar must pass disable= to tqdm to suppress output when not a TTY"
+            assert re.search(r'disable\s*=\s*not\s+', func_src), \
+                "disable must be set to 'not <tty_check>' so piped/AI contexts get zero tqdm output"
+            return
+    raise AssertionError("init_progress_bar not found in pyuvstarter.py")
+
+
+def test_tqdm_has_dynamic_ncols_not_hardcoded_ncols():
+    """ProgressTracker.init_progress_bar must use dynamic_ncols=True, not ncols=<int>."""
+    import ast
+    # Read the source and check the tqdm call in init_progress_bar
+    source = open("pyuvstarter.py").read()
+    # The tqdm constructor call should have dynamic_ncols and NOT ncols=<number>
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "init_progress_bar":
+            func_source = ast.get_source_segment(source, node)
+            assert "dynamic_ncols=True" in func_source, (
+                "init_progress_bar must use dynamic_ncols=True"
+            )
+            # Should not have hardcoded ncols= assignment
+            import re
+            assert not re.search(r'\bncols\s*=\s*\d+', func_source), (
+                "init_progress_bar must not hardcode ncols=<integer>"
+            )
+            return
+    raise AssertionError("init_progress_bar function not found in pyuvstarter.py")
+
+
+def test_tqdm_disabled_when_no_color_set():
+    """ProgressTracker.init_progress_bar must create tqdm with disable=True when NO_COLOR is set."""
+    import ast
+    source = open("pyuvstarter.py").read()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == "init_progress_bar":
+            func_source = ast.get_source_segment(source, node)
+            # Must check NO_COLOR env var to determine disable
+            assert "NO_COLOR" in func_source, (
+                "init_progress_bar must check NO_COLOR environment variable"
+            )
+            assert "isatty" in func_source, (
+                "init_progress_bar must check sys.stderr.isatty()"
+            )
+            assert "disable" in func_source, (
+                "init_progress_bar must pass disable= to tqdm"
+            )
+            return
+    raise AssertionError("init_progress_bar function not found in pyuvstarter.py")
+
+
+# ---------------------------------------------------------------------------
+# P5: Non-GitHub remote detection tests
+# ---------------------------------------------------------------------------
+
+def test_detect_github_owner_repo_github_ssh_url(tmp_path):
+    """SSH git@github.com:owner/repo.git must return (owner, repo)."""
+    from unittest.mock import patch, MagicMock
+    import pyuvstarter
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "git@github.com:myowner/myrepo.git\n"
+
+    with patch("subprocess.run", return_value=mock_result):
+        owner, repo = pyuvstarter._detect_github_owner_repo(tmp_path)
+
+    assert owner == "myowner", f"Expected 'myowner', got {owner!r}"
+    assert repo == "myrepo", f"Expected 'myrepo', got {repo!r}"
+
+
+def test_detect_github_owner_repo_github_https_url(tmp_path):
+    """HTTPS https://github.com/owner/repo.git must return (owner, repo)."""
+    from unittest.mock import patch, MagicMock
+    import pyuvstarter
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "https://github.com/myowner/myrepo.git\n"
+
+    with patch("subprocess.run", return_value=mock_result):
+        owner, repo = pyuvstarter._detect_github_owner_repo(tmp_path)
+
+    assert owner == "myowner", f"Expected 'myowner', got {owner!r}"
+    assert repo == "myrepo", f"Expected 'myrepo', got {repo!r}"
+
+
+def test_detect_github_owner_repo_non_github_returns_none(tmp_path):
+    """Non-GitHub remote (GitLab, Gitea, etc.) must return (None, None) and log WARN."""
+    from unittest.mock import patch, MagicMock
+    import pyuvstarter
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "git@gitlab.com:myorg/myproject.git\n"
+
+    logged_calls = []
+    original_log = pyuvstarter._log_action
+
+    def capturing_log(action, status, msg, *args, **kwargs):
+        logged_calls.append((action, status, msg))
+        return original_log(action, status, msg, *args, **kwargs)
+
+    with patch("subprocess.run", return_value=mock_result), \
+         patch.object(pyuvstarter, "_log_action", side_effect=capturing_log):
+        owner, repo = pyuvstarter._detect_github_owner_repo(tmp_path)
+
+    assert owner is None, f"Non-GitHub remote must return None owner, got {owner!r}"
+    assert repo is None, f"Non-GitHub remote must return None repo, got {repo!r}"
+    warn_calls = [(a, s, m) for (a, s, m) in logged_calls if s == "WARN"]
+    assert warn_calls, "Must log a WARN for non-GitHub remote"
+    assert any("github" in m.lower() for (a, s, m) in warn_calls), (
+        "WARN message must mention 'github' to be actionable"
+    )
+
+
+def test_detect_github_owner_repo_bitbucket_returns_none(tmp_path):
+    """Bitbucket remote must return (None, None)."""
+    from unittest.mock import patch, MagicMock
+    import pyuvstarter
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "https://bitbucket.org/myorg/myrepo.git\n"
+
+    with patch("subprocess.run", return_value=mock_result), \
+         patch.object(pyuvstarter, "_log_action"):
+        owner, repo = pyuvstarter._detect_github_owner_repo(tmp_path)
+
+    assert owner is None and repo is None, (
+        f"Bitbucket remote must return (None, None), got ({owner!r}, {repo!r})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P7: Generated classifiers include Development Status TODO comment
+# ---------------------------------------------------------------------------
+
+def test_generated_classifiers_include_development_status_todo_comment(tmp_path):
+    """--prepare-pypi must add a TODO comment before classifiers in pyproject.toml."""
+    from pyuvstarter import _add_pypi_toml_metadata
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myproj"\nversion = "0.1.0"\nrequires-python = ">=3.11"\n'
+    )
+    result = _add_pypi_toml_metadata(tmp_path, "MIT", dry_run=False)
+    assert result is True
+
+    raw = (tmp_path / "pyproject.toml").read_text()
+    assert "TODO" in raw, "pyproject.toml must contain a TODO comment for Development Status"
+    assert "Development Status" in raw, "pyproject.toml must contain Development Status classifier"
+    # The TODO comment should appear before the classifiers key
+    todo_idx = raw.index("TODO")
+    classifiers_idx = raw.index("classifiers")
+    assert todo_idx < classifiers_idx, (
+        "TODO comment must appear before the classifiers key"
+    )

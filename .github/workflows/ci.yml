@@ -282,11 +282,13 @@ jobs:
         if ($LASTEXITCODE -ne 0) { $TEST_FAILED++ }
         # Windows doesn't support the bash demo script, so also run pyuvstarter directly
         uv run pyuvstarter --help
+        if ($LASTEXITCODE -ne 0) { $TEST_FAILED++; Write-Host "  ❌ pyuvstarter --help failed" }
         mkdir test_windows
         cd test_windows
         Write-Host "📁 Created test directory: $(Get-Location)"
         Write-Host "🚀 Running: uv tool run pyuvstarter ."
         uv tool run pyuvstarter .
+        if ($LASTEXITCODE -ne 0) { $TEST_FAILED++; Write-Host "  ❌ uv tool run pyuvstarter . failed" }
         Write-Host ""
         Write-Host "🔍 Verifying generated files:"
         if (Test-Path "pyproject.toml") { 

@@ -416,13 +416,13 @@ which pyuvstarter
 #### Run Tests Locally
 
 ```bash
-# Run Python test suite (pytest)
-./tests/run_all_tests.sh
+# Run all Python unit tests (recommended)
+uv run python -m pytest tests/ -v
 
 # Run specific Python test modules
-python -m pytest tests/test_jupyter_pipeline.py -v
-python -m pytest tests/test_import_fixing.py -v
-python -m pytest tests/test_wheel_unavailability.py -v
+uv run python -m pytest tests/test_jupyter_pipeline.py -v
+uv run python -m pytest tests/test_import_fixing.py -v
+uv run python -m pytest tests/test_wheel_unavailability.py -v
 
 # Run shell-based integration tests
 ./tests/test_new_project.sh

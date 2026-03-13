@@ -281,8 +281,8 @@ for test in "${PYTHON_TESTS[@]}"; do
     echo "Running: $test"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Use uv run to execute test file (respects UV_PYTHON if set)
-    run_single_test "$test" "(cd '$ORIGINAL_DIR' && uv run 'tests/$test')"
+    # Use uv run python -m pytest to properly invoke pytest (not script mode, which collects 0 tests)
+    run_single_test "$test" "(cd '$ORIGINAL_DIR' && uv run python -m pytest 'tests/$test' -v)"
 
     echo ""
 done

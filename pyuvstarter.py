@@ -66,14 +66,14 @@ How to Use:
    - Place `pyuvstarter.py` in your existing project directory or use it to start a new project in an empty directory.
 
 3. Execution:
-   - Basic: `python pyuvstarter.py` (uses all defaults).
-   - Custom venv: `python pyuvstarter.py --venv-name myenv`.
-   - Preview mode: `python pyuvstarter.py --dry-run` (shows what would happen without making changes).
+   - Basic: `pyuvstarter` (installed tool) or `uv run pyuvstarter` (from clone).
+   - Custom venv: `pyuvstarter --venv-name myenv`.
+   - Preview mode: `pyuvstarter --dry-run` (shows what would happen without making changes).
    - Migration mode examples:
-     - `python pyuvstarter.py --dependency-migration all-requirements` (migrates everything from `requirements.txt`).
-     - `python pyuvstarter.py --dependency-migration skip-requirements` (ignores `requirements.txt` entirely).
-   - Full gitignore overwrite: `python pyuvstarter.py --full-gitignore-overwrite` (replaces existing `.gitignore`).
-   - Custom log file: `python pyuvstarter.py --log-file-name my_setup_log.json`.
+     - `pyuvstarter --dependency-migration all-requirements` (migrates everything from `requirements.txt`).
+     - `pyuvstarter --dependency-migration skip-requirements` (ignores `requirements.txt` entirely).
+   - Full gitignore overwrite: `pyuvstarter --full-gitignore-overwrite` (replaces existing `.gitignore`).
+   - Custom log file: `pyuvstarter --log-file-name my_setup_log.json`.
 
 4. Post-run:
    - Activate the virtual environment:
@@ -82,9 +82,9 @@ How to Use:
    - Check the log file for a detailed summary of all actions and any warnings.
 
 5. Configuration:
-   - JSON config file: `python pyuvstarter.py --config-file settings.json`
-   - Environment variables: `PYUVSTARTER_VENV_NAME=myenv python pyuvstarter.py`
-   - See --help for all options: `python pyuvstarter.py --help`
+   - JSON config file: `pyuvstarter --config-file settings.json`
+   - Environment variables: `PYUVSTARTER_VENV_NAME=myenv pyuvstarter`
+   - See --help for all options: `pyuvstarter --help`
 
 
 Outcome:
@@ -287,14 +287,14 @@ def check_python_version():
         print("   source .venv/bin/activate")
         print("   uv sync")
         print("   # Run pyuvstarter:")
-        print("   uv run python pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("2. Use uv run explicitly:")
-        print("   uv run python pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("3. Activate your UV virtual environment:")
         print("   source .venv/bin/activate")
-        print("   uv run python pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("4. Update your system default (if you have admin rights):")
         print("   ln -sf /usr/bin/python3 /usr/local/bin/python")
@@ -317,12 +317,12 @@ def check_python_version():
         print("   uv venv --python 3.11")
         print("   source .venv/bin/activate")
         print("   uv sync")
-        print("   uv run python pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("2. Install Python 3.11+ and activate virtual environment:")
         print("   uv venv --python 3.11")
         print("   source .venv/bin/activate")
-        print("   uv run python pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("=" * 70)
 
@@ -420,8 +420,8 @@ except ImportError as e:
     print("ERROR: Failed to import required dependency 'typer': {}".format(e))
     print("")
     print("This usually means typer is not installed. Please install it using:")
-    print("  pip install typer")
-    print("  Or if using uv: uv pip install typer")
+    print("  uv add typer  (recommended, in a uv project)")
+    print("  uv pip install typer  (or: pip install typer)")
     print("")
     print("If typer is installed, the error above will show the specific import issue.")
     sys.exit(1)
@@ -433,8 +433,8 @@ except ImportError as e:
     print("ERROR: Failed to import required dependency 'pydantic': {}".format(e))
     print("")
     print("This usually means pydantic is not installed. Please install it using:")
-    print("  pip install pydantic pydantic-settings")
-    print("  Or if using uv: uv pip install pydantic pydantic-settings")
+    print("  uv add pydantic pydantic-settings  (recommended, in a uv project)")
+    print("  uv pip install pydantic pydantic-settings  (or: pip install pydantic pydantic-settings)")
     print("")
     print("If pydantic is installed, the error above will show the specific import issue.")
     sys.exit(1)
@@ -1425,13 +1425,18 @@ class ProgressTracker:
 
         try:
             from tqdm import tqdm
+            import os as _os
+            # Disable when not a real terminal (piped to AI tools, CI redirects, file capture).
+            # Also disable when NO_COLOR is set (explicit non-interactive signal).
+            _is_tty = sys.stderr.isatty() and not _os.environ.get("NO_COLOR")
             # Ensure header is safe for console output
             safe_header = _make_text_safe_for_console(header)
             self._progress_bar = tqdm(
                 total=total_steps,
                 desc=safe_header,
                 bar_format='{desc} {percentage:3.0f}%|{bar}| {n}/{total} steps',
-                ncols=80
+                dynamic_ncols=True,   # Auto-detect terminal width on each refresh; handles resize
+                disable=not _is_tty,  # Zero output when piped (AI tools, CI, file redirects)
             )
         except Exception:
             # Fallback to simple output if any progress bar creation fails
@@ -4935,12 +4940,17 @@ def _detect_license_from_file(project_root: Path) -> str | None:
 def _detect_github_owner_repo(project_root: Path) -> Tuple[Optional[str], Optional[str]]:
     """Detect GitHub owner and repo name from git remote origin URL.
 
+    Only returns results for github.com remotes. Returns (None, None) for
+    GitLab, Bitbucket, Gitea, or other hosts — the caller substitutes a
+    'USERNAME' placeholder so generated URLs remain editable.
+
     Parses both SSH (git@github.com:owner/repo.git) and HTTPS
     (https://github.com/owner/repo) formats.
 
     Returns:
-        (owner, repo) tuple, or (None, None) if detection fails.
+        (owner, repo) tuple, or (None, None) if detection fails or non-GitHub.
     """
+    action_name = "_detect_github_owner_repo"
     try:
         result = subprocess.run(
             ["git", "-C", str(project_root), "remote", "get-url", "origin"],
@@ -4950,6 +4960,17 @@ def _detect_github_owner_repo(project_root: Path) -> Tuple[Optional[str], Option
             return (None, None)
 
         url = result.stdout.strip()
+        if not url:
+            return (None, None)
+
+        # Only parse GitHub URLs — other hosts would produce wrong github.com URLs in metadata
+        if "github.com" not in url:
+            _log_action(action_name, "WARN",
+                        f"Git remote is not a GitHub URL: {url!r}. "
+                        "Generated [project.urls] will use 'USERNAME' placeholder. "
+                        "Update pyproject.toml [project.urls] manually with your actual repository URL.")
+            return (None, None)
+
         # SSH format: git@github.com:owner/repo.git
         if ":" in url and url.startswith("git@"):
             path_part = url.split(":")[-1]
@@ -5207,7 +5228,11 @@ def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool
             if license_type in license_classifiers:
                 classifiers.append(license_classifiers[license_type])
             items = ",\n    ".join(f'"{c}"' for c in classifiers)
-            project_inserts.append(f"classifiers = [\n    {items},\n]")
+            project_inserts.append(
+                "# TODO: Update Development Status when ready: "
+                "\"4 - Beta\", \"5 - Production/Stable\"\n"
+                f"classifiers = [\n    {items},\n]"
+            )
 
         if "keywords" not in project:
             # Leave keywords empty for user to fill in — splitting the project name
