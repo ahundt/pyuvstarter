@@ -2965,3 +2965,35 @@ def test_detect_ci_workflow_name_falls_back_to_python_package_yaml(tmp_path):
     from pyuvstarter import _detect_ci_workflow_name
     wf_dir = _make_ci_wf_dir(tmp_path, "python-package.yaml")
     assert _detect_ci_workflow_name(wf_dir) == "python-package.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Missing candidate tests: main.yml, workflows.yml, test.yaml, workflow.yaml
+# ---------------------------------------------------------------------------
+
+def test_detect_ci_workflow_name_falls_back_to_main_yml(tmp_path):
+    """`main.yml` is detected as a CI workflow (position 5 in priority order)."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "main.yml")
+    assert _detect_ci_workflow_name(wf_dir) == "main.yml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_workflows_yml(tmp_path):
+    """`workflows.yml` is detected as a CI workflow (position 7 in priority order)."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "workflows.yml")
+    assert _detect_ci_workflow_name(wf_dir) == "workflows.yml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_test_yaml(tmp_path):
+    """`test.yaml` is detected as a CI workflow (.yaml extension of test.yml)."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "test.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "test.yaml"
+
+
+def test_detect_ci_workflow_name_falls_back_to_workflow_yaml(tmp_path):
+    """`workflow.yaml` is detected as a CI workflow (.yaml extension of workflow.yml)."""
+    from pyuvstarter import _detect_ci_workflow_name
+    wf_dir = _make_ci_wf_dir(tmp_path, "workflow.yaml")
+    assert _detect_ci_workflow_name(wf_dir) == "workflow.yaml"
