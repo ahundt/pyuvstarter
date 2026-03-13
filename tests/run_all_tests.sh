@@ -252,20 +252,20 @@ INTEGRATION_TESTS=(
     "test_legacy_migration.sh"
 )
 
-# Script-mode tests (no pytest, run as plain Python scripts with main() block)
+# Script-mode tests (legacy files with main() block, no pytest-discoverable functions)
 SCRIPT_TESTS=(
     "test_extraction_fix.py"
-)
-
-# Run Python unit tests (pytest-based)
-PYTHON_TESTS=(
     "test_import_fixing.py"
-    "test_dependency_migration.py"
     "test_jupyter_pipeline.py"
-    "test_project_structure.py"
     "test_mixed_package_availability.py"
     "test_wheel_unavailability.py"
     "test_utils.py"
+)
+
+# Run Python unit tests (pytest-based, have def test_* functions)
+PYTHON_TESTS=(
+    "test_dependency_migration.py"
+    "test_project_structure.py"
     "test_configuration.py"
     "test_cross_platform.py"
     "test_error_handling.py"
