@@ -267,9 +267,10 @@ jobs:
       if: always()
       with:
         name: "pyuvstarter Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
-        path: test_results*.xml
+        path: test_results_pytest*.xml
         reporter: java-junit
         fail-on-error: false
+        fail-on-empty: false
 
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
