@@ -6,9 +6,9 @@ The "Build Status" and "License" badges will work once you push the `ci.yml` and
 The PyPI-related badges are commented out until you publish the package.
 -->
 <!-- GitHub Actions CI: This badge requires a workflow file at .github/workflows/ci.yml -->
-[![Build Status](https://img.shields.io/github/actions/workflow/status/ahundt/pyuvstarter/ci.yml?style=flat-square)](https://github.com/ahundt/pyuvstarter/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/athundt/pyuvstarter/ci.yml?style=flat-square)](https://github.com/athundt/pyuvstarter/actions)
 <!-- GitHub License: This badge reads your LICENSE file directly from the repository. -->
-[![License](https://img.shields.io/github/license/ahundt/pyuvstarter?style=flat-square)](https://github.com/ahundt/pyuvstarter/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/athundt/pyuvstarter?style=flat-square)](https://github.com/athundt/pyuvstarter/blob/main/LICENSE)
 <!--
 The following badges will only work after you publish your package to PyPI.
 To enable them, publish your package and then remove the comment markers.
@@ -94,7 +94,7 @@ Want to try `pyuvstarter` without installing? Use [`uvx`](https://docs.astral.sh
 
 ```bash
 # Run pyuvstarter directly from GitHub
-uvx --from git+https://github.com/ahundt/pyuvstarter.git pyuvstarter
+uvx --from git+https://github.com/athundt/pyuvstarter.git pyuvstarter
 ```
 
 This downloads and runs `pyuvstarter` in an isolated environment without permanently installing it.
@@ -110,7 +110,7 @@ For regular use, we recommend installing `pyuvstarter` as a command-line tool vi
 2.  **Install the tool.** Before running, check the project's GitHub page for the latest version tag to ensure you're installing a stable release.
     ```bash
     # Replace vX.Y.Z with the latest stable version tag from the repository
-    uv tool install git+https://github.com/ahundt/pyuvstarter.git@vX.Y.Z
+    uv tool install git+https://github.com/athundt/pyuvstarter.git@vX.Y.Z
     ```
 
 3.  **Ensure `uv`'s tool directory is in your `PATH`**. If the `pyuvstarter` command isn't found, run `uv tool update-shell`, then restart your terminal.
@@ -118,7 +118,7 @@ For regular use, we recommend installing `pyuvstarter` as a command-line tool vi
 #### Option 2: From a Local Clone
 ```bash
 # 1. Clone the repository (if you haven't already)
-git clone https://github.com/ahundt/pyuvstarter.git
+git clone https://github.com/athundt/pyuvstarter.git
 cd pyuvstarter
 
 # 2. Install pyuvstarter as a uv tool
@@ -198,6 +198,14 @@ pyuvstarter [project_dir] [options]
 -   `--ignore-pattern <pattern>, -i <pattern>`
     Additional gitignore patterns to add (can be specified multiple times)
 
+#### PyPI Publishing
+
+-   `--prepare-pypi`
+    Add PyPI publishing metadata to the project: license file, classifiers, authors, README template, and a GitHub Actions publish workflow using Trusted Publishers (OIDC).
+
+-   `--license {auto,MIT,Apache-2.0,GPL-3.0,BSD-3-Clause,custom}`
+    License type for the project. Default is `auto`, which detects the license from an existing LICENSE file (case-insensitive). If no license file exists, defaults to MIT. Can be used standalone (without `--prepare-pypi`) to just create a LICENSE file. License texts are sourced from canonical locations (apache.org, opensource.org, gnu.org).
+
 #### Examples
 
 ```bash
@@ -221,7 +229,46 @@ pyuvstarter --ignore-pattern "*.tmp" --ignore-pattern "cache/"
 
 # Completely replace existing .gitignore
 pyuvstarter --full-gitignore-overwrite
+
+# Prepare for PyPI publishing (adds metadata, LICENSE, README, publish workflow)
+pyuvstarter --prepare-pypi
+
+# Prepare for PyPI with Apache 2.0 license
+pyuvstarter --prepare-pypi --license Apache-2.0
+
+# Just create a LICENSE file without full PyPI setup
+pyuvstarter --license MIT
 ```
+
+## Publishing to PyPI (`--prepare-pypi`)
+
+`pyuvstarter --prepare-pypi` automates the boilerplate required to publish a Python package to PyPI using GitHub Actions and PyPI Trusted Publishers (OIDC — no API tokens needed).
+
+### What it generates
+
+Running `pyuvstarter --prepare-pypi` in your project creates or updates:
+
+- **`LICENSE`** — License file (default: MIT; detected automatically from an existing file)
+- **`README.md`** — Minimal README if none exists
+- **`pyproject.toml`** — Adds `license`, `classifiers`, `keywords`, and `[project.urls]`
+- **`.github/workflows/publish.yml`** — GitHub Actions publish pipeline triggered on `git tag vX.Y.Z` push; uses PyPI Trusted Publishers (OIDC) with SHA-pinned actions for supply chain security
+- **`RELEASING.md`** — Step-by-step release checklist including PyPI Trusted Publisher setup and the `git tag` + push workflow
+
+### Usage
+
+```bash
+# Detect license automatically, add all PyPI metadata + publish workflow
+pyuvstarter --prepare-pypi
+
+# Specify license explicitly
+pyuvstarter --prepare-pypi --license Apache-2.0
+
+# Supported license options: MIT, Apache-2.0, GPL-3.0, BSD-3-Clause, custom
+```
+
+### PyPI Trusted Publisher setup
+
+After running `--prepare-pypi`, follow the steps in the generated `RELEASING.md` to configure PyPI Trusted Publishers before your first publish. This one-time setup on PyPI replaces API token management with OIDC-based authentication — more secure and requires no secrets in GitHub.
 
 ## Expected Outcome: A Ready-to-Use Development Environment
 
@@ -302,7 +349,7 @@ grep '"overall_status"' pyuvstarter_setup_log.json
 1. **As a globally installed tool (Recommended)**
    ```bash
    # Install globally
-   uv tool install git+https://github.com/ahundt/pyuvstarter.git
+   uv tool install git+https://github.com/athundt/pyuvstarter.git
    # Run in any directory
    pyuvstarter .
    ```
@@ -310,7 +357,7 @@ grep '"overall_status"' pyuvstarter_setup_log.json
 2. **Using uvx (Quick try without installation)**
    ```bash
    # Run directly without installing
-   uvx --from git+https://github.com/ahundt/pyuvstarter.git pyuvstarter .
+   uvx --from git+https://github.com/athundt/pyuvstarter.git pyuvstarter .
    ```
 
 3. **From within the pyuvstarter project directory**
@@ -369,13 +416,13 @@ which pyuvstarter
 #### Run Tests Locally
 
 ```bash
-# Run Python test suite (pytest)
-./tests/run_all_tests.sh
+# Run all Python unit tests (recommended)
+uv run python -m pytest tests/ -v
 
 # Run specific Python test modules
-python -m pytest tests/test_jupyter_pipeline.py -v
-python -m pytest tests/test_import_fixing.py -v
-python -m pytest tests/test_wheel_unavailability.py -v
+uv run python -m pytest tests/test_jupyter_pipeline.py -v
+uv run python -m pytest tests/test_import_fixing.py -v
+uv run python -m pytest tests/test_wheel_unavailability.py -v
 
 # Run shell-based integration tests
 ./tests/test_new_project.sh

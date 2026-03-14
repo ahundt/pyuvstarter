@@ -371,6 +371,7 @@ class PyuvstarterCommandExecutor:
                 cmd,
                 capture_output=capture_output,
                 text=True,
+                encoding="utf-8",  # Force UTF-8: pyuvstarter output contains emoji; Windows default is cp1252
                 cwd=project_dir.resolve(),  # Run from test project directory to avoid contamination
                 timeout=timeout,
                 env=process_env

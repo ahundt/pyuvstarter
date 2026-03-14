@@ -66,14 +66,14 @@ How to Use:
    - Place `pyuvstarter.py` in your existing project directory or use it to start a new project in an empty directory.
 
 3. Execution:
-   - Basic: `python pyuvstarter.py` (uses all defaults).
-   - Custom venv: `python pyuvstarter.py --venv-name myenv`.
-   - Preview mode: `python pyuvstarter.py --dry-run` (shows what would happen without making changes).
+   - Basic: `pyuvstarter` (installed tool) or `uv run pyuvstarter` (from clone).
+   - Custom venv: `pyuvstarter --venv-name myenv`.
+   - Preview mode: `pyuvstarter --dry-run` (shows what would happen without making changes).
    - Migration mode examples:
-     - `python pyuvstarter.py --dependency-migration all-requirements` (migrates everything from `requirements.txt`).
-     - `python pyuvstarter.py --dependency-migration skip-requirements` (ignores `requirements.txt` entirely).
-   - Full gitignore overwrite: `python pyuvstarter.py --full-gitignore-overwrite` (replaces existing `.gitignore`).
-   - Custom log file: `python pyuvstarter.py --log-file-name my_setup_log.json`.
+     - `pyuvstarter --dependency-migration all-requirements` (migrates everything from `requirements.txt`).
+     - `pyuvstarter --dependency-migration skip-requirements` (ignores `requirements.txt` entirely).
+   - Full gitignore overwrite: `pyuvstarter --full-gitignore-overwrite` (replaces existing `.gitignore`).
+   - Custom log file: `pyuvstarter --log-file-name my_setup_log.json`.
 
 4. Post-run:
    - Activate the virtual environment:
@@ -82,9 +82,9 @@ How to Use:
    - Check the log file for a detailed summary of all actions and any warnings.
 
 5. Configuration:
-   - JSON config file: `python pyuvstarter.py --config-file settings.json`
-   - Environment variables: `PYUVSTARTER_VENV_NAME=myenv python pyuvstarter.py`
-   - See --help for all options: `python pyuvstarter.py --help`
+   - JSON config file: `pyuvstarter --config-file settings.json`
+   - Environment variables: `PYUVSTARTER_VENV_NAME=myenv pyuvstarter`
+   - See --help for all options: `pyuvstarter --help`
 
 
 Outcome:
@@ -208,7 +208,7 @@ Design Philosophy:
                Here are your options to modernize your project:
 
                1. Use a newer Python version (recommended):
-                  Run: python3.11 -m pyuvstarter
+                  Run: uv run --python 3.11 python -m pyuvstarter
                   This gives you latest features and best performance.
                   Note: You may need to update code that uses deprecated APIs.
 
@@ -287,14 +287,14 @@ def check_python_version():
         print("   source .venv/bin/activate")
         print("   uv sync")
         print("   # Run pyuvstarter:")
-        print("   python3 pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
-        print("2. Use python3 explicitly:")
-        print("   python3 pyuvstarter.py")
+        print("2. Use uv run explicitly:")
+        print("   uv run pyuvstarter")
         print()
         print("3. Activate your UV virtual environment:")
         print("   source .venv/bin/activate")
-        print("   python3 pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("4. Update your system default (if you have admin rights):")
         print("   ln -sf /usr/bin/python3 /usr/local/bin/python")
@@ -317,12 +317,12 @@ def check_python_version():
         print("   uv venv --python 3.11")
         print("   source .venv/bin/activate")
         print("   uv sync")
-        print("   python3 pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("2. Install Python 3.11+ and activate virtual environment:")
-        print("   python3.11 -m venv .venv")
+        print("   uv venv --python 3.11")
         print("   source .venv/bin/activate")
-        print("   python3 pyuvstarter.py")
+        print("   uv run pyuvstarter")
         print()
         print("=" * 70)
 
@@ -420,8 +420,8 @@ except ImportError as e:
     print("ERROR: Failed to import required dependency 'typer': {}".format(e))
     print("")
     print("This usually means typer is not installed. Please install it using:")
-    print("  pip install typer")
-    print("  Or if using uv: uv pip install typer")
+    print("  uv add typer  (recommended, in a uv project)")
+    print("  uv pip install typer  (or: pip install typer)")
     print("")
     print("If typer is installed, the error above will show the specific import issue.")
     sys.exit(1)
@@ -433,8 +433,8 @@ except ImportError as e:
     print("ERROR: Failed to import required dependency 'pydantic': {}".format(e))
     print("")
     print("This usually means pydantic is not installed. Please install it using:")
-    print("  pip install pydantic pydantic-settings")
-    print("  Or if using uv: uv pip install pydantic pydantic-settings")
+    print("  uv add pydantic pydantic-settings  (recommended, in a uv project)")
+    print("  uv pip install pydantic pydantic-settings  (or: pip install pydantic pydantic-settings)")
     print("")
     print("If pydantic is installed, the error above will show the specific import issue.")
     sys.exit(1)
@@ -753,6 +753,13 @@ class GitIgnore(GitIgnoreSpec):
             raise NotADirectoryError(f"The specified root_dir is not a directory: {self.root_dir}")
         self._manual_patterns = manual_patterns or []
         self.read_gitignore_files = read_gitignore_files
+        # Initialize parent PathSpec/GitIgnoreSpec with empty patterns so that
+        # internal state (e.g. _backend in newer pathspec versions) is properly set.
+        # Then remove the 'patterns' dict entry so our @cached_property can
+        # provide lazy-loaded patterns on first access instead.
+        super().__init__([])
+        if 'patterns' in self.__dict__:
+            del self.__dict__['patterns']
 
     @functools.cached_property
     def patterns(self) -> List:
@@ -847,20 +854,18 @@ class GitIgnore(GitIgnoreSpec):
             # The path is not within the project root, so it is not subject to these rules.
             return False
 
-        # This loop correctly implements the parent directory exclusion rule:
-        # "It is not possible to re-include a file if a parent directory of that file is excluded."
+        # Parent directory exclusion rule: "It is not possible to re-include
+        # a file if a parent directory of that file is excluded."
+        # match_file() returns True when a path matches a gitignore pattern
+        # (i.e., the path IS ignored).
         current_parent = Path(path_rel_to_root).parent
         while current_parent and str(current_parent) != '.':
-            # `self.match_file()` is inherited and returns True if a path is
-            # *included* (i.e., NOT ignored). If any parent is not included,
-            # this path is definitively ignored.
-            if not self.match_file(str(current_parent)):
+            if self.match_file(str(current_parent)):
                 return True
             current_parent = current_parent.parent
 
-        # If no parents were ignored, check the file itself. The result is the
-        # logical opposite of inclusion.
-        return not self.match_file(path_rel_to_root)
+        # Check the file itself — match_file returns True if ignored.
+        return self.match_file(path_rel_to_root)
 
     def get_ignored_files(self) -> List[Path]:
         """Scans the project and returns a list of all IGNORED files using
@@ -1420,13 +1425,18 @@ class ProgressTracker:
 
         try:
             from tqdm import tqdm
+            import os as _os
+            # Disable when not a real terminal (piped to AI tools, CI redirects, file capture).
+            # Also disable when NO_COLOR is set (explicit non-interactive signal).
+            _is_tty = sys.stderr.isatty() and not _os.environ.get("NO_COLOR")
             # Ensure header is safe for console output
             safe_header = _make_text_safe_for_console(header)
             self._progress_bar = tqdm(
                 total=total_steps,
                 desc=safe_header,
                 bar_format='{desc} {percentage:3.0f}%|{bar}| {n}/{total} steps',
-                ncols=80
+                dynamic_ncols=True,   # Auto-detect terminal width on each refresh; handles resize
+                disable=not _is_tty,  # Zero output when piped (AI tools, CI, file redirects)
             )
         except Exception:
             # Fallback to simple output if any progress bar creation fails
@@ -4591,6 +4601,1262 @@ app = typer.Typer(
     pretty_exceptions_show_locals=True,  # Show local variables for detailed error diagnosis
 )
 
+# --- PyPI Publishing Helpers ---
+
+_LICENSE_TEMPLATES: dict[str, str] = {
+    "MIT": """MIT License
+
+Copyright (c) {year} {author}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+""",
+    # Full canonical text from https://www.apache.org/licenses/LICENSE-2.0.txt
+    # The APPENDIX uses [yyyy] and [name of copyright owner] as placeholders.
+    # _create_license_file substitutes these instead of the usual {{year}}/{{author}}.
+    "Apache-2.0": """
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+""",
+    # Standard GPL-3.0 header per https://www.gnu.org/licenses/gpl-howto.html
+    # The full GPL text (674 lines) is too long to embed. This is the standard
+    # "How to Apply" notice that the FSF recommends placing in each source file.
+    # Users should also include the full GPL text from https://www.gnu.org/licenses/gpl-3.0.txt
+    "GPL-3.0": """Copyright (C) {year} {author}
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+The full text of the GNU General Public License version 3 can be found at:
+https://www.gnu.org/licenses/gpl-3.0.txt
+""",
+    "BSD-3-Clause": """BSD 3-Clause License
+
+Copyright (c) {year}, {author}
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+""",
+}
+
+
+def _find_license_file(project_root: Path) -> Path | None:
+    """Find an existing license file in the project root, case-insensitive.
+
+    Checks common names: LICENSE, LICENCE, LICENSE.md, LICENSE.txt, and case variants.
+    Returns the Path if found, None otherwise.
+    """
+    # Check exact known names first (fast path)
+    for name in ("LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md", "LICENCE.txt"):
+        candidate = project_root / name
+        if candidate.exists():
+            return candidate
+
+    # Case-insensitive fallback: scan directory for license* files
+    try:
+        for entry in project_root.iterdir():
+            if entry.is_file() and entry.name.lower().startswith("licen") and not entry.name.startswith("."):
+                return entry
+    except OSError:
+        pass
+
+    return None
+
+
+def _detect_license_from_file(project_root: Path) -> str | None:
+    """Try to detect the license type from an existing LICENSE or LICENSE.md file.
+
+    Returns an SPDX identifier if detected, or None if no license file or unrecognized.
+    """
+    license_path = _find_license_file(project_root)
+    if license_path is None:
+        return None
+
+    try:
+        content = license_path.read_text(encoding="utf-8", errors="replace")
+        content_lower = content.lower()
+        if "mit license" in content_lower or "permission is hereby granted, free of charge" in content_lower:
+            return "MIT"
+        if "apache license" in content_lower and "version 2.0" in content_lower:
+            return "Apache-2.0"
+        if "gnu general public license" in content_lower and "version 3" in content_lower:
+            return "GPL-3.0"
+        if "bsd 3-clause" in content_lower or ("redistribution and use" in content_lower and "neither the name" in content_lower):
+            return "BSD-3-Clause"
+        if "gnu general public license" in content_lower and "version 2" in content_lower:
+            return "GPL-2.0"
+        # File exists but license type not recognized
+        return "custom"
+    except Exception:
+        return None
+
+
+def _detect_github_owner_repo(project_root: Path) -> Tuple[Optional[str], Optional[str]]:
+    """Detect GitHub owner and repo name from git remote origin URL.
+
+    Only returns results for github.com remotes. Returns (None, None) for
+    GitLab, Bitbucket, Gitea, or other hosts — the caller substitutes a
+    'USERNAME' placeholder so generated URLs remain editable.
+
+    Parses both SSH (git@github.com:owner/repo.git) and HTTPS
+    (https://github.com/owner/repo) formats.
+
+    Returns:
+        (owner, repo) tuple, or (None, None) if detection fails or non-GitHub.
+    """
+    action_name = "_detect_github_owner_repo"
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return (None, None)
+
+        url = result.stdout.strip()
+        if not url:
+            return (None, None)
+
+        # Only parse GitHub URLs — other hosts would produce wrong github.com URLs in metadata
+        if "github.com" not in url:
+            _log_action(action_name, "WARN",
+                        f"Git remote is not a GitHub URL: {url!r}. "
+                        "Generated [project.urls] will use 'USERNAME' placeholder. "
+                        "Update pyproject.toml [project.urls] manually with your actual repository URL.")
+            return (None, None)
+
+        # SSH format: git@github.com:owner/repo.git
+        if ":" in url and url.startswith("git@"):
+            path_part = url.split(":")[-1]
+            path_part = path_part.removesuffix(".git")
+            parts = path_part.split("/")
+            if len(parts) >= 2:
+                return (parts[-2], parts[-1])
+        # HTTPS format: https://github.com/owner/repo or https://github.com/owner/repo.git
+        elif "/" in url:
+            path_part = url.rstrip("/")
+            path_part = path_part.removesuffix(".git")
+            parts = path_part.split("/")
+            if len(parts) >= 2:
+                return (parts[-2], parts[-1])
+    except Exception:
+        pass
+    return (None, None)
+
+
+def _detect_default_branch(project_root: Path) -> str:
+    """Detect the default branch name from git remote HEAD.
+
+    Returns:
+        Branch name (e.g., 'main', 'master'), or 'main' as fallback.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            # Output: refs/remotes/origin/main
+            ref = result.stdout.strip()
+            return ref.split("/")[-1]
+    except Exception:
+        pass
+    return "main"
+
+
+def _detect_build_backend(project_root: Path) -> Tuple[str, str]:
+    """Detect build backend from pyproject.toml [build-system].
+
+    Returns:
+        (build_cmd, publish_cmd) tuple for use in templates.
+    """
+    pyproject_path = project_root / "pyproject.toml"
+    try:
+        if pyproject_path.exists():
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:
+                import toml as tomllib
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f) if hasattr(tomllib, 'load') and sys.version_info >= (3, 11) else __import__('toml').load(f)
+            backend = data.get("build-system", {}).get("build-backend", "")
+            if "poetry" in backend:
+                return ("poetry build", "poetry publish")
+            # uv build works with any PEP 517 backend (hatchling, setuptools, flit, etc.)
+            # and is always available in CI via setup-uv
+    except Exception:
+        pass
+    # Default: uv (modern, works with any PEP 517 backend)
+    return ("uv build", "uv publish")
+
+
+def _detect_python_version(project_root: Path) -> str:
+    """Detect minimum Python version from pyproject.toml requires-python.
+
+    Returns:
+        Version string like '3.10', or '3.12' as fallback.
+    """
+    import re
+    pyproject_path = project_root / "pyproject.toml"
+    try:
+        if pyproject_path.exists():
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:
+                import toml as tomllib
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f) if hasattr(tomllib, 'load') and sys.version_info >= (3, 11) else __import__('toml').load(f)
+            requires_python = data.get("project", {}).get("requires-python", "")
+            match = re.search(r'>=\s*3\.(\d+)', requires_python)
+            if match:
+                return f"3.{match.group(1)}"
+    except Exception:
+        pass
+    return "3.12"
+
+
+def _prepare_pypi_metadata(project_root: Path, license_type: str, dry_run: bool) -> bool:
+    """Orchestrate PyPI readiness setup: metadata, license, readme, workflow."""
+    action_name = "prepare_pypi_metadata"
+    pyproject_path = project_root / "pyproject.toml"
+
+    if not pyproject_path.exists():
+        _log_action(action_name, "ERROR", "pyproject.toml not found. Run pyuvstarter without --prepare-pypi first.")
+        return False
+
+    # Auto-detect license from existing file if --license is "auto"
+    if license_type == "auto":
+        detected = _detect_license_from_file(project_root)
+        if detected and detected != "custom":
+            _log_action(action_name, "INFO", f"Auto-detected license: {detected}")
+            license_type = detected
+        elif detected == "custom":
+            _log_action(action_name, "INFO", "Found LICENSE file but could not identify type. Using 'custom' — license field in pyproject.toml will use file reference.")
+            license_type = "custom"
+        else:
+            _log_action(action_name, "INFO", "No LICENSE file found. Defaulting to MIT.")
+            license_type = "MIT"
+
+    _log_action(action_name, "INFO", "Adding PyPI publishing metadata...")
+
+    # Detect project context for templates
+    owner, repo = _detect_github_owner_repo(project_root)
+    if owner:
+        _log_action(action_name, "INFO", f"Detected GitHub owner/repo: {owner}/{repo}")
+    else:
+        _log_action(action_name, "WARN", "Could not detect GitHub owner/repo from git remote. URLs will use placeholder 'USERNAME'.")
+        owner = "USERNAME"
+    default_branch = _detect_default_branch(project_root)
+    build_cmd, publish_cmd = _detect_build_backend(project_root)
+    python_version = _detect_python_version(project_root)
+
+    success = True
+    success = _add_pypi_toml_metadata(project_root, license_type, dry_run, owner=owner) and success
+    success = _create_license_file(project_root, license_type, dry_run) and success
+    success = _create_readme_template(project_root, dry_run) and success
+    success = _create_publish_workflow(project_root, dry_run, python_version=python_version, build_cmd=build_cmd) and success
+    success = _add_workflow_call_trigger(project_root, dry_run) and success
+    detected_ci = _detect_ci_workflow_name(project_root / ".github" / "workflows")
+    success = _create_releasing_doc(project_root, dry_run, owner=owner, default_branch=default_branch, build_cmd=build_cmd, publish_cmd=publish_cmd, ci_filename=detected_ci or "ci.yml") and success
+
+    # Warn if publish.yml was created with no CI workflow found at all
+    publish_path = project_root / ".github" / "workflows" / "publish.yml"
+    if publish_path.exists() and _detect_ci_workflow_name(project_root / ".github" / "workflows") is None:
+        _log_action(action_name, "WARN",
+                     f"publish.yml was created but no CI workflow found (checked: {_CI_CANDIDATES_STR}). "
+                     "Consider adding a CI workflow so publish.yml can run tests before publishing.")
+
+    if success:
+        _log_action(action_name, "SUCCESS", "PyPI metadata setup complete. Review placeholder values in pyproject.toml.")
+    else:
+        _log_action(action_name, "WARN", "PyPI metadata setup completed with some issues. Check log for details.")
+
+    return success
+
+
+def _find_toml_section_range(lines: list, section_header: str) -> Tuple[int, int]:
+    """Find the start and end line indices of a TOML section.
+
+    Returns (start, end) where start is the header line index and end is the
+    index of the last content line + 1 (i.e. the insert position for new keys).
+    Returns (-1, -1) if the section is not found.
+    """
+    in_section = False
+    start = -1
+    last_content = -1
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == section_header:
+            in_section = True
+            start = i
+            last_content = i
+            continue
+        if in_section:
+            # A new section header that is NOT a sub-table of ours
+            if stripped.startswith("[") and not stripped.startswith(section_header.rstrip("]") + "."):
+                return (start, last_content + 1)
+            if stripped and not stripped.startswith("#"):
+                last_content = i
+    if in_section:
+        return (start, last_content + 1)
+    return (-1, -1)
+
+
+def _add_pypi_toml_metadata(project_root: Path, license_type: str, dry_run: bool, owner: str = "USERNAME") -> bool:
+    """Add PyPI metadata fields to pyproject.toml using format-preserving insertion.
+
+    Reads with tomllib to detect which fields are missing, then inserts TOML
+    snippets into the raw text at the correct positions.  This preserves
+    formatting, comments, and section ordering.
+    """
+    action_name = "add_pypi_toml_metadata"
+    pyproject_path = project_root / "pyproject.toml"
+
+    try:
+        # Parse to detect missing fields
+        if tomllib is not None:
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+        else:
+            import toml as _toml_reader
+            with open(pyproject_path, "r", encoding="utf-8") as f:
+                data = _toml_reader.load(f)
+
+        # Detect Poetry format — it uses [tool.poetry] not [project] (PEP 621)
+        if "project" not in data and "poetry" in data.get("tool", {}):
+            _log_action(action_name, "WARN",
+                        "pyproject.toml uses [tool.poetry] format. "
+                        "--prepare-pypi currently supports [project] (PEP 621) format only. "
+                        "Skipping pyproject.toml metadata update. "
+                        "To use --prepare-pypi, migrate to [project] format (PEP 621).")
+            return True
+
+        project = data.get("project", {})
+        name = project.get("name", project_root.name)
+
+        # Collect TOML snippets to insert under [project]
+        project_inserts: list = []
+
+        if "readme" not in project:
+            project_inserts.append('readme = "README.md"')
+
+        if "license" not in project and "license-files" not in project:
+            if license_type == "custom":
+                project_inserts.append('license = {file = "LICENSE"}')
+            else:
+                project_inserts.append(f'license = {{text = "{license_type}"}}')
+
+        if "authors" not in project:
+            project_inserts.append('authors = [{name = "Your Name", email = "your@email.com"}]')
+
+        if "classifiers" not in project:
+            classifiers = [
+                "Development Status :: 3 - Alpha",
+                "Intended Audience :: Developers",
+                "Programming Language :: Python :: 3",
+            ]
+            requires_python = project.get("requires-python", "")
+            if requires_python:
+                try:
+                    from packaging.specifiers import SpecifierSet
+                    spec = SpecifierSet(requires_python)
+                    for s in spec:
+                        if s.operator in (">=", "~=", "=="):
+                            parts = s.version.split(".")
+                            if len(parts) >= 2:
+                                major, minor = int(parts[0]), int(parts[1])
+                                # Generate classifiers for all actively supported versions from min to latest known
+                                _KNOWN_PYTHON_VERSIONS = [(3, 11), (3, 12), (3, 13), (3, 14)]
+                                for vmaj, vmin in _KNOWN_PYTHON_VERSIONS:
+                                    if vmaj > major or (vmaj == major and vmin >= minor):
+                                        classifiers.append(f"Programming Language :: Python :: {vmaj}.{vmin}")
+                            break
+                except Exception:
+                    pass
+            license_classifiers = {
+                "MIT": "License :: OSI Approved :: MIT License",
+                "Apache-2.0": "License :: OSI Approved :: Apache Software License",
+                "GPL-3.0": "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+                "BSD-3-Clause": "License :: OSI Approved :: BSD License",
+            }
+            if license_type in license_classifiers:
+                classifiers.append(license_classifiers[license_type])
+            items = ",\n    ".join(f'"{c}"' for c in classifiers)
+            project_inserts.append(
+                "# TODO: Update Development Status when ready: "
+                "\"4 - Beta\", \"5 - Production/Stable\"\n"
+                f"classifiers = [\n    {items},\n]"
+            )
+
+        if "keywords" not in project:
+            # Leave keywords empty for user to fill in — splitting the project name
+            # into word fragments produces unhelpful PyPI search terms.
+            project_inserts.append('keywords = []  # TODO: Add search keywords for PyPI discovery')
+
+        # Determine what to do with [project.urls]
+        urls_insert_lines: list = []
+        needs_new_urls_section = False
+        if "urls" not in project:
+            needs_new_urls_section = True
+            urls_insert_lines = [
+                f'Homepage = "https://github.com/{owner}/{name}"',
+                f'Repository = "https://github.com/{owner}/{name}"',
+                f'Issues = "https://github.com/{owner}/{name}/issues"',
+                f'Changelog = "https://github.com/{owner}/{name}/releases"',
+            ]
+        elif "Changelog" not in project.get("urls", {}):
+            urls_insert_lines = [
+                f'Changelog = "https://github.com/{owner}/{name}/releases"',
+            ]
+
+        if not project_inserts and not urls_insert_lines:
+            _log_action(action_name, "INFO", "All PyPI metadata fields already present. No changes needed.")
+            return True
+
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Would add PyPI metadata to pyproject.toml")
+            return True
+
+        # Read raw text for format-preserving insertion
+        with open(pyproject_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        # Insert fields under [project] section
+        if project_inserts:
+            _start, insert_at = _find_toml_section_range(lines, "[project]")
+            if insert_at < 0:
+                _log_action(action_name, "ERROR", "Could not find [project] section in pyproject.toml")
+                return False
+            snippet = "\n".join(project_inserts) + "\n"
+            lines.insert(insert_at, snippet)
+
+        # Insert [project.urls] section or add key to existing one
+        if urls_insert_lines:
+            if needs_new_urls_section:
+                # Find end of [project] section (re-scan after potential insert above)
+                _start, insert_at = _find_toml_section_range(lines, "[project]")
+                if insert_at < 0:
+                    insert_at = len(lines)
+                section_text = "\n[project.urls]\n" + "\n".join(urls_insert_lines) + "\n"
+                lines.insert(insert_at, section_text)
+            else:
+                # Add key(s) to existing [project.urls]
+                _start, insert_at = _find_toml_section_range(lines, "[project.urls]")
+                if insert_at < 0:
+                    _log_action(action_name, "WARN", "Could not find [project.urls] section; appending to end of file.")
+                    insert_at = len(lines)
+                snippet = "\n".join(urls_insert_lines) + "\n"
+                lines.insert(insert_at, snippet)
+
+        with open(pyproject_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+        _log_action(action_name, "SUCCESS", "Added PyPI metadata to pyproject.toml. Review placeholder values (USERNAME, Your Name, etc.).")
+        return True
+
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to update pyproject.toml: {e}")
+        return False
+
+
+def _create_license_file(project_root: Path, license_type: str, dry_run: bool) -> bool:
+    """Generate a LICENSE file if one doesn't exist (case-insensitive check)."""
+    action_name = "create_license_file"
+    license_path = project_root / "LICENSE"
+
+    existing = _find_license_file(project_root)
+    if existing is not None:
+        _log_action(action_name, "INFO", f"License file already exists ({existing.name}). Skipping.")
+        return True
+
+    if license_type == "custom":
+        _log_action(action_name, "INFO", "Custom license detected. Skipping LICENSE generation — use your own LICENSE file.")
+        return True
+
+    if license_type not in _LICENSE_TEMPLATES:
+        _log_action(action_name, "WARN", f"Unknown license type '{license_type}'. Supported: {', '.join(_LICENSE_TEMPLATES.keys())}, custom. Skipping LICENSE generation.")
+        return False
+
+    if dry_run:
+        _log_action(action_name, "INFO", f"DRY RUN: Would create LICENSE file ({license_type})")
+        return True
+
+    try:
+        import datetime
+        template = _LICENSE_TEMPLATES[license_type]
+        if license_type == "Apache-2.0":
+            # Apache canonical text uses [yyyy] and [name of copyright owner] placeholders
+            content = template.replace("[yyyy]", str(datetime.date.today().year)).replace(
+                "[name of copyright owner]", "[Your Name]"
+            )
+        else:
+            # MIT, BSD, GPL templates use Python {year}/{author} format strings
+            content = template.format(
+                year=datetime.date.today().year,
+                author="[Your Name]"  # Placeholder
+            )
+        with open(license_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _log_action(action_name, "SUCCESS", f"Created LICENSE file ({license_type}). Replace '[Your Name]' with your name.")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create LICENSE: {e}")
+        return False
+
+
+def _create_readme_template(project_root: Path, dry_run: bool) -> bool:
+    """Generate a README.md template if one doesn't exist."""
+    action_name = "create_readme_template"
+    readme_path = project_root / "README.md"
+
+    if readme_path.exists():
+        _log_action(action_name, "INFO", "README.md already exists. Skipping.")
+        return True
+
+    if dry_run:
+        _log_action(action_name, "INFO", "DRY RUN: Would create README.md template")
+        return True
+
+    try:
+        # Read project name from pyproject.toml if available
+        project_name = project_root.name
+        pyproject_path = project_root / "pyproject.toml"
+        if pyproject_path.exists() and tomllib is not None:
+            try:
+                with open(pyproject_path, "rb") as f:
+                    data = tomllib.load(f)
+                project_name = data.get("project", {}).get("name", project_name)
+            except Exception:
+                pass
+
+        import_name = project_name.replace("-", "_")
+
+        content = f"""# {project_name}
+
+Description here.
+
+## Installation
+
+```bash
+pip install {project_name}
+```
+
+## Usage
+
+```python
+import {import_name}
+```
+
+## License
+
+See [LICENSE](LICENSE) file.
+"""
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _log_action(action_name, "SUCCESS", "Created README.md template. Update description and usage examples.")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create README.md: {e}")
+        return False
+
+
+# Ordered by priority: more specific names first, then common GitHub starter names.
+# python-app.yml and python-package.yml are GitHub's official Python starter templates.
+_CI_WORKFLOW_CANDIDATES = (
+    "ci.yml", "test.yml", "tests.yml", "build.yml", "main.yml",
+    "workflow.yml", "workflows.yml", "python.yml",
+    "python-app.yml", "python-package.yml",
+    "ci.yaml", "test.yaml", "tests.yaml", "build.yaml", "main.yaml",
+    "workflow.yaml", "workflows.yaml", "python.yaml",
+    "python-app.yaml", "python-package.yaml",
+)
+# Pre-joined string used in WARN messages — computed once to avoid repeated joins.
+_CI_CANDIDATES_STR = ", ".join(_CI_WORKFLOW_CANDIDATES)
+
+
+def _is_publish_workflow(content: str) -> bool:
+    """Return True if workflow content indicates a PyPI publish/release workflow.
+
+    Used to exclude publish workflows from CI detection — injecting workflow_call
+    into a publish workflow or referencing it as CI would break existing releases.
+
+    Checks three tiers of evidence:
+    1. Definitive: pypa/gh-action-pypi-publish action (OIDC standard action)
+    2. Strong: environment: pypi or testpypi declaration (single-value or dict form)
+    3. Moderate: run: step containing twine upload or uv publish CLI commands
+       (scoped to run: lines to avoid comment false-positives)
+
+    Known limitation: Tier 1 uses substring match — a commented-out pypa action
+    reference still matches. This is intentional: the comment signals publish intent.
+    """
+    import re as _re
+    # Tier 1: Definitive tell — PyPI publish action (OIDC standard).
+    # No CI-only workflow uses this action; any occurrence means this is a publish workflow.
+    if "pypa/gh-action-pypi-publish" in content:
+        return True
+    # Tier 2a: environment: pypi/testpypi (single-value, allows inline comment).
+    # EOL anchor + optional comment prevents matching "environment: pypi-staging".
+    if _re.search(r'environment:\s*(pypi|testpypi)(\s*$|\s+#)', content, _re.MULTILINE):
+        return True
+    # Tier 2b: dict form — environment:\n    name: pypi (must be indented ≥2 spaces).
+    # Unindented "name: pypi" is the workflow's display name — not a publish tell.
+    if _re.search(r'^ {2,}name:\s*(pypi|testpypi)\s*$', content, _re.MULTILINE):
+        return True
+    # Tier 3: publish CLI in a run: step.
+    # Matches both YAML step forms:
+    #   "      - run: twine upload dist/*"  (single-key step with leading dash)
+    #   "        run: twine upload dist/*"  (multi-key step property, no dash)
+    # Covers: "twine upload", "python -m twine upload", "uv publish", "uv publish --index ..."
+    # Scoped to run: lines to avoid matching comments (e.g., "# TODO: twine upload").
+    if _re.search(r'^\s*(?:-\s+)?run:\s.*\b(twine\b.*\bupload\b|uv\s+publish)\b', content, _re.MULTILINE):
+        return True
+    return False
+
+
+def _detect_ci_workflow_name(workflow_dir: Path) -> str | None:
+    """Detect the CI workflow filename, trying common names in priority order.
+
+    Returns the filename (e.g. 'ci.yml') or None if no CI workflow found.
+    Many projects use test.yml, tests.yml, build.yml, workflow.yml, or
+    python.yml (GitHub's Python starter template) instead of ci.yml.
+
+    Skips files whose content identifies them as publish/release workflows
+    (e.g. build.yml containing pypa/gh-action-pypi-publish) to avoid breaking
+    existing release automation when injecting workflow_call triggers.
+    """
+    for candidate in _CI_WORKFLOW_CANDIDATES:
+        candidate_path = workflow_dir / candidate
+        if candidate_path.exists():
+            try:
+                content = candidate_path.read_text(encoding="utf-8")
+                if not _is_publish_workflow(content):
+                    return candidate
+            except OSError:
+                pass  # Skip unreadable files; try next candidate
+    return None
+
+
+def _create_publish_workflow(project_root: Path, dry_run: bool, python_version: str = "3.12", build_cmd: str = "uv build") -> bool:
+    """Generate .github/workflows/publish.yml for PyPI Trusted Publisher publishing."""
+    action_name = "create_publish_workflow"
+    workflow_dir = project_root / ".github" / "workflows"
+    workflow_path = workflow_dir / "publish.yml"
+    ci_filename = _detect_ci_workflow_name(workflow_dir)
+
+    if workflow_path.exists():
+        existing = workflow_path.read_text(encoding="utf-8")
+        # Check for outdated build commands that won't work in CI (setup-uv doesn't install hatch/flit/build)
+        outdated_cmds = ["hatch build", "python -m build", "flit build"]
+        needs_update = any(cmd in existing and cmd != build_cmd for cmd in outdated_cmds)
+        # Also update if test job calls a CI workflow but is missing the required permissions block
+        # (missing permissions causes GitHub startup_failure at workflow launch)
+        import re as _re
+        if ci_filename is not None:
+            ci_uses_pattern = f"uses: ./.github/workflows/{ci_filename}"
+            if not needs_update and ci_uses_pattern in existing:
+                ci_ref_idx = existing.find(ci_uses_pattern)
+                after_ci_ref = existing[ci_ref_idx:ci_ref_idx + 300]
+                # Find end of this job: next line starting with exactly 2 spaces + non-space
+                # (i.e., the next job-level key). This avoids splitting on any "build:" substring.
+                next_job = _re.search(r'\n  [a-z][\w-]*:', after_ci_ref)
+                job_section = after_ci_ref[:next_job.start()] if next_job else after_ci_ref
+                if "permissions:" not in job_section:
+                    needs_update = True
+        elif not needs_update:
+            # No CI workflow detected. If existing publish.yml references any CI workflow,
+            # mark as needing update to regenerate without the test: job (stale reference).
+            if _re.search(r'uses:\s+\./.github/workflows/\S+\.ya?ml', existing):
+                needs_update = True
+                _log_action(action_name, "WARN",
+                            "publish.yml references a CI workflow that no longer exists. "
+                            f"Regenerating without test: job. Checked: {_CI_CANDIDATES_STR}")
+        if not needs_update:
+            _log_action(action_name, "INFO", ".github/workflows/publish.yml already exists and is up to date. Skipping.")
+            return True
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Would update publish.yml build command to: " + build_cmd)
+            return True
+        # Back up existing publish.yml before regeneration so user can recover custom jobs
+        import shutil as _shutil, datetime as _datetime
+        _backup_name = f"publish.yml.bak_{_datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            _shutil.copy2(workflow_path, workflow_dir / _backup_name)
+            _log_action(action_name, "INFO", f"Backed up existing publish.yml to {_backup_name}")
+        except Exception as _e:
+            _log_action(action_name, "WARN", f"Could not back up publish.yml: {_e}")
+        _log_action(action_name, "WARN",
+                     f"publish.yml is outdated (missing permissions block or outdated build command). "
+                     f"Regenerating with '{build_cmd}'. Custom jobs were backed up to {_backup_name}; re-add them if needed.")
+        # Fall through to regenerate the file
+
+    if dry_run:
+        _log_action(action_name, "INFO", "DRY RUN: Would create .github/workflows/publish.yml")
+        return True
+
+    has_ci = ci_filename is not None
+    if not has_ci:
+        _log_action(action_name, "WARN",
+                     f"No CI workflow found (checked: {_CI_CANDIDATES_STR}). "
+                     "publish.yml will NOT run tests before publishing. Consider adding a CI workflow.")
+
+    try:
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build the test job section conditionally
+        if has_ci:
+            test_section = f"""
+  test:
+    uses: ./.github/workflows/{ci_filename}
+    permissions:
+      contents: read
+      checks: write        # needed by test reporter in ci.yml
+      pull-requests: write # needed by test reporter in ci.yml
+      issues: read
+
+  build:
+    needs: test"""
+        else:
+            test_section = """
+  build:"""
+
+        content = f'''# Publish to PyPI using Trusted Publishers (OIDC)
+# IMPORTANT: Configure Trusted Publishers on PyPI BEFORE pushing your first v* tag.
+# See: https://docs.pypi.org/trusted-publishers/
+#
+# Security: Pin action versions to commit SHAs before production use.
+# Run: npx pin-github-action .github/workflows/publish.yml
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:{test_section}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098 # v7
+        with:
+          python-version: '{python_version}'
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          TAG_VERSION=${{GITHUB_REF#refs/tags/v}}
+          PKG_VERSION=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "ERROR: Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
+            exit 1
+          fi
+
+      - run: {build_cmd}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: testpypi
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
+'''
+        with open(workflow_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _log_action(action_name, "SUCCESS",
+                   "Created .github/workflows/publish.yml. "
+                   "Configure Trusted Publishers on PyPI before pushing a v* tag. "
+                   "Pin action SHAs before production use: npx pin-github-action .github/workflows/publish.yml")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create publish workflow: {e}")
+        return False
+
+
+def _add_workflow_call_trigger(project_root: Path, dry_run: bool) -> bool:
+    """Add workflow_call trigger to the detected CI workflow so publish.yml can reuse it."""
+    action_name = "add_workflow_call_trigger"
+    workflow_dir = project_root / ".github" / "workflows"
+    ci_filename = _detect_ci_workflow_name(workflow_dir)
+
+    if ci_filename is None:
+        _log_action(action_name, "INFO",
+                    f"No CI workflow found (checked: {_CI_CANDIDATES_STR}). "
+                    "Skipping workflow_call injection.")
+        return True
+
+    ci_path = workflow_dir / ci_filename
+
+    try:
+        content = ci_path.read_text(encoding="utf-8")
+
+        if "workflow_call" in content:
+            _log_action(action_name, "INFO", f"{ci_filename} already has workflow_call trigger. Skipping.")
+            return True
+
+        # Find the on: block — handle both on: and "on":
+        lines = content.splitlines(keepends=True)
+        on_line_idx = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped in ("on:", '"on":', "'on':"):
+                on_line_idx = i
+                break
+
+        if on_line_idx is None:
+            _log_action(action_name, "WARN",
+                        f"Could not find 'on:' block in {ci_filename}. Skipping workflow_call injection. "
+                        f"Manually add 'workflow_call:' under the 'on:' key in {ci_filename} so publish.yml can reuse it.")
+            return True
+
+        # Check for compact single-line format like "on: push"
+        stripped_on = lines[on_line_idx].strip()
+        if stripped_on not in ("on:", '"on":', "'on':"):
+            _log_action(action_name, "WARN",
+                        f"{ci_filename} uses compact on: format ('{stripped_on}'). Cannot safely inject workflow_call. "
+                        f"To fix manually, replace that line with:\n"
+                        f"  on:\n"
+                        f"    push:\n"
+                        f"    workflow_call:  # Allow publish.yml to reuse this workflow")
+            return True
+
+        # Find insertion point: after on: line, skip all indented trigger lines,
+        # then insert workflow_call before the next non-trigger content
+        insert_idx = on_line_idx + 1
+        while insert_idx < len(lines):
+            line = lines[insert_idx]
+            stripped = line.strip()
+            # Continue past indented lines (triggers) and blank lines within on: block
+            if stripped == "" or line[0] in (" ", "\t"):
+                insert_idx += 1
+            else:
+                break
+
+        if dry_run:
+            _log_action(action_name, "INFO", f"DRY RUN: Would add workflow_call trigger to {ci_filename}")
+            return True
+
+        # Insert workflow_call as the last trigger before the next top-level key
+        workflow_call_line = "  workflow_call:  # Allow publish.yml to reuse this workflow\n"
+        lines.insert(insert_idx, workflow_call_line)
+
+        ci_path.write_text("".join(lines), encoding="utf-8")
+        _log_action(action_name, "SUCCESS", f"Added workflow_call trigger to {ci_filename} for publish.yml reuse.")
+        return True
+
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to add workflow_call to ci.yml: {e}")
+        return False
+
+
+def _create_releasing_doc(project_root: Path, dry_run: bool, owner: str = "USERNAME",
+                          default_branch: str = "main", build_cmd: str = "uv build",
+                          publish_cmd: str = "uv publish", ci_filename: str = "ci.yml") -> bool:
+    """Generate or update RELEASING.md with PyPI publishing instructions."""
+    action_name = "create_releasing_doc"
+    releasing_path = project_root / "RELEASING.md"
+    name = project_root.name
+
+    # Try to get project name from pyproject.toml
+    pyproject_path = project_root / "pyproject.toml"
+    if pyproject_path.exists():
+        try:
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:
+                import toml as tomllib
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f) if hasattr(tomllib, 'load') and sys.version_info >= (3, 11) else __import__('toml').load(f)
+            name = data.get("project", {}).get("name", name)
+        except Exception:
+            pass
+
+    # PyPI normalizes project names: underscores/dots → hyphens, lowercase (PEP 503)
+    import re as _re
+    pypi_name = _re.sub(r'[-_.]+', '-', name).lower()
+
+    ci_ref = f"`{ci_filename}` workflow" if ci_filename else "CI workflow"
+    pypi_section = f"""
+## PyPI Publishing (automated via GitHub Actions)
+
+After pushing the tag (step above), GitHub Actions will:
+1. Run the full CI test suite (via reusable {ci_ref})
+2. Verify the tag version matches `pyproject.toml` version
+3. Build wheel + sdist with `{build_cmd}`
+4. Publish to TestPyPI (requires `testpypi` environment)
+5. Publish to PyPI (requires `pypi` environment approval if configured)
+
+### First-time setup (one-time)
+
+1. Create accounts on [pypi.org](https://pypi.org/account/register/) and [test.pypi.org](https://test.pypi.org/account/register/)
+2. Enable 2FA on both accounts (required by PyPI)
+3. Configure **Trusted Publishers** on both sites:
+   - PyPI Project Name: `{pypi_name}`
+   - Owner: `{owner}`
+   - Repository: `{name}`
+   - Workflow: `publish.yml`
+   - Environment: `pypi` (or `testpypi`)
+4. Create GitHub Environments in repo Settings → Environments:
+   - `testpypi` (no protection rules needed)
+   - `pypi` (add required reviewers for manual approval gate)
+5. Pin action versions to commit SHAs: `npx pin-github-action .github/workflows/publish.yml`
+
+### First-time TestPyPI verification
+
+```bash
+uv pip install --index-url https://test.pypi.org/simple/ \\
+    --extra-index-url https://pypi.org/simple/ \\
+    {pypi_name}
+```
+
+### Manual publishing (fallback)
+
+```bash
+{build_cmd}
+{publish_cmd}  # uses Trusted Publisher OIDC if run in GitHub Actions
+```
+"""
+
+    if releasing_path.exists():
+        existing = releasing_path.read_text(encoding="utf-8")
+        if "PyPI" in existing or "Trusted Publisher" in existing:
+            # Check for outdated build commands
+            outdated_replacements = {
+                "hatch build": build_cmd,
+                "hatch publish": publish_cmd,
+                "python -m build": build_cmd,
+                "twine upload dist/*": publish_cmd,
+                "flit build": build_cmd,
+                "flit publish": publish_cmd,
+            }
+            updated = existing
+            needs_update = False
+            for old_cmd, new_cmd in outdated_replacements.items():
+                if old_cmd in updated and old_cmd != new_cmd:
+                    updated = updated.replace(old_cmd, new_cmd)
+                    needs_update = True
+            if not needs_update:
+                _log_action(action_name, "INFO", "RELEASING.md already contains up-to-date PyPI publishing info. Skipping.")
+                return True
+            if dry_run:
+                _log_action(action_name, "INFO", "DRY RUN: Would update RELEASING.md build commands.")
+                return True
+            try:
+                releasing_path.write_text(updated, encoding="utf-8")
+                _log_action(action_name, "SUCCESS", "Updated RELEASING.md build commands to use: " + build_cmd)
+                return True
+            except Exception as e:
+                _log_action(action_name, "ERROR", f"Failed to update RELEASING.md: {e}")
+                return False
+
+        if dry_run:
+            _log_action(action_name, "INFO", "DRY RUN: Would append PyPI publishing section to RELEASING.md")
+            return True
+
+        try:
+            with open(releasing_path, "a", encoding="utf-8") as f:
+                f.write(pypi_section)
+            _log_action(action_name, "SUCCESS", "Appended PyPI publishing section to existing RELEASING.md.")
+            return True
+        except Exception as e:
+            _log_action(action_name, "ERROR", f"Failed to update RELEASING.md: {e}")
+            return False
+
+    # Create new RELEASING.md
+    full_template = f"""# Releasing {name}
+
+## Version bump checklist
+
+1. Update `pyproject.toml` `version = "X.Y.Z"`
+2. Run full tests
+3. Commit: `git commit -m "chore(version): bump to X.Y.Z"`
+4. Tag: `git tag vX.Y.Z`
+5. Push: `git push origin {default_branch} --tags`
+{pypi_section}"""
+
+    if dry_run:
+        _log_action(action_name, "INFO", "DRY RUN: Would create RELEASING.md")
+        return True
+
+    try:
+        with open(releasing_path, "w", encoding="utf-8") as f:
+            f.write(full_template)
+        _log_action(action_name, "SUCCESS", "Created RELEASING.md with version bump checklist and PyPI publishing docs.")
+        return True
+    except Exception as e:
+        _log_action(action_name, "ERROR", f"Failed to create RELEASING.md: {e}")
+        return False
+
+
 # CLICOMMAND: new functionality to repair and keep
 class CLICommand(BaseSettings):
     """The Pydantic model defining the application's configuration schema.
@@ -4685,7 +5951,7 @@ class CLICommand(BaseSettings):
             "--dry-run",
             "-d",
             help="Preview actions without making any file system changes.",
-            is_flag=True, # Treat as a boolean flag.
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning changes will be made.
@@ -4695,7 +5961,7 @@ class CLICommand(BaseSettings):
         typer.Option(
             "--full-gitignore-overwrite",
             help="If an existing .gitignore is found, overwrite it completely instead of appending.",
-            is_flag=True,
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning intelligent appending is preferred.
@@ -4705,7 +5971,7 @@ class CLICommand(BaseSettings):
         typer.Option(
             "--no-gitignore",
             help="Disable all .gitignore creation, updates, and parsing.",
-            is_flag=True,
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning gitignore handling is enabled.
@@ -4734,10 +6000,29 @@ class CLICommand(BaseSettings):
             "--verbose",
             "-v",
             help="Show detailed technical output for debugging and learning.",
-            is_flag=True,
+
             rich_help_panel="Execution Control"
         )
     ] = False # Default is False, meaning clean progress output is preferred.
+
+    prepare_pypi: Annotated[
+        bool,
+        typer.Option(
+            "--prepare-pypi",
+            help="Add PyPI publishing metadata: license, classifiers, authors, README, publish workflow.",
+
+            rich_help_panel="PyPI Publishing"
+        )
+    ] = False
+
+    license_type: Annotated[
+        str,
+        typer.Option(
+            "--license",
+            help="License type for PyPI metadata (auto, MIT, Apache-2.0, GPL-3.0, BSD-3-Clause, custom). 'auto' detects from existing LICENSE file.",
+            rich_help_panel="PyPI Publishing"
+        )
+    ] = "auto"
 
     @property
     def use_gitignore(self) -> bool:
@@ -4915,6 +6200,37 @@ class CLICommand(BaseSettings):
             _log_action("ensure_project_initialized_with_pyproject", "SUCCESS", "Project structure and pyproject.toml initialized successfully.")
             major_action_results.append(("project_initialized", "SUCCESS"))
 
+            # Early-exit for --prepare-pypi: only needs pyproject.toml + file I/O,
+            # not gitignore/venv/dependency discovery/ruff/VS Code setup.
+            if self.prepare_pypi:
+                _log_action("prepare_pypi_start", "INFO", "Adding PyPI publishing metadata (--prepare-pypi).")
+                pypi_success = _prepare_pypi_metadata(self.project_dir, self.license_type, self.dry_run)
+                major_action_results.append(("pypi_metadata", "SUCCESS" if pypi_success else "FAILED"))
+                if pypi_success:
+                    _log_action("script_end", "SUCCESS", "PyPI metadata setup complete.")
+                    _log_data_global["overall_status"] = "SUCCESS"
+                else:
+                    _log_action("script_end", "WARN", "PyPI metadata setup completed with some issues. Check log for details.")
+                    _log_data_global["overall_status"] = "WARNINGS"
+
+                # Print summary table and exit — skip all remaining steps
+                step_display_names_pypi = {
+                    "project_initialized": "Project Structure",
+                    "pypi_metadata": "PyPI Publishing Setup",
+                }
+                summary_lines = [
+                    "\n--- PyPI Publishing Setup Summary ---",
+                    "Step                         | Status",
+                    "-----------------------------|----------",
+                ]
+                for step, status in major_action_results:
+                    display_name = step_display_names_pypi.get(step, step)
+                    summary_lines.append(f"{display_name.ljust(29)}| {status}")
+                summary_lines.append(f"\nSee '{log_file_path.name}' for full details.")
+                _log_action("final_summary_table", "INFO", "\n".join(summary_lines))
+                _save_log(self, checkpoint=CHECKPOINT_SAVE)
+                return  # Skip gitignore/venv/deps/ruff/VS Code
+
             # Step 3: Instantiate GitIgnore manager and setup .gitignore.
             ignore_manager: Optional[GitIgnore] = None
             if self.use_gitignore or self.ignore_patterns:
@@ -4942,7 +6258,7 @@ class CLICommand(BaseSettings):
 
             # Step 4: Create or verify the virtual environment using uv.
             _log_action("create_or_verify_venv", "INFO", f"Creating/ensuring virtual environment '{self.venv_name}'.")
-            _run_command(["uv", "venv", self.venv_name], "create_or_verify_venv_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
+            _run_command(["uv", "venv", "--allow-existing", self.venv_name], "create_or_verify_venv_cmd", work_dir=self.project_dir, dry_run=self.dry_run)
             venv_python_executable = self.project_dir / self.venv_name / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 
             # Critical check: ensure the venv Python executable exists after creation (if not dry run).
@@ -5234,7 +6550,7 @@ class CLICommand(BaseSettings):
                     error_message += "\nWe tried 3 strategies: exact versions, flexible ranges, and no versions.\n"
                     error_message += "All failed. Here are your options:\n"
                     error_message += "\n1. Use a newer Python version (recommended):\n"
-                    error_message += "   Run: python3.11 -m pyuvstarter\n"
+                    error_message += "   Run: uv run --python 3.11 python -m pyuvstarter\n"
                     error_message += "   This gives you latest features and best performance.\n"
                     error_message += "   Note: You may need to update code that uses deprecated APIs.\n"
                     error_message += "\n2. Update your project's Python requirement:\n"
@@ -5324,6 +6640,12 @@ class CLICommand(BaseSettings):
             vscode_launch_status = "SUCCESS"
             major_action_results.append(("vscode_config", "SUCCESS"))
 
+            # Step 12a: If --license was explicitly set (not "auto"), create LICENSE file even without --prepare-pypi.
+            if not self.prepare_pypi and self.license_type != "auto":
+                license_ok = _create_license_file(self.project_dir, self.license_type, self.dry_run)
+                if license_ok:
+                    major_action_results.append(("license_file", "SUCCESS"))
+
             # --- Final Status and Summary ---
             _log_action("script_end", "SUCCESS", "🎉 Automated project setup script completed successfully!")
 
@@ -5346,7 +6668,11 @@ class CLICommand(BaseSettings):
                 "dependency_management": "Package Installation",
                 "notebook_exec_support": "Notebook Support",
                 "uv_final_sync": "Environment Sync",
-                "vscode_config": "VS Code Setup"
+                "vscode_config": "VS Code Setup",
+                "license_file": "License File",
+                "pypi_metadata": "PyPI Publishing Setup",
+                "workflow_call_trigger": "CI Workflow Reuse",
+                "releasing_doc": "Release Documentation"
             }
 
             summary_lines = [
@@ -5504,6 +6830,8 @@ def main(
     no_gitignore: Annotated[bool, typer.Option("--no-gitignore", help="Disable all .gitignore operations.")] = False,
     ignore_patterns: Annotated[List[str], typer.Option("--ignore-pattern", "-i", help="Additional gitignore patterns.")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed technical output for debugging and learning.")] = False,
+    prepare_pypi: Annotated[bool, typer.Option("--prepare-pypi", help="Add PyPI publishing metadata: license, classifiers, authors, README, publish workflow.")] = False,
+    license_type: Annotated[str, typer.Option("--license", help="License type for PyPI metadata (auto, MIT, Apache-2.0, GPL-3.0, BSD-3-Clause, custom). 'auto' detects from existing LICENSE file.")] = "auto",
 ):
     """The main entry point for pyuvstarter.
 
@@ -5537,6 +6865,8 @@ def main(
             'no_gitignore': no_gitignore,
             'ignore_patterns': ignore_patterns or [],
             'verbose': verbose,
+            'prepare_pypi': prepare_pypi,
+            'license_type': license_type,
         }
 
     # Create CLICommand instance - this will trigger model_post_init

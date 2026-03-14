@@ -90,3 +90,18 @@ pyuvstarter_test_*/
 
 # Temporary demo script file created by create_demo.sh
 demo_script.sh
+
+# Build artifacts
+build/
+
+# VS Code backups
+.vscode/*.bak_*
+
+# Git cleanup logs
+git-cleanup-*.log
+
+# Release notes (used for GitHub release body, not committed)
+notes/
+
+# Claude Code local project settings (user-specific, not shared)
+.claude/settings.local.json

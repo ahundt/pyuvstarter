@@ -1,9 +1,24 @@
 [project]
 name = "pyuvstarter"
-version = "0.3.0" # You can update the version as you develop
+version = "0.3.0"
 description = "A script to automate Python project setup using uv, focusing on pyproject.toml, and configuring VS Code."
 readme = "README.md"
-requires-python = ">=3.11" # The pyuvstarter.py script aims for 3.11+ compatibility
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+keywords = ["uv", "python", "project-setup", "scaffolding", "pyproject", "virtual-environment"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 
 authors = [
   { name = "Andrew Hundt", email = "ATHundt@gmail.com" },
@@ -23,6 +38,18 @@ dependencies = [
     "tqdm>=4.67.1",
 ]
 
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",  # test runner
+    "pyyaml>=6.0",  # YAML parsing in tests (validates generated workflow files)
+]
+
+[project.urls]
+Homepage = "https://github.com/athundt/pyuvstarter"
+Repository = "https://github.com/athundt/pyuvstarter"
+Issues = "https://github.com/athundt/pyuvstarter/issues"
+Changelog = "https://github.com/athundt/pyuvstarter/releases"
 
 # This section defines the command-line script.
 [project.scripts]

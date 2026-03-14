@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_call:  # Allow publish.yml to reuse this workflow
 
 permissions:
   contents: read
@@ -15,11 +16,16 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          # Python 3.14 is prerelease; allow it to fail without blocking the build
+          - python-version: "3.14"
+            experimental: true
         exclude:
           # macOS runners are expensive, so only test on latest Python
           - os: macos-latest
@@ -29,20 +35,23 @@ jobs:
           # Windows can be flaky with older Python
           - os: windows-latest
             python-version: "3.11"
+    continue-on-error: ${{ matrix.experimental == true }}
 
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       PYUVSTARTER_TEST_OS: ${{ matrix.os }}
       PYUVSTARTER_TEST_PYTHON: ${{ matrix.python-version }}
+      NO_COLOR: "1"  # Suppress Rich ANSI codes for stable test output assertions
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: ${{ matrix.python-version }}
+        allow-prereleases: true
 
     - name: Install uv using official installer (Unix)
       if: runner.os != 'Windows'
@@ -182,38 +191,10 @@ jobs:
         chmod +x create_demo.sh create_demo2.sh
 
         echo ""
-        echo "🧪 Running Python unit tests..."
-        echo "==================================="
-        TESTS_PASSED=true
-        TEST_COUNT=0
-        for test_file in tests/test_*.py; do
-          # Check if glob matched any files (if not, test_file will be literal "tests/test_*.py")
-          if [ ! -f "$test_file" ]; then
-            echo "No Python test files found matching tests/test_*.py"
-            break
-          fi
-          TEST_COUNT=$((TEST_COUNT + 1))
-          echo "Running: $test_file"
-          # Use uv run to execute test file (respects UV_PYTHON env var)
-          if uv run "$test_file"; then
-            echo "✅ $test_file PASSED"
-          else
-            echo "❌ $test_file FAILED"
-            TESTS_PASSED=false
-          fi
-          echo ""
-        done
-
-        if [ $TEST_COUNT -eq 0 ]; then
-          echo "⚠️  No Python unit tests found - skipping"
-          PYTEST_EXIT_CODE=0
-        elif [ "$TESTS_PASSED" = false ]; then
-          echo "❌ Python unit tests failed"
-          PYTEST_EXIT_CODE=1
-        else
-          echo "✅ All Python unit tests passed ($TEST_COUNT tests)"
-          PYTEST_EXIT_CODE=0
-        fi
+        echo "Running Python unit tests (pytest)..."
+        echo "======================================="
+        uv run python -m pytest tests/ --junitxml=test_results_pytest.xml --tb=short
+        PYTEST_EXIT_CODE=$?
 
         # Run the demo script tests
         echo ""
@@ -247,8 +228,8 @@ jobs:
         echo ""
         echo "🧪 Running comprehensive test suite..."
         echo "===================================="
-        if [ -x "tests/run_all_tests.sh" ]; then
-          chmod +x tests/run_all_tests.sh
+        chmod +x tests/run_all_tests.sh 2>/dev/null || true
+        if [ -f "tests/run_all_tests.sh" ]; then
           ./tests/run_all_tests.sh
           COMPREHENSIVE_EXIT_CODE=$?
 
@@ -282,27 +263,33 @@ jobs:
         ls -la test_results*.xml || echo "No test_results*.xml files found for publishing"
 
     - name: Publish Test Results
-      if: always() && runner.os == 'Linux'
-      uses: EnricoMi/publish-unit-test-result-action@v2
+      uses: dorny/test-reporter@d61b558e8df85cb60d09ca3e5b09653b4477cea7 # v1
+      if: always()
       with:
-        files: test_results*.xml
-        check_name: "PyUVStarter Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
-        comment_title: "PyUVStarter Test Results (${{ matrix.os }}, py${{ matrix.python-version }})"
-        github_token: ${{ secrets.GITHUB_TOKEN }}
+        name: "pyuvstarter Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
+        path: test_results_pytest*.xml
+        reporter: java-junit
+        fail-on-error: false
+        fail-on-empty: false
 
     - name: Run unit tests (Windows)
       if: runner.os == 'Windows'
       run: |
-        Write-Host "🧪 WINDOWS UNIT TEST: Basic project creation"
-        Write-Host "==========================================="
+        Write-Host "🧪 WINDOWS UNIT TEST: Python unit tests + basic project creation"
+        Write-Host "================================================================"
         $TEST_FAILED = 0
-        # Windows doesn't support the bash demo script, so run pyuvstarter directly
+        # Run Python unit tests with JUnit XML output for dorny/test-reporter
+        uv run python -m pytest tests/ --junitxml=test_results_pytest_windows.xml --tb=short
+        if ($LASTEXITCODE -ne 0) { $TEST_FAILED++ }
+        # Windows doesn't support the bash demo script, so also run pyuvstarter directly
         uv run pyuvstarter --help
+        if ($LASTEXITCODE -ne 0) { $TEST_FAILED++; Write-Host "  ❌ pyuvstarter --help failed" }
         mkdir test_windows
         cd test_windows
         Write-Host "📁 Created test directory: $(Get-Location)"
         Write-Host "🚀 Running: uv tool run pyuvstarter ."
         uv tool run pyuvstarter .
+        if ($LASTEXITCODE -ne 0) { $TEST_FAILED++; Write-Host "  ❌ uv tool run pyuvstarter . failed" }
         Write-Host ""
         Write-Host "🔍 Verifying generated files:"
         if (Test-Path "pyproject.toml") { 
