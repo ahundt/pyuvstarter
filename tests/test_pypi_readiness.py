@@ -3008,7 +3008,7 @@ def test_tqdm_disabled_when_stderr_not_tty():
     import ast
     import re
 
-    source = open("pyuvstarter.py").read()
+    source = open("pyuvstarter.py", encoding="utf-8").read()
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "init_progress_bar":
@@ -3028,7 +3028,7 @@ def test_tqdm_has_dynamic_ncols_not_hardcoded_ncols():
     """ProgressTracker.init_progress_bar must use dynamic_ncols=True, not ncols=<int>."""
     import ast
     # Read the source and check the tqdm call in init_progress_bar
-    source = open("pyuvstarter.py").read()
+    source = open("pyuvstarter.py", encoding="utf-8").read()
     # The tqdm constructor call should have dynamic_ncols and NOT ncols=<number>
     tree = ast.parse(source)
     for node in ast.walk(tree):
@@ -3049,7 +3049,7 @@ def test_tqdm_has_dynamic_ncols_not_hardcoded_ncols():
 def test_tqdm_disabled_when_no_color_set():
     """ProgressTracker.init_progress_bar must create tqdm with disable=True when NO_COLOR is set."""
     import ast
-    source = open("pyuvstarter.py").read()
+    source = open("pyuvstarter.py", encoding="utf-8").read()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.FunctionDef) and node.name == "init_progress_bar":
             func_source = ast.get_source_segment(source, node)
